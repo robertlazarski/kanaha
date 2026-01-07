@@ -1,0 +1,279 @@
+<!-- Axis2/C Services Configuration for Kanaha Camera Control System -->
+<!-- JSON-RPC Camera Control Services over HTTP/2+mTLS -->
+
+<serviceGroup name="KanahaCameraServices">
+    <module ref="json_rpc_module"/>
+
+    <!-- Camera Control Service -->
+    <!-- Handles individual camera operations -->
+    <service name="CameraControlService" scope="application">
+        <description>
+            Primary camera control service for individual camera operations.
+            Supports photo capture, video recording, settings adjustment,
+            and real-time camera parameter control via JSON-RPC over HTTP/2+mTLS.
+        </description>
+
+        <!-- Service implementation (C library) -->
+        <parameter name="ServiceClass">libcamera_control_service.so</parameter>
+        <parameter name="ServiceObjectSupplier">org.apache.axis2.extensions.spring.SpringObjectSupplier</parameter>
+
+        <!-- Message receiver for JSON-RPC -->
+        <messageReceiver mep="http://www.w3.org/ns/wsdl/in-out"
+                        class="org.apache.axis2.rpc.receivers.RPCMessageReceiver"/>
+
+        <!-- Service operations -->
+        <operation name="capturePhoto">
+            <description>Capture a photo with specified parameters</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="startVideoRecording">
+            <description>Start video recording with specified quality settings</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="stopVideoRecording">
+            <description>Stop current video recording</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="adjustSettings">
+            <description>Adjust camera settings (ISO, exposure, white balance, etc.)</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="getStatus">
+            <description>Get current camera status and capabilities</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="previewStream">
+            <description>Start/stop camera preview stream</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <!-- Service parameters -->
+        <parameter name="ServiceTCCL">composite</parameter>
+        <parameter name="load-on-startup">true</parameter>
+        <parameter name="enableHTTP2">true</parameter>
+        <parameter name="requireMTLS">true</parameter>
+        <parameter name="maxRequestSize">5242880</parameter> <!-- 5MB for image data -->
+    </service>
+
+    <!-- Multi-Camera Coordination Service -->
+    <!-- Handles coordination between multiple cameras -->
+    <service name="MultiCameraService" scope="application">
+        <description>
+            Multi-camera coordination service for synchronized operations.
+            Handles camera discovery, synchronized capture, and multi-camera
+            workflows for production environments.
+        </description>
+
+        <parameter name="ServiceClass">libmulti_camera_service.so</parameter>
+
+        <messageReceiver mep="http://www.w3.org/ns/wsdl/in-out"
+                        class="org.apache.axis2.rpc.receivers.RPCMessageReceiver"/>
+
+        <operation name="discoverCameras">
+            <description>Discover available cameras on the network</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="synchronizedCapture">
+            <description>Trigger synchronized photo capture across multiple cameras</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="createCameraGroup">
+            <description>Create a logical group of cameras for coordinated operations</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="getNetworkStatus">
+            <description>Get status of all cameras in the network</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <parameter name="ServiceTCCL">composite</parameter>
+        <parameter name="load-on-startup">true</parameter>
+        <parameter name="enableHTTP2">true</parameter>
+        <parameter name="requireMTLS">true</parameter>
+    </service>
+
+    <!-- Device Discovery Service -->
+    <!-- Handles camera device discovery and registration -->
+    <service name="DeviceDiscoveryService" scope="application">
+        <description>
+            Device discovery and registration service.
+            Manages camera device registration, capability advertisement,
+            and network topology discovery.
+        </description>
+
+        <parameter name="ServiceClass">libdevice_discovery_service.so</parameter>
+
+        <messageReceiver mep="http://www.w3.org/ns/wsdl/in-out"
+                        class="org.apache.axis2.rpc.receivers.RPCMessageReceiver"/>
+
+        <operation name="registerDevice">
+            <description>Register a new camera device with the network</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="announceCapabilities">
+            <description>Announce device capabilities to the network</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="queryDevices">
+            <description>Query available devices and their capabilities</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <parameter name="ServiceTCCL">composite</parameter>
+        <parameter name="load-on-startup">true</parameter>
+        <parameter name="enableHTTP2">true</parameter>
+        <parameter name="requireMTLS">true</parameter>
+    </service>
+
+    <!-- Certificate Management Service -->
+    <!-- Handles mTLS certificate distribution and management -->
+    <service name="CertificateManagementService" scope="application">
+        <description>
+            Certificate management service for mTLS authentication.
+            Handles certificate distribution, renewal, and PKI operations
+            for the multi-camera network.
+        </description>
+
+        <parameter name="ServiceClass">libcertificate_management_service.so</parameter>
+
+        <messageReceiver mep="http://www.w3.org/ns/wsdl/in-out"
+                        class="org.apache.axis2.rpc.receivers.RPCMessageReceiver"/>
+
+        <operation name="getCACertificate">
+            <description>Get the CA certificate for client authentication setup</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="requestClientCertificate">
+            <description>Request a new client certificate for device authentication</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="renewCertificate">
+            <description>Renew an existing certificate before expiration</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="validateCertificate">
+            <description>Validate certificate status and expiration</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <parameter name="ServiceTCCL">composite</parameter>
+        <parameter name="load-on-startup">true</parameter>
+        <parameter name="enableHTTP2">true</parameter>
+        <parameter name="requireMTLS">true</parameter>
+        <parameter name="highSecurity">true</parameter>
+    </service>
+
+    <!-- System Status Service -->
+    <!-- Provides system health and status information -->
+    <service name="SystemStatusService" scope="application">
+        <description>
+            System status and health monitoring service.
+            Provides information about system resources, service health,
+            and operational metrics.
+        </description>
+
+        <parameter name="ServiceClass">libsystem_status_service.so</parameter>
+
+        <messageReceiver mep="http://www.w3.org/ns/wsdl/in-out"
+                        class="org.apache.axis2.rpc.receivers.RPCMessageReceiver"/>
+
+        <operation name="getSystemHealth">
+            <description>Get overall system health status</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="getServiceStatus">
+            <description>Get status of all running services</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <operation name="getMetrics">
+            <description>Get performance and usage metrics</description>
+            <messageReceiver class="org.apache.axis2.json.JSONMessageReceiver"/>
+            <parameter name="enableHTTP2">true</parameter>
+            <parameter name="requireClientCert">true</parameter>
+        </operation>
+
+        <parameter name="ServiceTCCL">composite</parameter>
+        <parameter name="load-on-startup">true</parameter>
+        <parameter name="enableHTTP2">true</parameter>
+        <parameter name="requireMTLS">true</parameter>
+    </service>
+
+    <!-- Global service group parameters -->
+    <parameter name="servicePath">services</parameter>
+    <parameter name="enableHTTP2">true</parameter>
+    <parameter name="requireMTLS">true</parameter>
+    <parameter name="maxConcurrentRequests">50</parameter>
+    <parameter name="requestTimeout">30000</parameter> <!-- 30 seconds -->
+    <parameter name="enableCORS">true</parameter>
+    <parameter name="enableGZIPCompression">true</parameter>
+
+    <!-- Security configuration -->
+    <parameter name="enableSecurity">true</parameter>
+    <parameter name="securityModule">mTLS</parameter>
+    <parameter name="certificateValidation">strict</parameter>
+
+    <!-- Logging configuration -->
+    <parameter name="enableLogging">true</parameter>
+    <parameter name="logLevel">info</parameter>
+    <parameter name="logRequests">true</parameter>
+    <parameter name="logResponses">false</parameter> <!-- Don't log image data -->
+
+    <!-- Performance optimization -->
+    <parameter name="enableCaching">true</parameter>
+    <parameter name="cacheTimeout">60</parameter> <!-- 60 seconds -->
+    <parameter name="enableConnectionPooling">true</parameter>
+    <parameter name="maxConnections">25</parameter>
+</serviceGroup>

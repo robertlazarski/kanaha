@@ -1,0 +1,113 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdk 34
+    compileOptions.encoding = 'UTF-8'
+
+    defaultConfig {
+        applicationId "org.kanaha.camera"
+        minSdkVersion 21  // Raised from 15 to support HTTP/2 and modern TLS features
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0.0"
+
+        renderscriptTargetApi 21
+        //renderscriptSupportModeEnabled true // don't use support library as it bloats the APK, and we don't need pre-4.4 support
+        // need build tools at least 20 at least to support ScriptIntrinsicHistogram
+        // also need build tools at least 21 to avoid Google Play 64-bit warning (required from 1 August 2019)
+
+        testApplicationId "org.kanaha.camera.test"
+        //testInstrumentationRunner "android.test.InstrumentationTestRunner"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // NDK Configuration for Apache httpd + Axis2/C compilation
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
+
+        // External native build configuration for Apache httpd
+        externalNativeBuild {
+            cmake {
+                cppFlags '-std=c++17 -frtti -fexceptions'
+                arguments '-DANDROID_STL=c++_shared',
+                          '-DANDROID_PLATFORM=android-21',
+                          '-DAXIS2_JSON_ENABLED=1',
+                          '-DWITH_NGHTTP2=1',
+                          '-DWITH_OPENSSL=1'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+        }
+    }
+
+
+    // needed to use android.test package (ActivityInstrumentationTestCase2 etc) when targetting sdk 28 (Android 9) -
+    // see https://developer.android.com/training/testing/set-up-project
+    useLibrary 'android.test.runner'
+    useLibrary 'android.test.base'
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+
+    // Handle duplicate META-INF files from Apache MINA SSHD dependencies
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt',
+                         'META-INF/license.txt', 'META-INF/NOTICE', 'META-INF/NOTICE.txt',
+                         'META-INF/notice.txt', 'META-INF/ASL2.0', 'META-INF/*.kotlin_module']
+        }
+    }
+
+    namespace 'net.sourceforge.opencamera'
+    buildFeatures {
+        renderScript true
+    }
+
+    // External native build for Apache httpd + Axis2/C
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            // version removed to use system cmake (3.31.6)
+        }
+    }
+    //useLibrary 'android.test.mock'
+}
+
+dependencies {
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+
+    // appcompat version must be 1.4.0 or later to satisfy emoji policy!
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+
+    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
+
+    implementation 'androidx.exifinterface:exifinterface:1.3.7'
+
+    // Network dependencies for HTTP/2+mTLS communication
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.json:json:20231013'
+
+    // Security dependencies for certificate management
+    implementation 'org.bouncycastle:bcprov-jdk15on:1.70'
+    implementation 'org.bouncycastle:bcpkix-jdk15on:1.70'
+
+    // SFTP client for file transfer to storage servers
+    // Note: Apache MINA SSHD was evaluated but doesn't work on Android
+    // (requires javax.management/JMX which is not available on Android)
+    // Using mwiede's JSch fork - actively maintained with ed25519 support
+    // https://github.com/mwiede/jsch
+    implementation 'com.github.mwiede:jsch:0.2.22'
+
+    testImplementation 'junit:junit:4.13.2'
+
+    // newer AndroidJUnit4 InstrumentedTest
+    androidTestImplementation "androidx.test:runner:1.5.2"
+    androidTestImplementation "androidx.test:rules:1.5.0"
+    androidTestImplementation "androidx.test.espresso:espresso-core:3.5.1"
+}

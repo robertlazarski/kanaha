@@ -1,0 +1,69 @@
+Kanaha Camera Control System
+Copyright 2025-2026 Robert Lazarski
+
+This product includes software developed by:
+
+=============================================================================
+OpenCamera
+=============================================================================
+Copyright (C) 2013-2024 Mark Harman
+https://opencamera.org.uk/
+License: GPL v3+
+
+Kanaha incorporates OpenCamera as its camera engine. OpenCamera is an
+open source camera application for Android devices.
+
+=============================================================================
+Apache Axis2/C
+=============================================================================
+Copyright (C) The Apache Software Foundation
+https://axis.apache.org/axis2/c/
+License: Apache License 2.0
+
+Kanaha integrates with Apache Axis2/C for HTTP/2 JSON-RPC web services.
+Apache Axis2/C is used through documented APIs following the user guide
+patterns described in the Apache Axis2/C project documentation.
+
+=============================================================================
+Apache HTTP Server (httpd)
+=============================================================================
+Copyright (C) The Apache Software Foundation
+https://httpd.apache.org/
+License: Apache License 2.0
+
+Kanaha uses Apache httpd as its HTTP/2 server, cross-compiled for Android.
+
+=============================================================================
+Apache Portable Runtime (APR)
+=============================================================================
+Copyright (C) The Apache Software Foundation
+https://apr.apache.org/
+License: Apache License 2.0
+
+=============================================================================
+OpenSSL
+=============================================================================
+Copyright (C) 1998-2024 The OpenSSL Project
+https://www.openssl.org/
+License: Apache License 2.0
+
+=============================================================================
+nghttp2
+=============================================================================
+Copyright (C) 2012-2024 Tatsuhiro Tsujikawa
+https://nghttp2.org/
+License: MIT License
+
+=============================================================================
+json-c
+=============================================================================
+Copyright (C) 2009-2012 Eric Haszlakiewicz
+https://github.com/json-c/json-c
+License: MIT License
+
+=============================================================================
+Expat XML Parser
+=============================================================================
+Copyright (C) 1998-2000 Thai Open Source Software Center Ltd
+https://libexpat.github.io/
+License: MIT License

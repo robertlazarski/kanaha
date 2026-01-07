@@ -1,0 +1,199 @@
+# Verify Native C Code - Syntax and Compilation Check
+#
+# This workflow verifies that native C code compiles correctly WITHOUT requiring
+# the Android NDK. It uses stub headers to mock Android-specific APIs, allowing
+# contributors to verify their C code changes without setting up a full Android
+# development environment.
+#
+# What this checks:
+#   - C syntax correctness
+#   - Header include resolution
+#   - Function signature consistency
+#   - Basic compilation (but not linking to Android libraries)
+#
+# What this does NOT check:
+#   - Android NDK-specific behavior
+#   - Actual APK building
+#   - Runtime behavior on Android devices
+#
+# For full Android builds, use Android Studio or the Gradle build system.
+
+name: Verify Native Code
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'app/src/main/cpp/**'
+      - '.github/workflows/verify-native-code.yml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'app/src/main/cpp/**'
+      - '.github/workflows/verify-native-code.yml'
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  verify-c-syntax:
+    name: Verify C Syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc
+
+      - name: Create Android API stub headers
+        run: |
+          # Create stub directory structure matching Android NDK
+          mkdir -p stubs/android
+
+          # Stub for <android/log.h> - Android logging API
+          cat > stubs/android/log.h << 'EOF'
+          /*
+           * Stub header for Android logging API
+           * Used for syntax verification without Android NDK
+           */
+          #ifndef _ANDROID_LOG_H_STUB
+          #define _ANDROID_LOG_H_STUB
+
+          typedef enum android_LogPriority {
+              ANDROID_LOG_UNKNOWN = 0,
+              ANDROID_LOG_DEFAULT,
+              ANDROID_LOG_VERBOSE,
+              ANDROID_LOG_DEBUG,
+              ANDROID_LOG_INFO,
+              ANDROID_LOG_WARN,
+              ANDROID_LOG_ERROR,
+              ANDROID_LOG_FATAL,
+              ANDROID_LOG_SILENT
+          } android_LogPriority;
+
+          /* Stub implementation - does nothing but satisfies compiler */
+          static inline int __android_log_print(int prio, const char* tag, const char* fmt, ...) {
+              (void)prio; (void)tag; (void)fmt;
+              return 0;
+          }
+
+          static inline int __android_log_write(int prio, const char* tag, const char* text) {
+              (void)prio; (void)tag; (void)text;
+              return 0;
+          }
+
+          #endif /* _ANDROID_LOG_H_STUB */
+          EOF
+
+          # Stub for <android/native_activity.h> - if needed in future
+          cat > stubs/android/native_activity.h << 'EOF'
+          /*
+           * Stub header for Android Native Activity API
+           * Used for syntax verification without Android NDK
+           */
+          #ifndef _ANDROID_NATIVE_ACTIVITY_H_STUB
+          #define _ANDROID_NATIVE_ACTIVITY_H_STUB
+
+          /* Minimal stub - expand as needed */
+          typedef struct ANativeActivity ANativeActivity;
+          typedef struct AAssetManager AAssetManager;
+
+          #endif /* _ANDROID_NATIVE_ACTIVITY_H_STUB */
+          EOF
+
+          echo "Created Android API stub headers in stubs/"
+          ls -la stubs/android/
+
+      - name: Verify C syntax - camera_control_service.c
+        run: |
+          echo "Checking: app/src/main/cpp/axis2c/camera_control_service.c"
+          gcc -fsyntax-only \
+              -std=c11 \
+              -Wall \
+              -Wextra \
+              -DANDROID \
+              -DAXIS2_JSON_ENABLED=1 \
+              -D_GNU_SOURCE \
+              -I stubs \
+              -I app/src/main/cpp \
+              -I app/src/main/cpp/axis2c/include \
+              -I app/src/main/cpp/apache-httpd/include \
+              app/src/main/cpp/axis2c/camera_control_service.c
+          echo "OK: camera_control_service.c syntax verified"
+
+      - name: Verify C syntax - apache_httpd_android.c
+        run: |
+          echo "Checking: app/src/main/cpp/apache-httpd/apache_httpd_android.c"
+          gcc -fsyntax-only \
+              -std=c11 \
+              -Wall \
+              -Wextra \
+              -DANDROID \
+              -DAPACHE_HTTPD_ANDROID \
+              -D_GNU_SOURCE \
+              -I stubs \
+              -I app/src/main/cpp \
+              -I app/src/main/cpp/apache-httpd/include \
+              app/src/main/cpp/apache-httpd/apache_httpd_android.c
+          echo "OK: apache_httpd_android.c syntax verified"
+
+      - name: Compile to object files (no linking)
+        run: |
+          echo "Compiling C sources to object files (verifies more than syntax-only)..."
+
+          # Compile camera_control_service.c
+          gcc -c \
+              -std=c11 \
+              -Wall \
+              -Wextra \
+              -O2 \
+              -fPIC \
+              -DANDROID \
+              -DAXIS2_JSON_ENABLED=1 \
+              -D_GNU_SOURCE \
+              -I stubs \
+              -I app/src/main/cpp \
+              -I app/src/main/cpp/axis2c/include \
+              -I app/src/main/cpp/apache-httpd/include \
+              -o camera_control_service.o \
+              app/src/main/cpp/axis2c/camera_control_service.c
+          echo "OK: camera_control_service.o created"
+
+          # Compile apache_httpd_android.c
+          gcc -c \
+              -std=c11 \
+              -Wall \
+              -Wextra \
+              -O2 \
+              -fPIC \
+              -DANDROID \
+              -DAPACHE_HTTPD_ANDROID \
+              -D_GNU_SOURCE \
+              -I stubs \
+              -I app/src/main/cpp \
+              -I app/src/main/cpp/apache-httpd/include \
+              -o apache_httpd_android.o \
+              app/src/main/cpp/apache-httpd/apache_httpd_android.c
+          echo "OK: apache_httpd_android.o created"
+
+          # Show what was built
+          ls -la *.o
+          echo ""
+          echo "All native C sources compiled successfully!"
+
+      - name: Summary
+        run: |
+          echo "========================================"
+          echo " Native Code Verification Complete"
+          echo "========================================"
+          echo ""
+          echo "Verified files:"
+          echo "  - app/src/main/cpp/axis2c/camera_control_service.c"
+          echo "  - app/src/main/cpp/apache-httpd/apache_httpd_android.c"
+          echo ""
+          echo "Note: This verifies C syntax and compilation only."
+          echo "Full Android builds require Android Studio or Gradle."
+          echo "========================================"

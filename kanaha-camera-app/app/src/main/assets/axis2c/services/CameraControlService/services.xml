@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- HTTP/2 JSON-RPC Camera Control Service Configuration for Android static linking -->
+<serviceGroup>
+    <service name="CameraControlService">
+        <description>
+            Apache Axis2/C HTTP/2 Camera Control Service (Android Static Build)
+            JSON-RPC service with statically linked message receiver.
+        </description>
+
+        <serviceClass>camera_control_service</serviceClass>
+        <parameter name="ServiceClass">camera_control_service</parameter>
+
+        <!-- JSON-RPC catch-all operation for method dispatch from body -->
+        <operation name="jsonrpc">
+            <description>
+                JSON-RPC endpoint that routes methods based on "method" field in request body.
+                Supports: getStatus, takePhoto, startVideoRecording, stopVideoRecording, getCapabilities
+            </description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <!-- Individual operations for REST-style URLs -->
+        <operation name="getStatus">
+            <description>Get current camera status</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/getStatus</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="takePhoto">
+            <description>Capture a photo</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/takePhoto</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="startRecording">
+            <description>Start video recording</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/startRecording</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="stopRecording">
+            <description>Stop video recording</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/stopRecording</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="configure">
+            <description>Configure camera settings</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/configure</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="getCapabilities">
+            <description>Get camera capabilities</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/getCapabilities</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="sftpTransfer">
+            <description>Transfer file via SFTP to control station</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/sftpTransfer</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="listFiles">
+            <description>List video files on device</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/listFiles</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="deleteFiles">
+            <description>Delete video files matching pattern</description>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/deleteFiles</parameter>
+            <parameter name="contentType">application/json</parameter>
+            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+    </service>
+</serviceGroup>

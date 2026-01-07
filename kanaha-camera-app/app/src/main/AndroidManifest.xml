@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:versionCode="1"
+    android:versionName="1.0.0"
+    android:installLocation="auto"
+    tools:ignore="GoogleAppIndexingWarning">
+    <!-- Kanaha Camera Control System - Multi-Camera Production Automation -->
+
+    <supports-screens android:xlargeScreens="true" android:largeScreens="true" android:normalScreens="true" android:smallScreens="true" android:anyDensity="true"/>
+
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30"
+        />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30"
+        />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Network permissions for HTTP/2+mTLS camera control -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Foreground service permission for Apache httpd -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Signature-level permission for camera control broadcasts -->
+    <!-- Only apps signed with the same certificate can send camera commands -->
+    <permission
+        android:name="org.kanaha.camera.permission.CAMERA_CONTROL"
+        android:protectionLevel="signature"
+        android:label="@string/permission_camera_control_label"
+        android:description="@string/permission_camera_control_description" />
+    <uses-permission android:name="org.kanaha.camera.permission.CAMERA_CONTROL" />
+
+    <uses-feature android:name="android.hardware.camera" />
+    <uses-feature android:name="android.hardware.microphone" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false"/>
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:name=".OpenCameraApplication"
+        android:theme="@style/AppTheme"
+        android:largeHeap="true"
+        >
+        <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
+        <activity
+            android:name="net.sourceforge.opencamera.MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:clearTaskOnLaunch="true"
+            android:exported="true"
+            >
+            <!-- clearTaskOnLaunch set to true, so if user goes to gallery then returns to home, we return to the camera rather than remaining in gallery if user relaunches Open Camera -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.IMAGE_CAPTURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.IMAGE_CAPTURE_SECURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.STILL_IMAGE_CAMERA" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.STILL_IMAGE_CAMERA_SECURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.VIDEO_CAMERA" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.VIDEO_CAPTURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+        </activity>
+        <activity
+            android:name="net.sourceforge.opencamera.remotecontrol.DeviceScanner"
+            android:label="@string/scan_ble"
+            android:exported="false"
+        >
+        </activity>
+
+        <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
+        <activity
+            android:name="TakePhoto"
+            android:label="@string/take_photo"
+            android:icon="@drawable/ic_launcher_take_photo"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:exported="false"
+            >
+        </activity>
+        <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
+        <receiver
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:name="MyWidgetProvider"
+            android:exported="true">
+            <intent-filter >
+                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <!-- <intent-filter> 
+                <action android:name="net.sourceforge.opencamera.LAUNCH_OPEN_CAMERA"/> 
+            </intent-filter>  -->
+            <meta-data
+               android:name="android.appwidget.provider"
+               android:resource="@xml/widget_info" />
+        </receiver> 
+        <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
+        <receiver
+            android:icon="@drawable/ic_launcher_take_photo"
+            android:label="@string/take_photo"
+            android:name="MyWidgetProviderTakePhoto"
+            android:exported="true">
+            <intent-filter >
+                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+               android:name="android.appwidget.provider"
+               android:resource="@xml/widget_info_take_photo" />
+        </receiver>
+        <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
+        <service
+            android:name="net.sourceforge.opencamera.MyTileService"
+            android:icon="@drawable/ic_photo_camera_white_48dp"
+            android:label="@string/camera"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
+        <service
+            android:name="net.sourceforge.opencamera.MyTileServiceVideo"
+            android:icon="@drawable/ic_videocam_white_48dp"
+            android:label="@string/record_video"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <!-- should not change the android:name, including moving to a subpackage - see http://android-developers.blogspot.co.uk/2011/06/things-that-cannot-change.html -->
+        <service
+            android:name="net.sourceforge.opencamera.MyTileServiceFrontCamera"
+            android:icon="@drawable/ic_face_white_48dp"
+            android:label="@string/selfie"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service android:name="net.sourceforge.opencamera.remotecontrol.BluetoothLeService"
+            android:enabled="true"
+            android:exported="false"
+            />
+
+        <!-- Kanaha Camera Control System Components -->
+
+        <!-- Apache httpd Service for HTTP/2+mTLS server -->
+        <!-- Uses dataSync foregroundServiceType for network server functionality -->
+        <service
+            android:name="org.kanaha.camera.ApacheService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:process=":apache_httpd">
+            <intent-filter>
+                <action android:name="org.kanaha.camera.START_APACHE_HTTPD" />
+            </intent-filter>
+        </service>
+
+        <!-- Camera Control Receiver for Internal Intent IPC -->
+        <!-- Note: exported=true to allow broadcasts from native layer via am command -->
+        <receiver
+            android:name="org.kanaha.camera.CameraControlReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="1000">
+                <action android:name="org.kanaha.CAMERA_CONTROL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Certificate Management Service for mTLS -->
+        <service
+            android:name="org.kanaha.camera.CertificateService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- Performance Testing Service for HTTP/2+mTLS optimization -->
+        <service
+            android:name="org.kanaha.camera.PerformanceTestService"
+            android:enabled="true"
+            android:exported="false" />
+
+    </application>
+    <!-- needed for targetting Android 11 - see https://developer.android.com/about/versions/11/behavior-changes-11 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+</manifest>

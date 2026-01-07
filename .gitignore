@@ -1,0 +1,16 @@
+# Release artifacts (upload to GitHub Releases instead)
+/release/
+
+# Claude Code local config
+/.claude/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Gradle (handled by kanaha-camera-app/.gitignore)
+local.properties
