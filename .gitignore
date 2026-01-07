@@ -1,6 +1,16 @@
 # Release artifacts (upload to GitHub Releases instead)
 /release/
 
+# Private keys and certificates - NEVER commit these
+*.key
+*.pem
+*.p12
+*.pfx
+!*.pub
+
+# SSL/TLS certificates directory
+kanaha-camera-app/app/src/main/assets/ssl/
+
 # Claude Code local config
 /.claude/
 
