@@ -226,7 +226,9 @@ Control Station                    Android Device
 
 ## License
 
-Apache License 2.0
+GPL v3+ (GNU General Public License version 3 or later)
+
+This license is required because Kanaha incorporates OpenCamera, which is GPL v3+ licensed.
 
 ## Acknowledgments
 
