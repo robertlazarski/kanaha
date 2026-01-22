@@ -596,10 +596,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
         });
 
         // Wait for result with timeout (native code is also polling)
+        // Use 20 minutes (1200s) to allow time for large 4K video file transfers over WiFi
         try {
-            return future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            return future.get(1200, java.util.concurrent.TimeUnit.SECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
-            Log.e(TAG, "SFTP transfer timed out", e);
+            Log.e(TAG, "SFTP transfer timed out (20 min)", e);
             return createErrorResponse(operationId, "SFTP transfer timed out");
         } catch (Exception e) {
             Log.e(TAG, "Error waiting for SFTP transfer", e);
@@ -1028,9 +1029,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
             return directory.listFiles((dir, name) ->
                     name.endsWith(".mp4") || name.endsWith(".mov") || name.endsWith(".mkv"));
         } else if (pattern.contains("*")) {
-            // Wildcard pattern
-            final String ext = pattern.replace("*", "");
-            return directory.listFiles((dir, name) -> name.endsWith(ext));
+            // Wildcard pattern like "prefix*.mp4" or "*.mp4"
+            final String prefix = pattern.substring(0, pattern.indexOf("*"));
+            final String suffix = pattern.substring(pattern.indexOf("*") + 1);
+            return directory.listFiles((dir, name) ->
+                    name.startsWith(prefix) && name.endsWith(suffix));
         } else {
             // Specific file - with canonical path validation
             File file = new File(directory, pattern);

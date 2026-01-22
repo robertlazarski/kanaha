@@ -193,6 +193,45 @@ curl -sk --http2 \
   https://camera-device:8443/services/CameraControlService/sftpTransfer
 ```
 
+## Transfer Timeouts and Speed Limits
+
+### Timeout Configuration
+
+SFTP transfers have a **20-minute timeout** configured at all layers:
+
+| Layer | Timeout | Configuration |
+|-------|---------|---------------|
+| Native C (polling) | 20 min | `max_attempts = 12000` (12000 × 100ms) |
+| Java (Future.get) | 20 min | `future.get(1200, SECONDS)` |
+| curl (client) | 20 min | `--max-time 1200` |
+
+### WiFi Transfer Speed
+
+Typical WiFi SFTP throughput is **~2-3 MB/s** due to SSH protocol overhead.
+
+**Maximum transfer in 20-minute timeout: ~2.4-3.6 GB**
+
+### Recording Size Estimates
+
+| Resolution | Bitrate | 10 min | 20 min | Status |
+|------------|---------|--------|--------|--------|
+| 1080p 30fps | ~10-20 MB/min | 100-200 MB | 200-400 MB | OK |
+| 1080p 60fps | ~15-30 MB/min | 150-300 MB | 300-600 MB | OK |
+| 4K 30fps | ~40-80 MB/min | 400-800 MB | 800MB-1.6GB | OK |
+| 4K 60fps | ~80-150 MB/min | 800MB-1.5GB | 1.6-3 GB | OK |
+
+### Large File Alternatives
+
+For files exceeding ~3 GB, use USB transfer instead:
+
+```bash
+# Direct USB transfer via ADB (faster than WiFi SFTP)
+adb pull /storage/emulated/0/DCIM/OpenCamera/VID_*.mp4 /tmp/
+
+# Or with specific device serial
+adb -s <serial> pull /storage/emulated/0/DCIM/OpenCamera/*.mp4 /tmp/
+```
+
 ## Video File Locations
 
 The SFTP transfer looks for video files in these locations (in order):

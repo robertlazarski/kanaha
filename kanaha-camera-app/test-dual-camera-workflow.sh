@@ -20,6 +20,18 @@
 #   --use-ip               Use IP addresses instead of mDNS names
 #   --discover             Run mDNS discovery and exit
 #
+# SFTP Transfer Speed Notes:
+#   Typical WiFi SFTP speed: ~2-3 MB/s (SSH overhead limits throughput)
+#   Max transfer in 20 min timeout: ~2.4-3.6 GB per camera
+#
+#   Recording bitrate estimates (varies by scene complexity):
+#     1080p 30fps: ~10-20 MB/min  -> 10 min = 100-200 MB  (OK)
+#     4K 30fps:    ~40-80 MB/min  -> 10 min = 400-800 MB  (OK)
+#     4K 60fps:    ~80-150 MB/min -> 10 min = 800MB-1.5GB (OK)
+#     4K 60fps:    ~80-150 MB/min -> 20 min = 1.6-3GB     (OK)
+#
+#   For large files (>3GB), use --skip-transfer and: adb pull <path> /tmp/
+#
 
 set -e
 
@@ -170,12 +182,14 @@ get_camera_address() {
 }
 
 # Function to make API call
+# Usage: api_call <camera_address> <endpoint> <json_data> [timeout_seconds]
 api_call() {
     local camera=$1
     local endpoint=$2
     local data=$3
+    local timeout=${4:-30}  # Default 30 seconds (Moto X4 is slow on first call)
 
-    curl -sk --http2 --max-time 15 \
+    curl -sk --http2 --max-time "$timeout" \
         --cert "$SSL/client.crt" \
         --key "$SSL/client.key" \
         --cacert "$SSL/ca.crt" \
@@ -194,7 +208,7 @@ check_camera() {
     # Extract IP/hostname for TCP check
     local host="${address%:*}"
 
-    if timeout 3 bash -c "echo >/dev/tcp/$host/8443" 2>/dev/null; then
+    if timeout 10 bash -c "echo >/dev/tcp/$host/8443" 2>/dev/null; then
         echo -e "${GREEN}OK${NC}"
         return 0
     else
@@ -294,20 +308,20 @@ list_files() {
 }
 
 # Function to transfer files via SFTP
+# Usage: transfer_files <name> <address> <destination> [pattern]
 transfer_files() {
     local name=$1
     local address=$2
     local destination=$3
+    local pattern=${4:-"*.mp4"}  # Default to all mp4 files
 
     local response
-    response=$(api_call "$address" "sftpTransfer" "{\"action\":\"sftpTransfer\",\"storage_server_id\":\"control\",\"video_filename\":\"*.mp4\",\"destination_folder\":\"$destination\"}")
+    # Use 20 minute (1200s) timeout for SFTP transfer (4K videos can be several GB)
+    response=$(api_call "$address" "sftpTransfer" "{\"action\":\"sftpTransfer\",\"storage_server_id\":\"control\",\"video_filename\":\"$pattern\",\"destination_folder\":\"$destination\"}" 1200)
 
     if echo "$response" | grep -q '"success": true'; then
-        echo -e "  $name: ${GREEN}Transfer initiated${NC}"
         return 0
     else
-        echo -e "  $name: ${YELLOW}Transfer failed or not configured${NC}"
-        echo "    Response: ${response:0:100}..."
         return 1
     fi
 }
@@ -392,6 +406,10 @@ echo ""
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 CLIP="${CLIP_NAME}_${TIMESTAMP}"
 
+# Capture timestamp for OpenCamera filename pattern (VID_YYYYMMDD_HHMM*.mp4)
+# OpenCamera ignores our clip name and uses its own naming convention
+VID_PATTERN="VID_$(date +%Y%m%d_%H%M)*.mp4"
+
 # Start both cameras as close together as possible
 if $PIXEL_OK; then
     start_recording "Pixel 9 Pro" "$PIXEL_ADDR" "${CLIP}_pixel" &
@@ -457,20 +475,77 @@ if $MOTO_OK; then
     list_files "Moto X4" "$MOTO_ADDR"
 fi
 
-# Step 7: Transfer files (optional)
+# Step 7: Transfer files to control host /tmp
 if ! $SKIP_TRANSFER; then
     echo ""
-    echo -e "${BLUE}Step 7: Transferring files via SFTP...${NC}"
+    echo -e "${BLUE}Step 7: Transferring files to control host...${NC}"
+    echo ""
+    echo "  Note: WiFi SFTP speed ~2-3 MB/s (max ~3 GB in 20 min timeout)"
     echo ""
 
-    DEST_FOLDER="/tmp/kanaha/${CLIP}"
+    # Create separate directories for each camera (filenames only differ by timestamp)
+    PIXEL_DEST="/tmp/pixel9pro"
+    MOTO_DEST="/tmp/motox4"
+    TRANSFER_FAILED=false
 
     if $PIXEL_OK; then
-        transfer_files "Pixel 9 Pro" "$PIXEL_ADDR" "$DEST_FOLDER"
+        echo -n "  Pixel 9 Pro: Transferring ${VID_PATTERN} to ${PIXEL_DEST}... "
+        PIXEL_START=$(date +%s)
+        if transfer_files "Pixel 9 Pro" "$PIXEL_ADDR" "$PIXEL_DEST" "$VID_PATTERN" 2>/dev/null; then
+            PIXEL_END=$(date +%s)
+            PIXEL_DURATION=$((PIXEL_END - PIXEL_START))
+            echo -e "${GREEN}OK${NC} (${PIXEL_DURATION}s)"
+        else
+            TRANSFER_FAILED=true
+        fi
     fi
 
     if $MOTO_OK; then
-        transfer_files "Moto X4" "$MOTO_ADDR" "$DEST_FOLDER"
+        echo -n "  Moto X4: Transferring ${VID_PATTERN} to ${MOTO_DEST}... "
+        MOTO_START=$(date +%s)
+        if transfer_files "Moto X4" "$MOTO_ADDR" "$MOTO_DEST" "$VID_PATTERN" 2>/dev/null; then
+            MOTO_END=$(date +%s)
+            MOTO_DURATION=$((MOTO_END - MOTO_START))
+            echo -e "${GREEN}OK${NC} (${MOTO_DURATION}s)"
+        else
+            TRANSFER_FAILED=true
+        fi
+    fi
+
+    echo ""
+    if $TRANSFER_FAILED; then
+        echo -e "  ${YELLOW}Some transfers failed. For large files (>3GB), use USB:${NC}"
+        echo "    adb -s <serial> pull /storage/emulated/0/DCIM/OpenCamera/${VID_PATTERN} /tmp/<camera>/"
+    else
+        echo "  Files transferred to:"
+        $PIXEL_OK && echo "    - Pixel 9 Pro: ${PIXEL_DEST}"
+        $MOTO_OK && echo "    - Moto X4: ${MOTO_DEST}"
+
+        # Step 8: Delete transferred files from cameras
+        echo ""
+        echo -e "${BLUE}Step 8: Cleaning up transferred files...${NC}"
+
+        if $PIXEL_OK; then
+            echo -n "  Pixel 9 Pro: Deleting ${VID_PATTERN}... "
+            delete_response=$(api_call "$PIXEL_ADDR" "deleteFiles" "{\"action\":\"deleteFiles\",\"pattern\":\"${VID_PATTERN}\"}")
+            if echo "$delete_response" | grep -q '"success": true'; then
+                deleted_count=$(echo "$delete_response" | grep -o '"files_deleted": *[0-9]*' | grep -o '[0-9]*')
+                echo -e "${GREEN}OK${NC} ($deleted_count files)"
+            else
+                echo -e "${YELLOW}Could not delete${NC}"
+            fi
+        fi
+
+        if $MOTO_OK; then
+            echo -n "  Moto X4: Deleting ${VID_PATTERN}... "
+            delete_response=$(api_call "$MOTO_ADDR" "deleteFiles" "{\"action\":\"deleteFiles\",\"pattern\":\"${VID_PATTERN}\"}")
+            if echo "$delete_response" | grep -q '"success": true'; then
+                deleted_count=$(echo "$delete_response" | grep -o '"files_deleted": *[0-9]*' | grep -o '[0-9]*')
+                echo -e "${GREEN}OK${NC} ($deleted_count files)"
+            else
+                echo -e "${YELLOW}Could not delete${NC}"
+            fi
+        fi
     fi
 else
     echo ""

@@ -127,6 +127,26 @@ curl -s --http2 \
   "https://$CAMERA:8443/services/CameraControlService/sftpTransfer"
 ```
 
+#### Workflow Scripts
+
+For complete record-transfer-cleanup workflows, use the included test scripts:
+
+```bash
+cd kanaha-camera-app
+
+# Single camera: record 10 seconds, transfer to /tmp, delete from camera
+./test-single-camera-workflow.sh workflow --duration 10
+
+# Dual camera: simultaneous recording on Pixel 9 Pro and Moto X4
+./test-dual-camera-workflow.sh --duration 10
+
+# Single camera commands
+./test-single-camera-workflow.sh status      # Get camera status
+./test-single-camera-workflow.sh record      # Start recording
+./test-single-camera-workflow.sh stop        # Stop recording
+./test-single-camera-workflow.sh list        # List video files
+```
+
 See [mTLS Setup Guide](docs/MULTI_CAMERA_DEPLOYMENT_SYSTEM.md#mtls-certificate-architecture) for certificate management and [SFTP Setup](docs/SFTP-FILE-TRANSFER.md) for SSH key configuration.
 
 ## API Reference

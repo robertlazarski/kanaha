@@ -203,7 +203,9 @@ static int send_intent_and_wait_for_response(
     snprintf(response_file, sizeof(response_file), "%s%s.json", RESPONSE_FILE_PREFIX, operation_id);
 
     int attempts = 0;
-    const int max_attempts = 50;
+    /* Increase timeout to 20 minutes (12000 attempts × 100ms) to allow time for large
+     * 4K video file transfers over WiFi. Java side has 20 min timeout for SFTP. */
+    const int max_attempts = 12000;
 
     while (attempts < max_attempts) {
         if (access(response_file, F_OK) == 0) {
