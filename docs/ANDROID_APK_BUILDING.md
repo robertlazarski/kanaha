@@ -33,6 +33,7 @@ sudo apt install -y \
     m4
 
 # Install Java JDK 17 (required for Android builds)
+# Note: openjdk 21 will also work, use that if you already have it installed
 sudo apt install -y openjdk-17-jdk openjdk-17-jre
 
 # Verify Java installation
