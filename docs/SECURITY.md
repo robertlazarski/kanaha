@@ -2,6 +2,8 @@
 
 This document describes the security architecture of the Kanaha Camera Control System, with a focus on code-level security measures. For transport-level security (mTLS, certificates), see [MULTI_CAMERA_DEPLOYMENT_SYSTEM.md](MULTI_CAMERA_DEPLOYMENT_SYSTEM.md).
 
+**Operational Model**: Kanaha follows the **decentralized multicam production model** standard in professional video since 1970. Cameras operate independently without central coordination—synchronization is achieved via SMPTE LTC timecode in post-production. This eliminates single points of failure and reduces attack surface. See [Decentralized Multicam Security Model](#decentralized-multicam-security-model) for details.
+
 ## Security Layers Overview
 
 Kanaha implements defense-in-depth with security enforced at multiple layers:
@@ -23,7 +25,9 @@ Kanaha implements defense-in-depth with security enforced at multiple layers:
 │  Layer 3: Native C Layer (Axis2/C)                              │
 │  ├── Path traversal validation                                  │
 │  ├── File extension whitelist                                   │
-│  └── See: camera_control_service.c                              │
+│  ├── XML/JSON parser security (XXE protection)                  │
+│  ├── TLS 1.2+ with modern cipher suites                         │
+│  └── See: camera_control_service.c, Axis2/C SECURITY.md         │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 4: Java Application Layer                                │
 │  ├── SecurityValidator class                                    │
@@ -875,6 +879,90 @@ snprintf(buffer, size, "op_%ld_%ld", ts.tv_sec, ts.tv_nsec);
 - Deleted immediately after reading
 - Android app sandboxing prevents other apps from accessing
 
+## Axis2/C Security Hardening (January 2026)
+
+Kanaha includes Axis2/C with comprehensive security hardening from the AXIS2C-1708 initiative. For complete details, see the [Axis2/C SECURITY.md](https://github.com/apache/axis-axis2-c-core/blob/main/docs/SECURITY.md).
+
+### Key Security Features
+
+| Feature | Protection |
+|---------|------------|
+| **XML Parser Security** | XXE (XML External Entity) attacks blocked in both Guththila and libxml2 parsers |
+| **SSL/TLS Hardening** | TLS 1.2+ required, TLS 1.0/1.1 disabled (RFC 8996), AEAD ciphers with forward secrecy |
+| **NTLM Removed** | Deprecated authentication method completely removed (pass-the-hash, relay attacks) |
+| **JSON Parser Limits** | Nesting depth (64 levels) and payload size (10MB) limits prevent DoS |
+| **Build Hardening** | Stack protector, FORTIFY_SOURCE, RELRO, PIE for memory safety |
+| **OSS-Fuzz Integration** | Continuous fuzzing for XML, JSON, HTTP, and URL parsers |
+
+### AXIS2C-1708 Security Commits
+
+The following security hardening was applied to Axis2/C:
+
+- **OSS-Fuzz integration** for continuous security testing
+- **Gemini code review findings** addressed (error handling, TLS config)
+- **XML parser fixes** (depth limits, entity blocking)
+- **Attack surface reduction** (removed deprecated TCP, CGI, libcurl transports)
+- **HTTP/2 penetration testing** infrastructure
+- **NTLM authentication removed** (Microsoft-deprecated)
+- **Buffer overflow fixes** in HTTP/1.1 transport
+- **SSL/TLS protocol hardening** (disabled weak protocols, strong ciphers)
+- **libxml2 XXE protection** (external entity loader blocking)
+
+### Dependency Versions
+
+For security, ensure these minimum versions:
+
+| Dependency | Minimum Version | CVEs Addressed |
+|------------|-----------------|----------------|
+| OpenSSL | 1.1.1k+ | CVE-2021-3449, CVE-2021-3450 |
+| libxml2 | 2.9.10+ | CVE-2020-24977, CVE-2019-20388 |
+| json-c | 0.15+ | CVE-2020-12762 (integer overflow) |
+| nghttp2 | 1.50.0+ | CVE-2023-44487 (rapid reset) |
+| Apache httpd | 2.4.62+ | CVE-2024-40725, CVE-2024-40898 |
+
+### CVE Monitoring (Application Responsibility)
+
+Kanaha uses **OWASP Dependency-Check** via GitHub Actions (`.github/workflows/owasp-dependency-check.yml`) to scan shipped binaries for known vulnerabilities.
+
+**Responsibility Chain:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Axis2/C (Upstream Library)                                 │
+│  ─────────────────────────                                  │
+│  • Monthly CVE checker monitors dependencies                │
+│  • Updates SECURITY.md with minimum secure versions         │
+│  • Advisory role: "Use OpenSSL 3.2.1+ for CVE-XXXX"         │
+└─────────────────────────────────────────────────────────────┘
+                           │
+              Kanaha developer sees advisory
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Kanaha (This Repository) - Ships APK Binaries              │
+│  ─────────────────────────────────────────────              │
+│  • OWASP DC scans jniLibs/ and cross-compiled deps          │
+│  • CI fails on critical CVEs (CVSS >= 9.0)                  │
+│  • Developer rebuilds deps in android-cross-builds/         │
+│  • New APK released with patched libraries                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why this model:**
+- Axis2/C is a library (source distribution, no binaries)
+- Kanaha is an application (ships APK with specific library versions)
+- Libraries **advise** on CVEs; applications **act** on CVEs
+- OWASP DC scans the actual `.so` files baked into the APK
+
+**Workflow when CVE is discovered:**
+
+1. Axis2/C CVE checker creates issue with new vulnerability
+2. Axis2/C maintainer updates `docs/SECURITY.md` minimum versions
+3. Kanaha OWASP DC flags build as containing vulnerable library
+4. Kanaha developer updates `android-cross-builds/` with patched version
+5. Rebuild cross-compiled libraries (see [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md))
+6. Release new Kanaha APK
+
 ## Security Checklist
 
 ### For Developers
@@ -1207,6 +1295,145 @@ Kanaha's security posture is appropriate for a private camera control network:
 
 Additional hardening measures would provide diminishing returns relative to their implementation cost.
 
+## Decentralized Multicam Security Model
+
+Kanaha follows the **decentralized multicam production model** that has been standard in professional video production since SMPTE timecode was standardized in 1970. Understanding this model explains why certain "enterprise security" features are intentionally omitted.
+
+### Why No Central Coordination Server
+
+Many security frameworks assume an always-on central server for:
+- Real-time log aggregation
+- Automated alerting
+- Device coordination
+- Continuous monitoring dashboards
+
+**Kanaha intentionally avoids this architecture** because:
+
+1. **User Experience**: A multicam app that requires running a server would be uninstalled. Users want to grab their phones and shoot, not manage infrastructure.
+
+2. **Battery/Network**: Constant reporting to a central server drains battery and requires network connectivity during shoots—often impractical at outdoor locations.
+
+3. **Single Point of Failure**: A central server that goes down during a shoot would be catastrophic. Decentralized operation means each camera works independently.
+
+4. **Privacy**: Users don't want their camera footage metadata streaming to any server, even a local one.
+
+5. **Industry Standard**: This is how professional multicam has always worked.
+
+### SMPTE Timecode: Sync Without Coordination
+
+Professional multicam synchronization has never required real-time coordination between cameras. Instead, it uses **SMPTE timecode**—specifically **LTC (Linear Timecode)** recorded as an audio signal.
+
+```
+DURING RECORDING (no coordination):
+
+  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+  │  Camera A    │     │  Camera B    │     │  Camera C    │
+  │  (Pixel 9)   │     │  (Moto X4)   │     │  (Old phone) │
+  └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
+         │                    │                    │
+    Records video        Records video        Records video
+    + LTC on Ch.1        + LTC on Ch.1        + LTC on Ch.1
+         │                    │                    │
+         ▼                    ▼                    ▼
+    ┌─────────┐          ┌─────────┐          ┌─────────┐
+    │ SD Card │          │ SD Card │          │ SD Card │
+    └─────────┘          └─────────┘          └─────────┘
+
+  Cameras don't communicate. Each records independently.
+  LTC audio signal embeds timestamp in every frame.
+
+
+POST-PRODUCTION (sync happens here):
+
+    Import all clips
+           │
+           ▼
+    ┌─────────────────────────────────────┐
+    │     NLE (DaVinci Resolve, etc.)     │
+    │                                      │
+    │  1. Reads LTC from audio channel 1  │
+    │  2. Decodes SMPTE timecode          │
+    │  3. Auto-aligns clips by timecode   │
+    └─────────────────────────────────────┘
+           │
+           ▼
+    Synchronized multicam timeline
+```
+
+### LTC Timecode Sources
+
+For Kanaha multicam recording, LTC timecode is generated by an external device and fed into the phone's audio input:
+
+| Device | Description | Price Range |
+|--------|-------------|-------------|
+| Tentacle Sync E | Pocket-sized LTC generator, syncs via Bluetooth | ~$300 |
+| Deity TC-1 | Similar to Tentacle, 3.5mm output | ~$300 |
+| UltraSync ONE | Timecode + genlock in one unit | ~$400 |
+| IRIG Pro / Pro Duo | Audio interface that can receive LTC | ~$150-200 |
+
+**Setup**: Connect LTC generator to phone's audio input (USB-C audio adapter or 3.5mm TRRS). The timecode records as audio on channel 1 of the video file.
+
+### Security Implications of Decentralized Model
+
+| Traditional Enterprise | Kanaha Multicam |
+|-----------------------|-----------------|
+| Central server authenticates all requests | mTLS on each device (no central server) |
+| Real-time SIEM alerting | Post-shoot log review if needed |
+| Continuous monitoring | Devices are off most of the time |
+| Always-on connectivity | Network optional during recording |
+| IT staff manages alerts | Single operator reviews logs manually |
+
+**This is not a security weakness**—it's the correct security model for the use case:
+
+- **Physical possession** of the camera is required during shoots
+- **mTLS certificates** authenticate remote control commands
+- **Audit logs** exist on each device for post-incident review
+- **LTC timecode** provides tamper-evident timestamps in the video itself
+
+### When to Review Audit Logs
+
+Unlike enterprise systems with 24/7 monitoring, Kanaha audit logs are reviewed **reactively**:
+
+| Scenario | Action |
+|----------|--------|
+| Video files unexpectedly missing | Pull logs, check for `deleteFiles` calls |
+| Strange files appeared on camera | Pull logs, look for unknown IP addresses |
+| Preparing for high-security shoot | Regenerate certificates beforehand |
+| Post-incident investigation | Correlate logs across cameras by timestamp |
+
+**For a typical 1-hour multicam shoot**, you're operating cameras, not monitoring dashboards. Security review happens afterward if something seems wrong.
+
+### Why This Model is Secure
+
+1. **Attack window is small**: Cameras run ~1 hour, then turn off. Always-on servers have 24/7 attack surface.
+
+2. **No network required**: Cameras can operate in airplane mode. No network = no remote attacks.
+
+3. **Physical security dominates**: During a shoot, you physically possess the cameras. Theft/loss is the primary threat.
+
+4. **mTLS for remote control**: When you do send commands (start/stop recording, transfer files), mTLS ensures only authorized clients can connect.
+
+5. **Timecode is evidence**: LTC timecode in the video file provides an independent record of when footage was recorded, difficult to forge without detection.
+
+### Historical Context
+
+This model has secured broadcast productions for 50+ years:
+
+- **1970**: SMPTE timecode standardized (ST 12)
+- **1980s**: LTC widely adopted for audio/video sync
+- **1990s**: Multicam shoots with independent film cameras, synced in post
+- **2000s**: Tapeless workflows, same timecode principles
+- **2020s**: Smartphone multicam (Kanaha) follows identical sync model
+
+The security properties are well-understood:
+- Chain of custody = who physically had which camera
+- Timecode = when footage was recorded
+- No central server = no single point of compromise
+
+Kanaha applies modern authentication (mTLS) to this proven operational model.
+
+For detailed LTC timecode setup instructions, see [IRIG_PRO_SMPTE_TIMECODE_SETUP.md](IRIG_PRO_SMPTE_TIMECODE_SETUP.md).
+
 ## Reporting Security Issues
 
 If you discover a security vulnerability:
@@ -1218,4 +1445,4 @@ If you discover a security vulnerability:
 
 ---
 
-*Last updated: 2026-01-06*
+*Last updated: 2026-01-31*

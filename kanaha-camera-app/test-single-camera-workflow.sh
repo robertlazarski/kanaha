@@ -182,12 +182,12 @@ cmd_status() {
 
     if echo "$response" | grep -q '"success": true'; then
         local device_name battery storage state is_recording resolution
-        device_name=$(echo "$response" | grep -o '"device_name": *"[^"]*"' | cut -d'"' -f4)
-        battery=$(echo "$response" | grep -o '"battery_level": *[0-9]*' | grep -o '[0-9]*')
-        storage=$(echo "$response" | grep -o '"storage_available_mb": *[0-9]*' | grep -o '[0-9]*')
-        state=$(echo "$response" | grep -o '"state": *"[^"]*"' | cut -d'"' -f4)
-        is_recording=$(echo "$response" | grep -o '"is_recording": *[a-z]*' | grep -o 'true\|false')
-        resolution=$(echo "$response" | grep -o '"resolution": *"[^"]*"' | cut -d'"' -f4)
+        device_name=$(echo "$response" | grep -o '"device_name": *"[^"]*"' | head -1 | cut -d'"' -f4)
+        battery=$(echo "$response" | grep -o '"battery_level": *[0-9]*' | head -1 | grep -o '[0-9]*')
+        storage=$(echo "$response" | grep -o '"storage_available_mb": *[0-9]*' | head -1 | grep -o '[0-9]*')
+        state=$(echo "$response" | grep -o '"state": *"[^"]*"' | head -1 | cut -d'"' -f4)
+        is_recording=$(echo "$response" | grep -o '"is_recording": *[a-z]*' | head -1 | grep -o 'true\|false')
+        resolution=$(echo "$response" | grep -o '"resolution": *"[^"]*"' | head -1 | cut -d'"' -f4)
 
         echo ""
         echo -e "${CYAN}Pixel 9 Pro Status${NC}"
@@ -254,8 +254,8 @@ cmd_list() {
 
     if echo "$response" | grep -q '"success": true'; then
         local file_count total_size
-        file_count=$(echo "$response" | grep -o '"file_count": *[0-9]*' | grep -o '[0-9]*')
-        total_size=$(echo "$response" | grep -o '"total_size": *[0-9]*' | grep -o '[0-9]*')
+        file_count=$(echo "$response" | grep -o '"file_count": *[0-9]*' | grep -o '[0-9]*' | head -1)
+        total_size=$(echo "$response" | grep -o '"total_size": *[0-9]*' | grep -o '[0-9]*' | head -1)
         total_size_mb=$((total_size / 1024 / 1024))
 
         echo ""
@@ -378,7 +378,7 @@ cmd_workflow() {
 
         if echo "$delete_response" | grep -q '"success": true'; then
             local deleted_count
-            deleted_count=$(echo "$delete_response" | grep -o '"files_deleted": *[0-9]*' | grep -o '[0-9]*')
+            deleted_count=$(echo "$delete_response" | grep -o '"files_deleted": *[0-9]*' | head -1 | grep -o '[0-9]*')
             echo -e "${GREEN}OK${NC} ($deleted_count files deleted)"
         else
             echo -e "${YELLOW}Could not delete${NC}"

@@ -1163,6 +1163,8 @@ The successful test on Moto X4 (2017) and Pixel 9 Pro (2024) demonstrates compat
 
 | Date | Changes |
 |------|---------|
+| 2026-01-31 | Fixed Android 15 16KB page alignment warning: added `-Wl,-z,max-page-size=16384 -Wl,-z,separate-loadable-segments` to all native library link flags, switched to c++_static STL. See [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md#android-15-16kb-page-alignment) for details |
+| 2026-01-31 | New build with Axis2/C AXIS2C-1708 security hardening (TLS 1.2+, XXE protection, JSON limits, NTLM removed) |
 | 2026-01-22 | Consolidated installation guide from MULTI_CAMERA_DEPLOYMENT_SYSTEM.md |
 | 2026-01-07 | Updated architecture docs, clarified libhttpd.so vs CMake artifacts |
 | 2025-12-31 | Initial document with complete APK building guide and troubleshooting |

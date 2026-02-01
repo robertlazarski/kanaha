@@ -501,6 +501,88 @@ Headers installed: 259
 | libneethi.a | WS-Policy support | ~300 KB |
 | libguththila.a | Fast XML parser | ~80 KB |
 
+### Rebuilding Axis2/C for Security Updates
+
+When new security updates are available in the Axis2/C repository (e.g., AXIS2C-1708 security hardening), you can rebuild and update the libraries without rebuilding all dependencies. A rebuild script is provided:
+
+**Script location:** `~/android-cross-builds/rebuild-axis2c.sh`
+
+```bash
+#!/bin/bash
+# Rebuild Axis2/C for Android arm64 with security fixes
+set -e
+
+cd ~/repos/axis-axis2-c-core
+
+# Pull latest security fixes
+git pull
+
+# Set environment variables
+export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/28.0.12916984
+export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+export DEPS=$HOME/android-cross-builds/deps/arm64-v8a
+export HTTPD=$HOME/android-cross-builds/httpd-2.4.66
+
+export CC=$TOOLCHAIN/bin/aarch64-linux-android21-clang
+export AR=$TOOLCHAIN/bin/llvm-ar
+export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+export CFLAGS="-fPIC -I$DEPS/include -I$DEPS/include/apr-1 -I$HTTPD/include -I$DEPS/include/json-c"
+export LDFLAGS="-L$DEPS/lib"
+export LIBS="-lapr-1 -laprutil-1 -lexpat -lssl -lcrypto -lnghttp2 -ljson-c -llog"
+
+# Clean and reconfigure
+make distclean 2>/dev/null || true
+
+./configure \
+  --host=aarch64-linux-android \
+  --prefix=$DEPS \
+  --with-apr=$DEPS \
+  --with-apache2=$HTTPD \
+  --with-openssl=$DEPS \
+  --enable-json \
+  --enable-http2 \
+  --enable-static \
+  --disable-shared
+
+# Build
+make -j$(nproc)
+
+# Copy static libraries to deps directory
+for lib in $(find . -name "*.a" -path "*/.libs/*"); do
+    cp "$lib" $DEPS/lib/
+done
+
+echo "=== Axis2/C rebuilt with security fixes ==="
+```
+
+**Rebuild process:**
+
+```bash
+# 1. Rebuild Axis2/C libraries
+bash ~/android-cross-builds/rebuild-axis2c.sh
+
+# 2. Relink httpd with updated libraries
+bash ~/android-cross-builds/link-httpd-axis2.sh
+
+# 3. Copy to jniLibs
+cp ~/android-cross-builds/httpd-2.4.66/httpd \
+   ~/repos/kanaha/kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so
+
+# 4. Rebuild APK
+cd ~/repos/kanaha/kanaha-camera-app
+./gradlew clean assembleDebug
+```
+
+**Security updates included in AXIS2C-1708 (January 2026):**
+- XML parser security (XXE protection)
+- SSL/TLS hardening (TLS 1.2+ required)
+- JSON parsing limits (DoS prevention)
+- NTLM authentication removed
+- Build hardening (stack protector, FORTIFY_SOURCE)
+- OSS-Fuzz integration
+
+For full details, see [Axis2/C SECURITY.md](https://github.com/apache/axis-axis2-c-core/blob/main/docs/SECURITY.md).
+
 ---
 
 ## APR Android Patches
@@ -1299,10 +1381,94 @@ To add a new statically-linked service:
 
 ---
 
+## Android 15 16KB Page Alignment
+
+Starting with Android 15 (API 35), devices with ARM64 processors may use 16KB memory pages instead of the traditional 4KB pages. Native libraries (.so files) that aren't properly aligned will trigger a compatibility warning dialog when the app launches.
+
+### Why 16KB Pages?
+
+The move to 16KB pages addresses several performance and efficiency issues that have become more pressing with modern hardware:
+
+1. **Memory Management Overhead**: With 4KB pages, the kernel must maintain more page table entries. A 16GB device with 4KB pages needs 4 million page table entries just for physical memory mapping. With 16KB pages, this drops to 1 million entries.
+
+2. **TLB (Translation Lookaside Buffer) Efficiency**: Modern ARM64 CPUs have limited TLB entries. Larger pages mean each TLB entry covers more memory, dramatically reducing TLB misses for memory-intensive workloads.
+
+3. **I/O Performance**: File system operations benefit from larger page sizes since a single page fault can bring in more data. This is particularly important for database operations and large file access.
+
+4. **Memory Fragmentation**: Larger pages reduce internal fragmentation overhead percentage-wise, though they can increase absolute waste for small allocations.
+
+5. **ARM64 Hardware Support**: ARM64 architecture natively supports 4KB, 16KB, and 64KB pages. Apple Silicon (M1/M2/M3) uses 16KB pages, and Android is following suit to align with modern ARM ecosystem trends.
+
+### Historical Context
+
+Android historically required 4KB pages because:
+- Early ARM devices (32-bit) only supported 4KB
+- Compatibility with Linux x86 ecosystem (4KB standard)
+- Legacy NDK binaries compiled with 4KB assumptions
+
+The transition started with Android 15 as ARMv8+ devices became universal and the performance benefits outweighed compatibility concerns.
+
+### Linker Flags for 16KB Alignment
+
+All native libraries must be linked with these flags:
+
+```bash
+# Required for Android 15+ 16KB page support
+-Wl,-z,max-page-size=16384
+-Wl,-z,separate-loadable-segments
+```
+
+- **max-page-size=16384**: Sets the ELF page size to 16KB
+- **separate-loadable-segments**: Forces each LOAD segment to start at a page boundary (not just be congruent mod page_size)
+
+### CMake Configuration
+
+In `build.gradle`, add the CMake argument:
+```groovy
+externalNativeBuild {
+    cmake {
+        arguments '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON',
+                  '-DANDROID_STL=c++_static'  // Avoid libc++_shared.so alignment issues
+    }
+}
+```
+
+In `CMakeLists.txt`, add linker options:
+```cmake
+target_link_options(your_library PRIVATE
+    -Wl,-z,max-page-size=16384
+    -Wl,-z,separate-loadable-segments
+)
+```
+
+### Static vs Shared C++ Runtime
+
+The NDK's pre-built `libc++_shared.so` may not have proper 16KB alignment. Use static linking (`c++_static`) to avoid this issue. The trade-off is slightly larger binaries but guaranteed alignment.
+
+### Verifying Alignment
+
+Check ELF segment alignment with `readelf`:
+
+```bash
+readelf -l libfoo.so | grep LOAD
+
+# Good (all offsets are multiples of 0x4000 = 16384):
+LOAD  0x0000000000000000 0x0000000000000000 ... 0x4000
+LOAD  0x0000000000004000 0x0000000000004000 ... 0x4000
+
+# Bad (offsets not aligned to 16KB):
+LOAD  0x0000000000000000 0x0000000000000000 ... 0x1000
+LOAD  0x00000000000f18d0 0x00000000000f28d0 ... 0x1000
+```
+
+---
+
 ## Version History
 
 | Date | Changes |
 |------|---------|
+| 2026-01-31 | Added 16KB page alignment documentation for Android 15, updated linker flags for all native libraries |
+| 2026-01-31 | Added "Rebuilding Axis2/C for Security Updates" section with AXIS2C-1708 security hardening documentation and rebuild script |
 | 2026-01-03 | Added Step 11: Final linking with static service registry, Android static service registry documentation, direct linking bypassing libtool |
 | 2025-12-31 | **CRITICAL FIX**: Added -fPIC requirement for APR, APR-util, and Axis2/C. Static libraries MUST be compiled with -fPIC to link into Android shared libraries. Updated build instructions for Steps 5, 6, 9 |
 | 2025-12-31 | Added Step 10: Install Axis2/C libraries to deps directory, updated verification section with complete library inventory |

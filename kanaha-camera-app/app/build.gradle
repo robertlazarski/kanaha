@@ -1,15 +1,15 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdk 34
+    compileSdk 35
     compileOptions.encoding = 'UTF-8'
 
     defaultConfig {
         applicationId "org.kanaha.camera"
         minSdkVersion 21  // Raised from 15 to support HTTP/2 and modern TLS features
-        targetSdkVersion 34
-        versionCode 1
-        versionName "1.0.0"
+        targetSdkVersion 35
+        versionCode 2
+        versionName "1.1.0"
 
         renderscriptTargetApi 21
         //renderscriptSupportModeEnabled true // don't use support library as it bloats the APK, and we don't need pre-4.4 support
@@ -29,11 +29,14 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags '-std=c++17 -frtti -fexceptions'
-                arguments '-DANDROID_STL=c++_shared',
+                // Use static C++ runtime to avoid 16KB alignment issues with libc++_shared.so
+                arguments '-DANDROID_STL=c++_static',
                           '-DANDROID_PLATFORM=android-21',
                           '-DAXIS2_JSON_ENABLED=1',
                           '-DWITH_NGHTTP2=1',
-                          '-DWITH_OPENSSL=1'
+                          '-DWITH_OPENSSL=1',
+                          // Android 15 (API 35) requires 16KB page alignment
+                          '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
             }
         }
     }

@@ -1,0 +1,99 @@
+name: OWASP Dependency Check
+
+on:
+  # Run on releases and monthly
+  release:
+    types: [published]
+  schedule:
+    # Run monthly on the 15th (offset from Axis2/C's 1st)
+    - cron: '0 0 15 * *'
+  workflow_dispatch:
+    # Allow manual trigger
+
+jobs:
+  dependency-check:
+    runs-on: ubuntu-latest
+    name: Scan Dependencies for CVEs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java (required for OWASP DC)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Run OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@main
+        id: depcheck
+        with:
+          project: 'Kanaha Camera App'
+          path: '.'
+          format: 'HTML,JSON'
+          args: >
+            --scan app/src/main/jniLibs/
+            --scan app/src/main/cpp/
+            --enableExperimental
+            --failOnCVSS 9
+
+      - name: Upload Dependency-Check Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-check-report
+          path: reports/
+          retention-days: 90
+
+      - name: Check for Critical Vulnerabilities
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Try to read the JSON report
+            let reportSummary = 'OWASP Dependency-Check found critical vulnerabilities (CVSS >= 9.0).\n\n';
+            reportSummary += 'Please review the full report in the workflow artifacts.\n\n';
+            reportSummary += '## Required Actions\n\n';
+            reportSummary += '1. Review the dependency-check-report artifact\n';
+            reportSummary += '2. Update affected dependencies in `android-cross-builds/`\n';
+            reportSummary += '3. Rebuild cross-compiled libraries\n';
+            reportSummary += '4. Rebuild and release new APK\n\n';
+            reportSummary += '## Reference\n\n';
+            reportSummary += 'See [Axis2/C SECURITY.md](https://github.com/apache/axis-axis2-c-core/blob/main/docs/SECURITY.md) for minimum secure versions.\n';
+
+            // Check for existing open issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'security,dependencies',
+              state: 'open'
+            });
+
+            const existingIssue = issues.data.find(i =>
+              i.title.includes('Critical CVE')
+            );
+
+            if (!existingIssue) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Critical CVE Found - ${new Date().toISOString().slice(0,10)}`,
+                body: reportSummary,
+                labels: ['security', 'dependencies', 'critical']
+              });
+              console.log('Created critical CVE issue');
+            }
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## OWASP Dependency-Check Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Reports uploaded as workflow artifacts." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Scanned Paths" >> $GITHUB_STEP_SUMMARY
+          echo "- \`app/src/main/jniLibs/\` - Pre-built native libraries" >> $GITHUB_STEP_SUMMARY
+          echo "- \`app/src/main/cpp/\` - Native source code" >> $GITHUB_STEP_SUMMARY

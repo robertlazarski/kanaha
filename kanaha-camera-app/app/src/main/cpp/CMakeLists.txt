@@ -204,8 +204,13 @@ if(USE_CROSS_COMPILED_LIBS)
     )
 
     # Linker flags
+    # Android 15 (API 35) requires 16KB page aligned ELF segments
+    # -z,max-page-size=16384: Set page size to 16KB
+    # -z,separate-loadable-segments: Force each LOAD segment to start at page boundary
     target_link_options(kanaha-camera-control PRIVATE
         -Wl,--gc-sections
+        -Wl,-z,max-page-size=16384
+        -Wl,-z,separate-loadable-segments
     )
 else()
     # Stub build - minimal linking
@@ -216,9 +221,12 @@ else()
         ${z-lib}
     )
 
+    # Android 15 (API 35) requires 16KB page aligned ELF segments
     target_link_options(kanaha-camera-control PRIVATE
         -Wl,--gc-sections
         -Wl,--strip-all
+        -Wl,-z,max-page-size=16384
+        -Wl,-z,separate-loadable-segments
     )
 endif()
 
@@ -295,10 +303,13 @@ if(USE_CROSS_COMPILED_LIBS)
         crypto
     )
 
+    # Android 15 (API 35) requires 16KB page aligned ELF segments
     target_link_options(kanaha_httpd.so PRIVATE
         -fPIE
         -pie
         -Wl,--gc-sections
+        -Wl,-z,max-page-size=16384
+        -Wl,-z,separate-loadable-segments
     )
 
     # Install executable to the same location as shared libraries
