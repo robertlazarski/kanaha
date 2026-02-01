@@ -15,19 +15,45 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 
 ## Installation
 
-### Download Pre-built APK
+### Option 1: Install Directly on Phone (Easiest)
 
-1. Download the latest APK from [Releases](../../releases)
-2. On your Android device: **Settings → Security → Enable "Install from unknown sources"**
-3. Open the downloaded APK to install
-4. Grant permissions when prompted: Camera, Microphone, Storage, Location
+1. On your Android phone, open: **[Latest Release](../../releases/latest)**
+2. Tap `app-debug.apk` to download
+3. Tap the downloaded file notification to install
+4. If prompted: **Settings → Install unknown apps → Allow** for your browser
+5. Tap **Install**, then **Open**
 
-### Verify Download (Optional)
+### Option 2: Install via ADB (USB)
 
 ```bash
-# Verify SHA256 checksum
-sha256sum kanaha-v1.0.0-arm64.apk
-# Compare with checksum in release notes
+# Download APK from releases page, then:
+adb install app-debug.apk
+```
+
+### Option 3: Install via ADB (WiFi)
+
+```bash
+# On phone: Settings → Developer options → Wireless debugging → Pair
+adb pair <phone-ip>:<pair-port>  # Enter pairing code
+
+adb connect <phone-ip>:5555
+adb install app-debug.apk
+```
+
+### First Launch
+
+1. Open **Kanaha** app
+2. Grant permissions: Camera, Microphone, Storage
+3. **Android 15 users:** Tap "OK" on the debuggable app warning (this is a debug build)
+4. Camera preview appears - the HTTP control server starts automatically on port 8443
+
+### Verify Installation
+
+From a computer on the same WiFi network (requires [certificates](#1-generate-certificates)):
+
+```bash
+curl -sk https://<phone-ip>:8443/services/CameraControlService/getStatus \
+  --cert client.crt --key client.key --cacert ca.crt
 ```
 
 ## Quick Start
