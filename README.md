@@ -8,7 +8,7 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 
 - **Multi-Camera Control** - Start/stop recording on multiple phones simultaneously
 - **HTTP/2 + mTLS Security** - Enterprise-grade encryption with certificate authentication
-- **Wide Device Support** - Same APK works on Android 5.0+ devices (tested 2017 Moto X4 through 2024 Pixel 9 Pro)
+- **Wide Device Support** - Same APK works on Android 5.0+ devices (tested 2017 Moto X4 through 2024 Pixel 9 Pro) [<sup>1</sup>](#notes)
 - **SFTP File Transfer** - Secure file retrieval with SSH key authentication
 - **mDNS Discovery** - Automatic camera discovery on local network
 - **Built in C** - Native Apache httpd + Axis2/C for low latency and minimal memory footprint
@@ -269,6 +269,10 @@ Control Station                    Android Device
      |  JSON Response                   |
      | ◄─────────────────────────────  |
 ```
+
+## Notes
+
+<sup>1</sup> **SMPTE timecode recording** requires a USB audio interface (iRig Pro I/O) which needs ~500mA of USB power. Phones from ~2021+ (Pixel 6 and later) provide sufficient USB-C power and work with a direct connection. Older phones (pre-2020) lack sufficient USB OTG power for the audio interface to enumerate, making them unsuitable for timecode recording. Camera control, video recording, and all other Kanaha features work identically on all supported devices. See [iRig SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) for details.
 
 ## License
 

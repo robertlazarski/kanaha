@@ -8,31 +8,34 @@ This document describes how to connect an IK Multimedia iRig Pro I/O audio inter
 
 ## Equipment Required
 
-### For Modern Phones (Pixel 9 Pro, 2020+)
+### For Modern Phones (Pixel 6+, 2021+)
+
+Modern USB-C phones use USB Type-C Dual Role Port (DRP) with CC pin role detection, replacing the older USB OTG standard. This provides automatic host/device negotiation and full USB Power Delivery (500mA+) — no OTG adapters needed.
 
 | Item | Description | Amazon ASIN |
 |------|-------------|-------------|
 | iRig Pro I/O | USB audio interface | B06W5H9FFJ |
 | Mini-Din 7-pin to USB-C cable | Direct connection | (included with iRig) |
 
-### For Older Phones (Moto X4, pre-2020)
+### For Older Phones (Pre-2021)
+
+SMPTE timecode recording on phones older than ~2021 is **unlikely to work** due to insufficient USB OTG power. See "Older Phones" section below for details. If you want to try, you'll need:
 
 | Item | Description | Amazon ASIN | Critical Notes |
 |------|-------------|-------------|----------------|
-| iRig Pro I/O | USB audio interface | B06W5H9FFJ | |
-| Mini-Din 7-pin to USB-A cable | Connects iRig to hub | B0DRWK7V76 | |
-| Simple USB-C OTG Adapter | Basic OTG, NO charging passthrough | B07F9Z1NCP | **Must be simple adapter - see "Lessons Learned"** (USB 2.0 or 3.0 adapter OK) |
-| Amazon Basics USB 2.0 Hub | **USB 2.0** powered hub | B00DQFGJR4 | **Must be USB 2.0 - USB 3.0 hubs fail** |
-| USB Y-Splitter Cable (Plan B) | Power injection cable | B072LLMKJF | **Alternative to hub - injects external power** |
+| Simple USB-C OTG Adapter | Basic OTG, NO charging passthrough | B07F9Z1NCP | **Must be simple adapter** (USB 2.0 or 3.0 OK) |
+| Mini-Din 7-pin to USB-A cable | Connects iRig to adapter/hub | B0DRWK7V76 | |
+| USB 2.0 Powered Hub (optional) | May help if phone can enumerate hubs | B00DQFGJR4 | **Must be USB 2.0 — USB 3.0 hubs fail on older phones** |
 
 ## Device Compatibility Matrix
 
-| Device | Year | USB-C | Direct Connection | Powered Hub Required | Notes |
-|--------|------|-------|-------------------|---------------------|-------|
-| Pixel 9 Pro | 2024 | Yes | **Yes** | No | Full USB-C PD support |
-| Pixel 6/7/8 | 2021+ | Yes | **Yes** | No | Full USB-C PD support |
-| Moto X4 | 2017 | Yes | No | **Yes - USB 2.0 only** | Limited OTG, see details below |
-| Older USB-C phones | 2016-2019 | Yes | Unlikely | **Yes - USB 2.0 only** | Test with simple OTG adapter first |
+| Device | Year | USB-C | Direct Connection | Notes |
+|--------|------|-------|-------------------|-------|
+| Pixel 9 Pro | 2024 | Yes | **Yes** | Full USB-C PD support |
+| Pixel 6/7/8 | 2021+ | Yes | **Yes** | Full USB-C PD support |
+| Phones from ~2021+ | 2021+ | Yes | **Likely** | Most provide sufficient USB power |
+| Moto X4 | 2017 | Yes | No | **Not viable** — insufficient USB power, hubs don't enumerate |
+| Older USB-C phones | 2016-2020 | Yes | Unlikely | Test with simple OTG adapter first; see "Older Phones" section |
 
 ## Connection Diagrams
 
@@ -70,276 +73,48 @@ This document describes how to connect an IK Multimedia iRig Pro I/O audio inter
 
 **Note:** Modern phones provide sufficient USB-C power directly. No adapters or hubs needed.
 
-### Moto X4 (USB 2.0 Powered Hub Required)
+### Older Phones (Pre-2021): Not Recommended for SMPTE Timecode
 
-```
-                              ┌─────────────────┐
-                              │   WALL OUTLET   │
-                              └────────┬────────┘
-                                       │
-                                       │ Hub's AC Adapter
-                                       │ (5V/4A)
-                                       │
-                                       ▼
-┌─────────────┐            ┌──────────────────────────────────┐
-│             │            │  AMAZON BASICS USB 2.0 HUB       │
-│   MOTO X4   │            │         (B00DQFGJR4)             │
-│             │            │                                  │
-│  ┌───────┐  │            │  ┌──────────┐  ┌─────────────┐  │
-│  │ USB-C │  │            │  │ DC Power │  │ USB-A Ports │  │
-│  │ port  │  │            │  │ Input    │  │ ┌──┐ ┌──┐   │  │
-│  └───┬───┘  │            │  └──────────┘  │ │1 │ │2 │...│  │
-└──────┼──────┘            │                │ └┬─┘ └──┘   │  │
-       │                   │  ┌──────────┐  └──┼──────────┘  │
-       │                   │  │ Upstream │     │             │
-       │                   │  │ USB-A    │     │             │
-       │                   │  │ (cable)  │     │             │
-       │                   │  └────┬─────┘     │             │
-       │                   └───────┼───────────┼─────────────┘
-       │                           │           │
-       │                           │           │ iRig USB-A cable
-       │     ┌─────────────────┐   │           │ (B0DRWK7V76)
-       │     │ SIMPLE OTG      │   │           │
-       └────►│ ADAPTER         │◄──┘           │
-             │ (B07F9Z1NCP)    │               │
-             │                 │               │
-             │ ┌─────┐ ┌─────┐ │               ▼
-             │ │USB-C│ │USB-A│ │      ┌─────────────────┐
-             │ │male │ │female│ │      │  iRIG PRO I/O   │
-             │ └─────┘ └─────┘ │      │                 │
-             └─────────────────┘      │  ┌───────────┐  │
-                                      │  │ Mini-Din  │◄─┼── 7-pin end
-                                      │  │ 7-pin     │  │
-                                      │  └───────────┘  │
-                                      │                 │
-                                      │  ┌───────────┐  │
-                                      │  │ BLUE LED  │  │ ← BRIGHT BLUE
-                                      │  │    ●      │  │   (if working)
-                                      │  └───────────┘  │
-                                      └─────────────────┘
-```
+Phones from before ~2021 (like the Moto X4, 2017) do not provide enough USB power for the iRig Pro I/O. **If your phone is from 2021 or later, skip this section entirely** — just use a direct USB-C connection.
 
-## Connection Summary (Moto X4)
+The iRig Pro I/O follows the USB specification strictly: it draws only 100mA until it enumerates with a USB host, then requests 500mA. Older phones provide only ~100-150mA via USB OTG — not enough for the iRig's USB controller chip to even initialize and complete enumeration. This creates a chicken-and-egg problem: the iRig needs enumeration to draw full power, but needs more power than the phone provides to complete enumeration. You can tell this is happening by the **dim blue LED** on the iRig (vs. the bright blue LED on a modern phone).
 
-1. **Simple OTG adapter** (B07F9Z1NCP) → **Moto X4 USB-C port**
-2. **Hub's upstream USB-A cable** → **OTG adapter's USB-A female port**
-3. **Hub's DC power input** → **Hub's AC adapter** → **Wall outlet**
-4. **iRig Mini-Din cable USB-A end** → **Hub's USB-A port**
-5. **iRig Mini-Din cable 7-pin end** → **iRig Pro I/O**
+We tested every reasonable approach to inject external power on a Moto X4 (2017). None worked:
 
-**Note:** Phone will NOT charge while using OTG. This is normal for older phones.
+| Approach | Result | Why It Failed |
+|----------|--------|---------------|
+| USB 3.0 powered hub | Failed | Phone's OTG controller can't handle USB 3.0 SuperSpeed negotiation |
+| USB 2.0 powered hub | Failed | Phone enters host mode but can't enumerate any hub (SDM660 limitation) |
+| USB Y-splitter cable (power injection) | Failed | Even with VCC wire cut, the cable in the chain prevents OTG detection |
+| iRig AA batteries | No effect | Batteries power the analog audio circuits, not the USB controller chip |
+| iRig DC adapter (PSU 3A) | No effect | Designed for iOS device charging passthrough, doesn't supplement USB power |
+| USB charger (no host) | No effect | Without a USB host, enumeration never occurs and iRig stays at 100mA |
+
+**Quick test for your phone:** Connect iRig directly via a simple USB-C OTG adapter (no charging passthrough — e.g., B07F9Z1NCP). If the iRig LED is bright blue, your phone provides enough power. If dim blue, try a USB 2.0 powered hub. If that also fails, the phone is not viable for SMPTE timecode. The phone still works fine with Kanaha for camera control and video recording.
 
 ---
 
-## Lessons Learned: Why Older Phones Are Difficult
+## Mini-Din 7-Pin Connector Handling
 
-This section documents extensive real-world testing with a Moto X4 (2017) to help users with "drawer phones" understand what works and what doesn't.
+**WARNING:** The Mini-Din 7-pin connector is extremely fragile. Bent pins are the most
+common failure mode and can destroy the cable permanently.
 
-### The Core Problem
+**Insertion procedure:**
+1. Locate the **key notch** on the iRig's 7-pin port (small slot in the metal ring)
+2. Align the cable connector's **key tab** (often marked with an arrow) with the key notch
+3. Hold the connector lightly against the port and **rotate slowly** until the key tab drops into the slot - you'll feel it want to slide in
+4. Push straight in with gentle, even pressure - it should click in smoothly
+5. **Never force it.** If it resists, pull back and re-align. Forcing bends the pins.
 
-The iRig Pro I/O requires ~500mA of USB power. Older phones can only provide ~100-150mA via USB OTG, resulting in insufficient power (dim blue LED).
+**If pins are bent:**
+- Use a needle or fine jeweler's screwdriver to gently nudge each pin back to vertical
+- Work one pin at a time under bright light
+- Apply minimal force - pins snap after being bent back and forth
+- If pins are severely bent or touching each other, the cable should be replaced
 
-**Solution:** Use a powered USB hub to provide independent power.
-
-**The Catch:** Not all powered USB hubs work with older phones' limited USB OTG implementation.
-
-### What We Tested (And Why Each Failed)
-
-#### Attempt 1: USB-C OTG Adapter with Charging Passthrough (B08KPD5S82)
-
-**Equipment:** USB-C OTG adapter with USB-A port + USB-C charging passthrough
-
-**Result:** FAILED
-
-**Why it failed:**
-```
-Phone USB status: host_connected=false, current_mode=none
-```
-
-The Moto X4's USB-C controller did not recognize this adapter's OTG signaling. These multi-function adapters use complex USB-C Power Delivery negotiation that older phones don't support.
-
-**Symptoms:**
-- Phone charges through the adapter (charging passthrough works)
-- Phone never enters USB host mode
-- No USB devices detected
-
-**Lesson:** Avoid OTG adapters with charging passthrough for older phones. The PD negotiation interferes with OTG detection.
-
----
-
-#### Attempt 2: Simple USB-C OTG Adapter (B07F9Z1NCP)
-
-**Equipment:** Basic USB-C to USB-A adapter (no charging port). Can be USB 2.0 or USB 3.0 adapter - both trigger host mode. (USB 3.0 adapters have a blue USB-A port; USB 2.0 adapters have black/white.)
-
-**Result:** PARTIAL SUCCESS
-
-**Why it partially worked:**
-```
-# With iRig connected DIRECTLY to adapter:
-host_connected=true, current_mode=dfp, data_role=host  ✓
-
-# But iRig shows DIM BLUE (insufficient power from phone)
-```
-
-The simple adapter correctly triggers USB host mode on the Moto X4. However, the phone can only provide ~100mA, not enough for the iRig's ~500mA requirement.
-
-**Lesson:** Simple OTG adapters work for host mode detection, but a powered hub is still needed for power-hungry devices.
-
----
-
-#### Attempt 3: USB 3.0 Powered Hub (Sabrent HB-UMP3 / B00TPMEOYM)
-
-**Equipment:** Sabrent 4-Port USB 3.0 Hub with 5V/2.5A power adapter
-
-**Result:** FAILED
-
-**Why it failed:**
-```
-# With hub in the chain:
-host_connected=false, current_mode=none  ✗
-
-# Direct connection (no hub):
-host_connected=true  ✓
-```
-
-When the USB 3.0 hub was connected between the OTG adapter and the iRig, the Moto X4 stopped entering host mode entirely. The hub works perfectly when connected to a laptop.
-
-**Root cause analysis:**
-
-1. **USB 3.0 SuperSpeed negotiation** - USB 3.0 hubs have complex enumeration involving SuperSpeed (5Gbps) signaling that older phones' OTG controllers cannot handle.
-
-2. **Power backfeed** - Powered USB 3.0 hubs may send voltage back through the upstream port, confusing the phone's USB-C detection circuitry.
-
-**Testing performed:**
-- Modified hub's upstream cable by cutting the VCC (red) wire to prevent power backfeed
-- Wire colors: Red=VCC (power), White=D-, Green=D+, Black=GND
-- Result: Still failed - `host_connected=false`
-- Conclusion: The issue is USB 3.0 protocol complexity, not power backfeed
-
-**Important:** Cutting the VCC wire proved definitively that the problem is USB 3.0 SuperSpeed enumeration, NOT power backfeed from the hub. The phone's OTG controller simply cannot handle the USB 3.0 protocol.
-
-**Lesson:** USB 3.0 hubs do not work with older phones' USB OTG, even with power isolation. Use USB 2.0 hubs only.
-
----
-
-#### Attempt 4: USB 2.0 Powered Hub (PENDING)
-
-**Equipment:** Amazon Basics 7-Port USB 2.0 Hub (B00DQFGJR4) with 5V/4A power adapter
-
-**Status:** On order - testing pending
-
-**Why this should work:**
-- **True USB 2.0** protocol (480Mbps max, no SuperSpeed)
-- Simpler enumeration that older OTG controllers can handle
-- Includes robust 5V/4A power adapter (enough for multiple devices)
-- Amazon Basics quality/reliability
-
-**Expected outcome:**
-```
-Moto X4 → Simple OTG adapter → USB 2.0 hub → iRig
-                                    ↓
-                              5V/4A power supply
-
-host_connected=true, iRig LED=BRIGHT BLUE
-```
-
----
-
-#### Attempt 5: USB Y-Splitter Power Injection Cable (Plan B - PENDING)
-
-**Equipment:** BSHTU USB Y-Splitter Cable (B072LLMKJF) - USB-A male to USB-A male + USB-A power-only male
-
-**Status:** On order as backup - testing pending
-
-**Concept:**
-This cable bypasses the hub entirely by injecting external 5V power directly into the USB data line. The Y-splitter has:
-- One USB-A male end → connects to iRig's USB-A cable
-- One USB-A male end → connects to OTG adapter (data only)
-- One USB-A male end → connects to USB charger (power only, no data)
-
-**Why this might work:**
-- Eliminates hub enumeration complexity entirely
-- Direct power injection from any USB charger (5V/1A+)
-- Simpler signal path: phone sees only the iRig, not a hub
-- Works around the USB 2.0 vs 3.0 hub compatibility issue
-
-**Expected connection:**
-```
-                              ┌─────────────────┐
-                              │  USB CHARGER    │
-                              │  (5V/1A+)       │
-                              └────────┬────────┘
-                                       │
-                                       │ Power-only USB-A male
-                                       │
-┌─────────────┐            ┌───────────┴───────────┐
-│   MOTO X4   │            │  USB Y-SPLITTER       │
-│             │            │  (B072LLMKJF)         │
-│  ┌───────┐  │            │                       │
-│  │ USB-C │  │            │  ┌─────┐   ┌─────┐   │
-│  │ port  │  │            │  │Data │   │Power│   │
-│  └───┬───┘  │            │  │USB-A│   │USB-A│   │
-└──────┼──────┘            │  └──┬──┘   └──┬──┘   │
-       │                   │     │         │      │
-       │ Simple OTG        │  ┌──┴─────────┴──┐   │
-       │ Adapter           │  │  Combined     │   │
-       │ (B07F9Z1NCP)      │  │  USB-A male   │   │
-       └──────►────────────┴──┴───────┬───────┴───┘
-                                      │
-                                      ▼
-                              ┌─────────────────┐
-                              │  iRIG PRO I/O   │
-                              │  (via USB-A     │
-                              │   to 7-pin)     │
-                              └─────────────────┘
-```
-
-**Risks/unknowns:**
-- Power backfeed into phone through OTG adapter (may need isolation)
-- May still require cutting power wire on data leg
-- Quality varies with Y-cables - some have poor isolation
-
-**Why this is Plan B:** The USB 2.0 hub is the more standard/reliable solution. The Y-cable is a simpler but more "hacky" approach that may require additional wire cutting.
-
----
-
-### Summary: What Works vs. What Doesn't
-
-| Equipment | Works on Pixel 9 Pro | Works on Moto X4 | Notes |
-|-----------|---------------------|------------------|-------|
-| Direct USB-C connection | ✓ | ✗ | Older phones lack power |
-| OTG adapter + charging passthrough | ✓ | ✗ | PD negotiation breaks OTG |
-| Simple OTG adapter (direct to iRig) | ✓ | Partial | Host mode works, power insufficient |
-| Simple OTG + USB 3.0 hub | ✓ | ✗ | USB 3.0 enumeration fails |
-| Simple OTG + USB 2.0 hub | ✓ | **Pending** | Expected to work |
-| Simple OTG + USB Y-splitter | ✓ | **Pending (Plan B)** | Bypasses hub, direct power injection |
-
-### Decision Tree for Older Phones
-
-```
-Is your phone from 2020 or newer?
-├── YES → Try direct USB-C connection first
-│         └── Works? → Done!
-│         └── Fails? → Use USB 2.0 powered hub
-│
-└── NO (2019 or older) → Use this setup:
-    │
-    ├── 1. Get a SIMPLE USB-C OTG adapter (no charging port)
-    │      Amazon: B07F9Z1NCP or similar
-    │
-    ├── 2. Get a USB 2.0 powered hub (NOT USB 3.0!)
-    │      Amazon: B00DQFGJR4 (Amazon Basics)
-    │
-    ├── 3. Test: Plug OTG adapter into phone, hub into adapter
-    │      Does "USB device connected" appear?
-    │      └── NO → Your phone may not support USB OTG at all
-    │      └── YES → Continue to step 4
-    │
-    └── 4. Connect iRig to hub's USB port
-           Is LED bright blue?
-           └── YES → Success!
-           └── NO → Check hub power adapter connection
-```
+**Replacement cables:**
+- Mini-Din 7-pin to USB-A: B0DRWK7V76
+- Mini-Din 7-pin to USB-C: (included with iRig Pro I/O, or search for iRig Pro I/O USB-C cable)
 
 ---
 
@@ -347,9 +122,41 @@ Is your phone from 2020 or newer?
 
 | LED Color | Status | Meaning |
 |-----------|--------|---------|
-| **Bright Blue** | OK | Full USB power (~500mA), device ready |
-| **Dim/Faded Blue** | Problem | Insufficient USB power (<200mA) |
+| **Bright Blue** | OK | Enumerated with USB host, drawing ~500mA, device ready |
+| **Dim/Faded Blue** | Pre-enumeration | USB-spec 100mA limit (no host, or host can't enumerate) |
+| **Green** | OK | Audio input signal present, low level |
+| **Orange** | OK | Audio input signal at nominal level |
+| **Red** | Warning | Audio input signal clipping — reduce gain |
 | **No Light** | Problem | No USB connection or power |
+
+**Important:** A dim blue LED does NOT necessarily mean the cable or power source is bad.
+The iRig Pro I/O is USB-spec compliant and limits itself to 100mA until it successfully
+enumerates with a USB host. Dumb chargers (power strips, wall adapters) have no USB host
+capability, so the iRig will always show dim blue on them. Only a USB host that can
+complete enumeration (computer, modern phone) will produce a bright blue LED.
+
+---
+
+## iRig Pro I/O Power Sources
+
+The iRig Pro I/O has three power inputs, but they serve **different purposes**:
+
+| Power Source | What It Powers | Provides VBUS for USB? | Enables Enumeration? |
+|-------------|---------------|----------------------|---------------------|
+| **USB VBUS** (from host) | USB controller chip + analog circuits | Yes | Yes (if host provides 500mA+) |
+| **2x AA Batteries** | Analog circuits (preamp, ADC/DAC, phantom power) | **No** | **No** |
+| **DC Adapter** (iRig PSU 3A, 5V/3A) | Analog circuits + iOS device charging passthrough | **No** | **No** |
+
+**Key insight:** The USB controller chip runs **exclusively** off USB VBUS from the host.
+Neither batteries nor the DC adapter power the USB interface. This means:
+
+- **Batteries** are designed for iOS/Lightning use, where the iOS device provides enough
+  VBUS for the USB chip but not for the analog section
+- **DC adapter** is designed to charge an iOS device via passthrough while the iRig is in use
+- Neither can help an older Android phone that provides insufficient VBUS
+
+**For modern phones (Pixel 6+, ~2021+):** Direct USB-C connection provides full VBUS power.
+No batteries, adapters, or hubs needed.
 
 ---
 
@@ -437,7 +244,13 @@ There are an estimated **500 million unused smartphones** sitting in drawers wor
 
 Kanaha's multi-camera system can repurpose these devices as dedicated recording stations. The key challenges documented here—USB OTG compatibility and power delivery—are solvable with the right equipment.
 
-**Don't give up on your old phone.** With a simple OTG adapter and a USB 2.0 powered hub, most USB-C Android phones from 2016+ can serve as reliable SMPTE timecode recording stations.
+**Caveat:** Phones from approximately 2019 and older (notably the Moto X4 / Qualcomm SDM660)
+lack sufficient USB OTG VBUS current for the iRig Pro I/O to enumerate. After exhaustive
+testing (5 approaches including hubs, Y-splitters, batteries, and DC adapters), these phones
+are **not viable for SMPTE timecode recording**. Kanaha itself works fine for camera control
+and video recording on these devices — only the USB audio interface for timecode is affected.
+Phones from ~2021+ (Pixel 6 and later) with full USB-C Power Delivery work with a simple
+direct connection.
 
 ---
 
