@@ -151,8 +151,14 @@ public class ApacheService extends Service {
         Log.i(TAG, "Starting Apache httpd server");
 
         if (isServerRunning) {
-            Log.i(TAG, "Apache httpd server is already running");
-            return true;
+            // Verify the native process is actually alive before claiming "already running"
+            if (isHttpdRunning()) {
+                Log.i(TAG, "Apache httpd server is already running");
+                return true;
+            }
+            // Native process died but flag was stale - clean up and restart
+            Log.w(TAG, "Server was marked as running but native process is dead, restarting");
+            cleanupDeadProcess();
         }
 
         try {
@@ -270,7 +276,8 @@ public class ApacheService extends Service {
     }
 
     /**
-     * Check if Apache httpd server is running
+     * Check if Apache httpd server is running.
+     * Verifies the actual native process state, not just the boolean flag.
      */
     public boolean isHttpdRunning() {
         try {
@@ -281,19 +288,41 @@ public class ApacheService extends Service {
                     // Process has terminated
                     Log.i(TAG, "Apache process terminated with exit code: " + exitCode);
                     isServerRunning = false;
+                    apacheProcess = null;
                     return false;
                 } catch (IllegalThreadStateException e) {
                     // Process is still running
-                    return isServerRunning;
+                    return true;
                 }
             }
 
-            return isServerRunning;
+            // No process reference - server cannot be running regardless of flag state
+            if (isServerRunning) {
+                Log.w(TAG, "Stale isServerRunning flag detected (no process reference), resetting");
+                isServerRunning = false;
+            }
+            return false;
 
         } catch (Exception e) {
             Log.e(TAG, "Exception checking server status", e);
             return false;
         }
+    }
+
+    /**
+     * Clean up state from a dead native httpd process.
+     * Called when isServerRunning is true but the native process is no longer alive.
+     */
+    private void cleanupDeadProcess() {
+        if (apacheProcess != null) {
+            try {
+                apacheProcess.destroyForcibly();
+            } catch (Exception e) {
+                Log.d(TAG, "Error destroying stale process reference", e);
+            }
+            apacheProcess = null;
+        }
+        isServerRunning = false;
     }
 
     /**
@@ -328,6 +357,12 @@ public class ApacheService extends Service {
     private boolean startApacheHttpdProcess() {
         try {
             Log.i(TAG, "Starting Apache httpd process");
+
+            // Kill any orphaned httpd processes from a previous service instance.
+            // When Android force-stops the app, the native child process launched via
+            // ProcessBuilder may survive as an orphan (reparented to init), still
+            // holding port 8443 and blocking a fresh start.
+            killOrphanedHttpdProcesses();
 
             // Note: SSL certificates already deployed in startHttpdServer()
 
@@ -466,6 +501,28 @@ public class ApacheService extends Service {
                 Log.d(TAG, "Output reader finished");
             }
         }, "ApacheOutputReader").start();
+    }
+
+    /**
+     * Kill any orphaned Apache httpd processes from a previous service instance.
+     * This can happen when the Android process is force-stopped but the native
+     * child process survives as an orphan reparented to init.
+     */
+    private void killOrphanedHttpdProcesses() {
+        try {
+            String nativeLibDir = getApplicationInfo().nativeLibraryDir;
+            ProcessBuilder pb = new ProcessBuilder("sh", "-c",
+                "pkill -9 -f '" + nativeLibDir + "/libhttpd.so' 2>/dev/null; true");
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            boolean finished = p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                p.destroyForcibly();
+            }
+            Log.d(TAG, "Orphaned httpd process cleanup completed");
+        } catch (Exception e) {
+            Log.d(TAG, "Orphaned httpd cleanup: " + e.getMessage());
+        }
     }
 
     /**
