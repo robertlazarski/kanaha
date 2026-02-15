@@ -573,6 +573,14 @@ cd ~/repos/kanaha/kanaha-camera-app
 ./gradlew clean assembleDebug
 ```
 
+**Updates included in February 2026 rebuild (axis-axis2-c-core `3004810a1`):**
+- JSON reader security: NULL checks, json_type_object validation, memory leak fix (1c6f1585c)
+- HTTP worker hardening in server-side request handling (1c6f1585c)
+- URL parser improvements (1c6f1585c)
+- Deprecated feature removal: NTLM options API, libcurl references (1c6f1585c)
+- Client-side: SNI support, null pointer deref fix (42c72e6ba, beb04dad1)
+- IIS/ISAPI removal, dangling #endif cleanup (44f01e024, 1e1a36320)
+
 **Security updates included in AXIS2C-1708 (January 2026):**
 - XML parser security (XXE protection)
 - SSL/TLS hardening (TLS 1.2+ required)
@@ -1467,6 +1475,7 @@ LOAD  0x00000000000f18d0 0x00000000000f28d0 ... 0x1000
 
 | Date | Changes |
 |------|---------|
+| 2026-02-15 | Rebuilt Axis2/C from `3004810a1`: JSON reader security fixes, HTTP worker hardening, deprecated feature removal, SNI support |
 | 2026-01-31 | Added 16KB page alignment documentation for Android 15, updated linker flags for all native libraries |
 | 2026-01-31 | Added "Rebuilding Axis2/C for Security Updates" section with AXIS2C-1708 security hardening documentation and rebuild script |
 | 2026-01-03 | Added Step 11: Final linking with static service registry, Android static service registry documentation, direct linking bypassing libtool |
