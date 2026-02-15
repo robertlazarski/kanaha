@@ -511,14 +511,17 @@ public class ApacheService extends Service {
     private void killOrphanedHttpdProcesses() {
         try {
             String nativeLibDir = getApplicationInfo().nativeLibraryDir;
-            ProcessBuilder pb = new ProcessBuilder("sh", "-c",
-                "pkill -9 -f '" + nativeLibDir + "/libhttpd.so' 2>/dev/null; true");
+            String pattern = nativeLibDir + "/libhttpd.so";
+
+            // Use pkill directly via ProcessBuilder args to avoid sh -c shell injection
+            ProcessBuilder pb = new ProcessBuilder("pkill", "-9", "-f", pattern);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             boolean finished = p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS);
             if (!finished) {
                 p.destroyForcibly();
             }
+            // pkill exits 0 if processes killed, 1 if none found — both are fine
             Log.d(TAG, "Orphaned httpd process cleanup completed");
         } catch (Exception e) {
             Log.d(TAG, "Orphaned httpd cleanup: " + e.getMessage());
