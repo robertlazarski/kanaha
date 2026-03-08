@@ -17,6 +17,13 @@ package org.kanaha.camera;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.location.Location;
+import android.location.LocationManager;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioTrack;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -24,9 +31,12 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.List;
 import java.util.regex.Pattern;
 
+import android.media.CamcorderProfile;
 import net.sourceforge.opencamera.MainActivity;
+import net.sourceforge.opencamera.preview.Preview;
 
 /**
  * Security validation constants and patterns
@@ -318,6 +328,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 case "listFiles":
                     response = handleListFiles(context, intent);
                     break;
+                case "play_tone":
+                case "playTone":
+                    response = handlePlayTone(context, intent);
+                    break;
                 default:
                     Log.e(TAG, "Unknown action: " + action);
                     response = createErrorResponse(operationId, "Unknown action: " + action);
@@ -347,9 +361,17 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String quality = intent.getStringExtra("quality");
         int duration = intent.getIntExtra("duration", 1800); // Default 30 minutes
         String format = intent.getStringExtra("format");
+        boolean openGate = "true".equalsIgnoreCase(intent.getStringExtra("open_gate"));
 
-        Log.i(TAG, String.format("Start recording: clip=%s, quality=%s, duration=%d, format=%s",
-                clipName, quality, duration, format));
+        // Optional scheduled start: start_at is a Unix epoch ms timestamp on this device's clock
+        String startAtStr = intent.getStringExtra("start_at");
+        long startAt = 0;
+        if (startAtStr != null && !startAtStr.isEmpty() && !startAtStr.equals("0")) {
+            try { startAt = Long.parseLong(startAtStr); } catch (NumberFormatException ignored) {}
+        }
+
+        Log.i(TAG, String.format("Start recording: clip=%s, quality=%s, duration=%d, format=%s, open_gate=%b, start_at=%d",
+                clipName, quality, duration, format, openGate, startAt));
 
         try {
             // Get MainActivity instance and start recording
@@ -358,12 +380,44 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 return createErrorResponse(operationId, "MainActivity instance not available");
             }
 
-            // Configure recording parameters
-            if (quality != null) {
+            // Open gate overrides any explicit quality: find best native-ratio resolution and reopen camera.
+            // Must happen before startRecordingInternal; configureOpenGate sleeps 2500ms for reopen.
+            if (openGate) {
+                configureOpenGate(mainActivity);
+            } else if (quality != null) {
                 configureRecordingQuality(mainActivity, quality);
             }
 
-            // Start recording with specified clip name
+            long now = System.currentTimeMillis();
+            long delayMs = startAt > 0 ? startAt - now : 0;
+
+            // Scheduled start: if start_at is between 50ms and 30s in the future, schedule it
+            if (delayMs >= 50 && delayMs <= 30000) {
+                final MainActivity activity = mainActivity;
+                final String clip = clipName;
+                final boolean og = openGate;
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    long fireTime = System.currentTimeMillis();
+                    Log.i(TAG, "Scheduled recording start firing at " + fireTime);
+                    writeSyncSidecar(context, clip, fireTime, og);
+                    startRecordingInternal(activity, clip);
+                }, delayMs);
+
+                JSONObject response = new JSONObject();
+                response.put("success", true);
+                response.put("scheduled", true);
+                response.put("operation_id", operationId);
+                response.put("clip_name", clipName);
+                response.put("start_at", startAt);
+                response.put("delay_ms", delayMs);
+                response.put("timestamp", now);
+                response.put("open_gate", openGate);
+                response.put("message", "Recording scheduled");
+                return response;
+            }
+
+            // Immediate start (no start_at or already past)
+            writeSyncSidecar(context, clipName, System.currentTimeMillis(), openGate);
             boolean success = startRecordingInternal(mainActivity, clipName);
 
             // Create response JSON
@@ -374,6 +428,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             response.put("quality", quality);
             response.put("duration", duration);
             response.put("format", format);
+            response.put("open_gate", openGate);
 
             if (success) {
                 response.put("message", "Recording started successfully");
@@ -1261,17 +1316,157 @@ public class CameraControlReceiver extends BroadcastReceiver {
     }
 
     /**
-     * Configure recording quality settings
+     * Configure recording quality by mapping human-readable strings ("4K", "1080p", etc.)
+     * or direct OpenCamera quality strings to the video quality preference.
+     * Applied before startRecordingInternal; preference is consumed by OpenCamera on the next
+     * setupCameraParameters() call (i.e., after reopenCamera or on the next recording start
+     * if the camera session already matches).
      */
     private static void configureRecordingQuality(MainActivity mainActivity, String quality) {
-        Log.i(TAG, "Configuring recording quality: " + quality);
-
+        Log.i(TAG, "configureRecordingQuality: " + quality);
         try {
-            // TODO: Map quality strings to OpenCamera video quality settings
-            // e.g., "4K" -> 3840x2160, "HD" -> 1920x1080, etc.
+            Preview preview = mainActivity.getPreview();
+            if (preview == null || quality == null) return;
 
+            // Map common human-readable names to target width x height
+            int targetW = 0, targetH = 0;
+            String q = quality.toUpperCase().trim();
+            if (q.equals("4K") || q.equals("UHD") || q.equals("2160P")) {
+                targetW = 3840; targetH = 2160;
+            } else if (q.equals("1080P") || q.equals("FHD")) {
+                targetW = 1920; targetH = 1080;
+            } else if (q.equals("720P") || q.equals("HD")) {
+                targetW = 1280; targetH = 720;
+            } else if (q.equals("480P") || q.equals("SD")) {
+                targetW = 640; targetH = 480;
+            } else {
+                // Pass through as a native OpenCamera quality string if supported
+                List<String> supported = preview.getVideoQualityHander().getSupportedVideoQuality();
+                if (supported != null && supported.contains(quality)) {
+                    final String direct = quality;
+                    mainActivity.runOnUiThread(() ->
+                        mainActivity.getApplicationInterface().setVideoQualityPref(direct));
+                } else {
+                    Log.w(TAG, "configureRecordingQuality: unrecognised quality string: " + quality);
+                }
+                return;
+            }
+
+            // Find quality string whose resolved resolution best matches target (exact first, then closest)
+            List<String> supportedQualities = preview.getVideoQualityHander().getSupportedVideoQuality();
+            if (supportedQualities == null) return;
+            String matched = null;
+            int closestDiff = Integer.MAX_VALUE;
+            int targetArea = targetW * targetH;
+            for (String qs : supportedQualities) {
+                CamcorderProfile profile = preview.getCamcorderProfile(qs);
+                if (profile == null) continue;
+                if (profile.videoFrameWidth == targetW && profile.videoFrameHeight == targetH) {
+                    matched = qs;
+                    break;
+                }
+                int diff = Math.abs(profile.videoFrameWidth * profile.videoFrameHeight - targetArea);
+                if (diff < closestDiff) { closestDiff = diff; matched = qs; }
+            }
+            if (matched != null) {
+                final String finalQuality = matched;
+                Log.i(TAG, "configureRecordingQuality: " + quality + " -> " + finalQuality);
+                mainActivity.runOnUiThread(() ->
+                    mainActivity.getApplicationInterface().setVideoQualityPref(finalQuality));
+            }
         } catch (Exception e) {
             Log.e(TAG, "Error configuring recording quality", e);
+        }
+    }
+
+    /**
+     * Configures open gate recording: selects the best available video resolution whose
+     * aspect ratio matches the sensor's native ratio (4:3 ± 2%), resets digital zoom to 1x
+     * so the full active sensor area is read out, and reopens the camera to apply settings.
+     *
+     * Open gate captures all pixels the sensor has (no horizontal/vertical crop), giving
+     * ~33% more vertical resolution than 16:9 on a native 4:3 sensor (e.g. Pixel 9 Pro).
+     * This is only useful on devices whose Camera2 HAL exposes a 4:3 video resolution —
+     * the Pixel 9 Pro does; the Moto G phones in this rig do not.
+     *
+     * Implementation notes:
+     *  - Does NOT set SCALER_CROP_REGION: at zoom=1 (default) Camera2 already uses the
+     *    full SENSOR_INFO_ACTIVE_ARRAY_SIZE, so just selecting a 4:3 resolution is sufficient.
+     *  - Sleeps 2500ms after posting reopenCamera() so the camera session is ready before
+     *    startRecordingInternal() is called. This is consistent with existing sleep patterns.
+     */
+    private static void configureOpenGate(MainActivity mainActivity) {
+        Log.i(TAG, "configureOpenGate: searching for native-ratio video resolution");
+        try {
+            Preview preview = mainActivity.getPreview();
+            if (preview == null) {
+                Log.e(TAG, "configureOpenGate: preview is null");
+                return;
+            }
+            List<String> supportedQualities = preview.getVideoQualityHander().getSupportedVideoQuality();
+            if (supportedQualities == null || supportedQualities.isEmpty()) {
+                Log.e(TAG, "configureOpenGate: no supported video qualities available");
+                return;
+            }
+
+            // Target 4:3 (the native aspect ratio of sensors like the Pixel 9 Pro Samsung GNK).
+            // Epsilon ±2% covers minor sensor binning or HAL rounding variations.
+            final double TARGET_RATIO = 4.0 / 3.0;
+            final double EPSILON = 0.02;
+            String bestQuality = null;
+            int bestArea = 0;
+
+            for (String qs : supportedQualities) {
+                try {
+                    CamcorderProfile profile = preview.getCamcorderProfile(qs);
+                    if (profile == null) continue;
+                    int w = profile.videoFrameWidth;
+                    int h = profile.videoFrameHeight;
+                    if (w <= 0 || h <= 0) continue;
+                    double ratio = (double) w / h;
+                    if (Math.abs(ratio - TARGET_RATIO) <= EPSILON) {
+                        int area = w * h;
+                        if (area > bestArea) {
+                            bestArea = area;
+                            bestQuality = qs;
+                            Log.i(TAG, "configureOpenGate: candidate " + w + "x" + h
+                                    + " ratio=" + String.format("%.4f", ratio)
+                                    + " quality=" + qs);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "configureOpenGate: skipping quality " + qs, e);
+                }
+            }
+
+            if (bestQuality == null) {
+                Log.w(TAG, "configureOpenGate: no 4:3 resolution found — "
+                        + "this device does not support open gate via Camera2");
+                return;
+            }
+
+            CamcorderProfile best = preview.getCamcorderProfile(bestQuality);
+            Log.i(TAG, "configureOpenGate: selected " + best.videoFrameWidth
+                    + "x" + best.videoFrameHeight + " quality=" + bestQuality);
+
+            final String finalQuality = bestQuality;
+            mainActivity.runOnUiThread(() -> {
+                // Apply quality preference
+                mainActivity.getApplicationInterface().setVideoQualityPref(finalQuality);
+                // Reset digital zoom to 1x so no artificial crop is applied
+                if (preview.getCameraController() != null) {
+                    preview.getCameraController().resetZoom();
+                }
+                // Reopen camera so setupCameraParameters() picks up the new quality
+                preview.reopenCamera();
+            });
+
+            // Wait for the camera session to reopen before recording begins
+            Thread.sleep(2500);
+            Log.i(TAG, "configureOpenGate: reopen wait complete, ready to record");
+
+        } catch (Exception e) {
+            Log.e(TAG, "configureOpenGate: error", e);
         }
     }
 
@@ -1290,6 +1485,172 @@ public class CameraControlReceiver extends BroadcastReceiver {
         } catch (Exception e) {
             Log.e(TAG, "Error configuring camera settings", e);
             return false;
+        }
+    }
+
+    /**
+     * Handle playTone request — plays a sine wave through the speaker at a scheduled time.
+     * Used as a software sync slate: the tone onset in the recording audio track gives a
+     * precise reference point for aligning multiple cameras in post-production.
+     *
+     * Parameters (via Intent extras):
+     *   frequency    - tone frequency in Hz (default 1000)
+     *   duration_ms  - tone duration in ms (default 150)
+     *   start_at     - UTC epoch ms to fire; 0 or absent = play immediately
+     */
+    private JSONObject handlePlayTone(Context context, Intent intent) throws JSONException {
+        String operationId = intent.getStringExtra("operation_id");
+        int frequency  = intent.getIntExtra("frequency",  1000);
+        int durationMs = intent.getIntExtra("duration_ms", 150);
+
+        String startAtStr = intent.getStringExtra("start_at");
+        long startAt = 0;
+        if (startAtStr != null && !startAtStr.isEmpty() && !startAtStr.equals("0")) {
+            try { startAt = Long.parseLong(startAtStr); } catch (NumberFormatException ignored) {}
+        }
+
+        long now = System.currentTimeMillis();
+        long delayMs = startAt > 0 ? startAt - now : 0;
+
+        JSONObject response = new JSONObject();
+        response.put("success", true);
+        response.put("operation_id", operationId);
+        response.put("frequency", frequency);
+        response.put("duration_ms", durationMs);
+        response.put("timestamp", now);
+
+        if (delayMs < 0 || delayMs > 30000) {
+            // start_at already passed or too far in future — play immediately
+            delayMs = 0;
+        }
+
+        final int finalFreq = frequency;
+        final int finalDur  = durationMs;
+        final long fireAt   = now + delayMs;
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            Log.i(TAG, "playTone firing at " + System.currentTimeMillis()
+                    + " (target " + fireAt + ") freq=" + finalFreq + "Hz dur=" + finalDur + "ms");
+            playToneNow(finalFreq, finalDur);
+        }, delayMs);
+
+        if (startAt > 0) {
+            response.put("scheduled", true);
+            response.put("fire_at", fireAt);
+            response.put("delay_ms", delayMs);
+        }
+
+        return response;
+    }
+
+    /**
+     * Synthesise and play a sine-wave tone through the device speaker on the calling thread.
+     * Uses AudioTrack MODE_STATIC so the entire buffer is enqueued before play() —
+     * minimising the gap between postDelayed() firing and actual audio output.
+     *
+     * Short linear fades (5 ms) prevent click artefacts at the start and end of the tone.
+     * The onset of the resulting waveform in the recording can be detected to ~1 ms accuracy.
+     */
+    private static void playToneNow(int frequencyHz, int durationMs) {
+        final int sampleRate  = 44100;
+        final int numSamples  = sampleRate * durationMs / 1000;
+        final int fadeSamples = Math.min(sampleRate * 5 / 1000, numSamples / 4); // 5 ms fade
+
+        short[] samples = new short[numSamples];
+        double rad = 2.0 * Math.PI * frequencyHz / sampleRate;
+        for (int i = 0; i < numSamples; i++) {
+            double amp = 1.0;
+            if (i < fadeSamples)              amp = (double) i / fadeSamples;
+            else if (i > numSamples - fadeSamples) amp = (double)(numSamples - i) / fadeSamples;
+            samples[i] = (short)(Short.MAX_VALUE * amp * Math.sin(rad * i));
+        }
+
+        AudioTrack track = new AudioTrack.Builder()
+            .setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build())
+            .setAudioFormat(new AudioFormat.Builder()
+                .setSampleRate(sampleRate)
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                .build())
+            .setBufferSizeInBytes(numSamples * 2)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build();
+
+        track.write(samples, 0, numSamples);
+        track.play();
+        try { Thread.sleep(durationMs + 50); } catch (InterruptedException ignored) {}
+        track.stop();
+        track.release();
+    }
+
+    /**
+     * Write a JSON sidecar file capturing the exact recording start time in milliseconds.
+     *
+     * Analog of the BWF Time Reference embedded in broadcast WAV files (parseLTC.sh reads it
+     * via "sndfile-info --broadcast f8.wav | grep 'Time ref'" to compute f8_start_timecode).
+     * MP4 files only carry creation_time at 1-second resolution; this sidecar gives ms precision.
+     *
+     * File: DCIM/OpenCamera/kanaha_recording_start.json
+     * Content:
+     *   recording_start_ms  — System.currentTimeMillis() at the moment recording starts
+     *   clip_name           — requested clip name prefix
+     *   gps_time            — Location.getTime() of most recent GPS fix (ms since epoch)
+     *   gps_age_ms          — age of the GPS fix at recording start
+     *
+     * parseWithoutLTC.sh reads this file from the camera transfer directory to compute
+     * sub-second trim offsets: laptop_ms = recording_start_ms - clock_offset_ms.
+     * Combined with NTP RTT correction this yields ~100–200 ms accuracy; with a software
+     * slate it improves to ~1–5 ms.
+     */
+    private void writeSyncSidecar(Context context, String clipName, long recordingStartMs, boolean openGate) {
+        try {
+            JSONObject sidecar = new JSONObject();
+            sidecar.put("recording_start_ms", recordingStartMs);
+            sidecar.put("clip_name", clipName != null ? clipName : "");
+            sidecar.put("open_gate", openGate);
+
+            // Add GPS fix time if available (same pattern as addCameraStatusDetails)
+            MainActivity mainActivity = MainActivity.getInstance();
+            if (mainActivity != null) {
+                try {
+                    Location gpsLoc = null;
+                    net.sourceforge.opencamera.LocationSupplier locationSupplier =
+                            mainActivity.getLocationSupplier();
+                    if (locationSupplier != null) {
+                        gpsLoc = locationSupplier.getLocation();
+                    }
+                    if (gpsLoc == null) {
+                        LocationManager lm = (LocationManager)
+                                mainActivity.getSystemService(Context.LOCATION_SERVICE);
+                        if (lm != null) {
+                            gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                        }
+                    }
+                    if (gpsLoc != null && gpsLoc.getTime() > 0) {
+                        sidecar.put("gps_time", gpsLoc.getTime());
+                        sidecar.put("gps_age_ms", recordingStartMs - gpsLoc.getTime());
+                    }
+                } catch (SecurityException ignored) {}
+            }
+
+            // Write to app's own external files dir — no scoped storage permission needed
+            // from BroadcastReceiver context. Path:
+            //   /storage/emulated/0/Android/data/org.kanaha.camera/files/kanaha_recording_start.json
+            // Pull via ADB: adb pull /storage/emulated/0/Android/data/org.kanaha.camera/files/kanaha_recording_start.json
+            File dir = context.getExternalFilesDir(null);
+            if (dir == null) dir = context.getFilesDir(); // fallback to internal
+            if (!dir.exists()) dir.mkdirs();
+            File sidecarFile = new File(dir, "kanaha_recording_start.json");
+            try (FileWriter fw = new FileWriter(sidecarFile)) {
+                fw.write(sidecar.toString(2));
+            }
+            Log.i(TAG, "Sync sidecar written: " + sidecarFile.getAbsolutePath()
+                    + "  recording_start_ms=" + recordingStartMs);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to write sync sidecar (non-fatal)", e);
         }
     }
 
@@ -1333,6 +1694,34 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 response.put("storage_available_mb", availableMB);
             } else {
                 response.put("storage_available_mb", -1);
+            }
+
+            // GPS time — prefer LocationSupplier (active 1-second subscription when geotagging
+            // is enabled) over getLastKnownLocation (OS cache, potentially hours stale).
+            try {
+                Location gpsLoc = null;
+
+                // LocationSupplier runs requestLocationUpdates(GPS_PROVIDER, 1000, 0, listener)
+                // when the user has enabled "Store GPS location" in OpenCamera settings.
+                net.sourceforge.opencamera.LocationSupplier locationSupplier =
+                    mainActivity.getLocationSupplier();
+                if (locationSupplier != null) {
+                    gpsLoc = locationSupplier.getLocation();
+                }
+
+                // Fallback: OS-cached last known location (may be stale if geotagging is off)
+                if (gpsLoc == null) {
+                    LocationManager lm = (LocationManager) mainActivity.getSystemService(Context.LOCATION_SERVICE);
+                    gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                }
+
+                if (gpsLoc != null && gpsLoc.getTime() > 0) {
+                    response.put("gps_time", gpsLoc.getTime());
+                    response.put("gps_age_ms", System.currentTimeMillis() - gpsLoc.getTime());
+                    response.put("gps_provider", gpsLoc.getProvider());
+                }
+            } catch (SecurityException e) {
+                Log.d(TAG, "GPS location permission not available");
             }
 
         } catch (Exception e) {
