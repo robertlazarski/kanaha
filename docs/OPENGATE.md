@@ -181,6 +181,128 @@ Camera rumours as of early 2026:
 
 ---
 
+## Post-Production: LUT Grading with ffmpeg
+
+Open gate footage from Kanaha is standard H.264/HEVC — it drops into any post pipeline. The recommended workflow is to shoot flat and grade in post; do not bake a LUT at capture.
+
+### Recommended LUT for snow/winter exterior
+
+From the IWLTBAP Renata pack (`/home/robert/Downloads/lut/`), **Aspen Standard** works best for winter snow scenes: it lifts the sky to a rich cinematic blue, adds contrast to tree lines, and keeps snow whites natural without the teal push of Humble/Renata.
+
+```bash
+LUT="/home/robert/Downloads/lut/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
+
+ffmpeg -i demo_og.mp4 \
+  -vf "format=rgb24,lut3d='${LUT}',format=yuv420p" \
+  -pix_fmt yuv420p -color_range tv \
+  -c:v libx264 -crf 18 -preset slow \
+  -c:a copy \
+  demo_og_aspen.mp4
+```
+
+**LUT comparison for snow (Standard variants):**
+
+| LUT | Snow look |
+|-----|-----------|
+| **Aspen** | ✓ Best — rich blue sky, natural whites, cinematic contrast |
+| K25 (Kodachrome) | Deep teal sky, dramatic, slightly heavy-handed |
+| Humble | Cool/icy, strong teal cast on sky |
+| Renata | Most dramatic teal push, Instagram-style |
+| Sedona | Too warm/orange for snow |
+
+**Red camera emulation (no LUT file required):**
+```bash
+ffmpeg -i demo_og.mp4 \
+  -vf "format=rgb24,
+       eq=saturation=1.15:contrast=1.08:gamma=0.92:gamma_r=1.05:gamma_b=0.95,
+       unsharp=3:3:0.5:3:3:0,
+       colorbalance=rm=0.04:gm=-0.01:bm=-0.03:rh=0.02:gh=0.00:bh=-0.02,
+       format=yuv420p" \
+  -pix_fmt yuv420p -color_range tv \
+  -c:a copy demo_og_red.mp4
+```
+
+> **Do not stack LUT + Red emulation** on 8-bit phone footage — double-grading clips highlights in snow whites and crushes shadows.
+
+---
+
+## Demo: Deliverables Grid — One Shoot, Every Platform
+
+A single open gate recording reframes to any delivery format in post with no upscaling. The following script extracts one frame, applies the Aspen LUT, and composites a 2×2 grid showing all four deliverables.
+
+```python
+# Requires: Pillow  (pip install pillow)
+# Input:    graded.jpg  — a frame from demo_og.mp4 with Aspen LUT applied
+# Output:   deliverables_grid.jpg
+
+from PIL import Image, ImageDraw, ImageFont
+import os
+
+src = Image.open("graded.jpg")
+W, H = src.size  # 2560x1920 from Pixel 9 Pro open gate
+
+CELL_W, CELL_H = 1280, 960
+
+def make_cell(img, crop_box, label, sublabel):
+    cropped = img.copy() if crop_box is None else \
+              img.crop((crop_box[0], crop_box[1],
+                        crop_box[0]+crop_box[2], crop_box[1]+crop_box[3]))
+    cw, ch = cropped.size
+    scale = min(CELL_W/cw, CELL_H/ch)
+    resized = cropped.resize((int(cw*scale), int(ch*scale)), Image.LANCZOS)
+    cell = Image.new("RGB", (CELL_W, CELL_H), (0,0,0))
+    cell.paste(resized, ((CELL_W-resized.width)//2, (CELL_H-resized.height)//2))
+    # label bar
+    font_big   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 38)
+    font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+    overlay = Image.new("RGBA", (CELL_W, CELL_H), (0,0,0,0))
+    ImageDraw.Draw(overlay).rectangle([0, CELL_H-82, CELL_W, CELL_H], fill=(0,0,0,170))
+    cell = Image.alpha_composite(cell.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(cell)
+    bb = draw.textbbox((0,0), label, font=font_big)
+    draw.text(((CELL_W-(bb[2]-bb[0]))//2, CELL_H-76), label, font=font_big, fill=(255,255,255))
+    bb2 = draw.textbbox((0,0), sublabel, font=font_small)
+    draw.text(((CELL_W-(bb2[2]-bb2[0]))//2, CELL_H-34), sublabel, font=font_small, fill=(170,210,255))
+    return cell
+
+cells = [
+    make_cell(src, None,
+              "4:3  OPEN GATE",    "Full sensor · all pixels · Pixel 9 Pro"),
+    make_cell(src, (0, (H-round(W*9/16))//2, W, round(W*9/16)),
+              "16:9  YOUTUBE",     "Center crop · no upscale"),
+    make_cell(src, ((W-round(H*9/16))//2, 0, round(H*9/16), H),
+              "9:16  TIKTOK",      "Vertical reframe · same shoot"),
+    make_cell(src, (0, (H-round(W/2.39))//2, W, round(W/2.39)),
+              "2.39:1  CINEMATIC", "Anamorphic crop · one curl command"),
+]
+
+grid = Image.new("RGB", (CELL_W*2, CELL_H*2), (0,0,0))
+for i, cell in enumerate(cells):
+    grid.paste(cell, ((i%2)*CELL_W, (i//2)*CELL_H))
+draw = ImageDraw.Draw(grid)
+draw.line([(CELL_W,0),(CELL_W,CELL_H*2)], fill=(30,30,30), width=2)
+draw.line([(0,CELL_H),(CELL_W*2,CELL_H)],  fill=(30,30,30), width=2)
+grid.save("deliverables_grid.jpg", quality=94)
+```
+
+**To reproduce the full demo from a raw clip:**
+```bash
+LUT="/home/robert/Downloads/lut/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
+
+# 1. Extract best frame
+ffmpeg -ss 60 -i demo_og.mp4 -vframes 1 -update 1 -q:v 1 source.jpg
+
+# 2. Grade with LUT
+ffmpeg -i source.jpg \
+  -vf "format=rgb24,lut3d='${LUT}',format=yuv420p" \
+  -q:v 1 graded.jpg
+
+# 3. Build grid
+python3 deliverables_grid.py
+```
+
+---
+
 ## Limitations and Known Issues
 
 - **~3s reopen latency**: `configureOpenGate()` triggers a photo→video mode cycle which causes a camera session reopen. On the Pixel 9 Pro this typically completes in 500–2000ms; the poller returns as soon as the camera is ready (max 10s). The `open_gate=true` startRecording call therefore takes 3–5s to return. For use with `start_at` scheduling, the sidecar is written before the recording starts so timing is still accurate.

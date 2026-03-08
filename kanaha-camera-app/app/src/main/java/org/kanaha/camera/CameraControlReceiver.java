@@ -283,6 +283,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
     private static final String TAG = "KanahaCameraReceiver";
     private static final String CAMERA_CONTROL_ACTION = "org.kanaha.CAMERA_CONTROL";
 
+    // Track whether the last recording used open gate so we know when a session
+    // reopen is needed to reset back to 16:9 quality.
+    private static volatile boolean lastRecordingWasOpenGate = false;
+
     @Override
     public void onReceive(Context context, Intent intent) {
         Log.i(TAG, "Received camera control intent");
@@ -398,10 +402,14 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
             // Open gate overrides any explicit quality: find best native-ratio resolution and reopen camera.
             // Must happen before startRecordingInternal; configureOpenGate polls for camera readiness.
+            // When not using open gate, always reset quality to avoid persisting the 4:3 open-gate
+            // preference from a previous call (SharedPreferences survives across recordings).
             if (openGate) {
                 configureOpenGate(mainActivity);
-            } else if (quality != null) {
-                configureRecordingQuality(mainActivity, quality);
+                lastRecordingWasOpenGate = true;
+            } else {
+                configureRecordingQuality(mainActivity, quality != null ? quality : "4K");
+                lastRecordingWasOpenGate = false;
             }
 
             long now = System.currentTimeMillis();
@@ -1295,29 +1303,60 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
     /**
      * Stop recording using OpenCamera MainActivity
+     *
+     * Uses the same UI-thread CountDownLatch polling pattern as configureOpenGate():
+     * isVideoRecording() is a UI-thread field — reading it from a background thread
+     * without synchronisation has Java Memory Model visibility issues and may return
+     * stale true even after stopVideo() has completed.
      */
     private static boolean stopRecordingInternal(MainActivity mainActivity) {
         try {
             Log.i(TAG, "Stopping recording with OpenCamera integration");
 
-            // Check if actually recording
-            if (!mainActivity.getPreview().isVideoRecording()) {
+            // Check if actually recording — via UI thread to avoid JMM stale read
+            CountDownLatch checkLatch = new CountDownLatch(1);
+            AtomicBoolean wasRecording = new AtomicBoolean(false);
+            mainActivity.runOnUiThread(() -> {
+                wasRecording.set(mainActivity.getPreview().isVideoRecording());
+                checkLatch.countDown();
+            });
+            checkLatch.await(1, TimeUnit.SECONDS);
+
+            if (!wasRecording.get()) {
                 Log.w(TAG, "Not currently recording, ignoring stop request");
                 return true; // Not recording is considered success for stop
             }
 
-            // Stop video recording on UI thread
+            // Post stopVideo to UI thread and return immediately
             mainActivity.runOnUiThread(() -> {
                 Log.i(TAG, "Calling stopVideo to stop recording");
                 mainActivity.getPreview().stopVideo(false);
             });
 
-            // Wait a bit and verify recording stopped
-            Thread.sleep(500);
+            // Poll for stop confirmation ON THE UI THREAD.
+            // stopVideo() triggers Camera2 state changes via the Looper; reading
+            // isVideoRecording() from the background thread is unreliable until the
+            // UI-thread handler has processed the stop callback.
+            boolean stopped = false;
+            for (int i = 0; i < 10; i++) {
+                Thread.sleep(500);
+                CountDownLatch latch = new CountDownLatch(1);
+                AtomicBoolean notRecording = new AtomicBoolean(false);
+                mainActivity.runOnUiThread(() -> {
+                    notRecording.set(!mainActivity.getPreview().isVideoRecording());
+                    latch.countDown();
+                });
+                latch.await(1, TimeUnit.SECONDS);
+                if (notRecording.get()) {
+                    Log.i(TAG, "Recording stopped after " + ((i + 1) * 500) + "ms");
+                    stopped = true;
+                    break;
+                }
+                Log.d(TAG, "Waiting for recording to stop, attempt " + (i + 1));
+            }
 
-            boolean stillRecording = mainActivity.getPreview().isVideoRecording();
-            Log.i(TAG, "Recording stopped: " + !stillRecording);
-            return !stillRecording;
+            Log.i(TAG, "stopRecordingInternal: success=" + stopped);
+            return stopped;
 
         } catch (Exception e) {
             Log.e(TAG, "Error in stopRecordingInternal", e);
@@ -1395,6 +1434,36 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 Log.i(TAG, "configureRecordingQuality: " + quality + " -> " + finalQuality);
                 mainActivity.runOnUiThread(() ->
                     mainActivity.getApplicationInterface().setVideoQualityPref(finalQuality));
+
+                // If the last recording used open gate, the camera session is still configured
+                // at the 4:3 quality. setVideoQualityPref() only takes effect on session reopen,
+                // so trigger a photo→video cycle to apply the new quality before recording starts.
+                if (lastRecordingWasOpenGate) {
+                    Log.i(TAG, "configureRecordingQuality: reopening session to reset from open gate quality");
+                    mainActivity.runOnUiThread(() -> {
+                        if (preview.isVideo()) mainActivity.clickedSwitchVideo(null); // video → photo
+                    });
+                    Thread.sleep(1500);
+                    mainActivity.runOnUiThread(() -> {
+                        if (!preview.isVideo()) mainActivity.clickedSwitchVideo(null); // photo → video
+                    });
+                    // Poll for camera readiness on UI thread
+                    for (int i = 0; i < 14; i++) {
+                        Thread.sleep(500);
+                        CountDownLatch latch = new CountDownLatch(1);
+                        AtomicBoolean ready = new AtomicBoolean(false);
+                        mainActivity.runOnUiThread(() -> {
+                            ready.set(preview.getCameraController() != null && preview.isVideo());
+                            latch.countDown();
+                        });
+                        latch.await(1, TimeUnit.SECONDS);
+                        if (ready.get()) {
+                            Log.i(TAG, "configureRecordingQuality: session reopen complete (" + ((i + 1) * 500) + "ms)");
+                            break;
+                        }
+                    }
+                    Thread.sleep(300);
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "Error configuring recording quality", e);
