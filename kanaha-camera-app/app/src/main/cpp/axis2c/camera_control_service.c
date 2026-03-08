@@ -306,6 +306,35 @@ static int extract_json_int(const char* json, const char* key, int default_value
     return atoi(start);
 }
 
+static long long extract_json_long(const char* json, const char* key, long long default_value) {
+    char search_key[128];
+    snprintf(search_key, sizeof(search_key), "\"%s\":", key);
+
+    const char* start = strstr(json, search_key);
+    if (!start) return default_value;
+
+    start += strlen(search_key);
+    while (*start == ' ') start++;
+
+    return atoll(start);
+}
+
+/* Returns 1 for JSON true, 0 for JSON false, default_value if key absent */
+static int extract_json_bool(const char* json, const char* key, int default_value) {
+    char search_key[128];
+    snprintf(search_key, sizeof(search_key), "\"%s\":", key);
+
+    const char* start = strstr(json, search_key);
+    if (!start) return default_value;
+
+    start += strlen(search_key);
+    while (*start == ' ') start++;
+
+    if (strncmp(start, "true", 4) == 0) return 1;
+    if (strncmp(start, "false", 5) == 0) return 0;
+    return default_value;
+}
+
 /* Create JSON response helpers */
 static void create_success_response(char* buffer, size_t size, const char* message) {
     snprintf(buffer, size, "{\"success\":true,\"message\":\"%s\"}", message);
@@ -319,9 +348,10 @@ static void create_error_response(char* buffer, size_t size, const char* error) 
  * FORWARD DECLARATIONS - Android-specific implementations
  * ======================================================================== */
 
-int camera_device_start_recording_impl(const char* clip_name, const char* quality, int duration, const char* format);
+int camera_device_start_recording_impl(const char* clip_name, const char* quality, int duration, const char* format, long long start_at, int open_gate);
 int camera_device_stop_recording_impl(void);
 int camera_device_get_status_impl(char* status_json, size_t buffer_size);
+int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
 int camera_device_init_impl(void);
 void camera_device_cleanup_impl(void);
 int camera_device_configure_impl(const char* resolution, const char* fps, const char* codec);
@@ -380,8 +410,10 @@ int camera_control_service_invoke_json_impl(
         extract_json_string(json_request, "quality", quality, sizeof(quality));
         extract_json_string(json_request, "format", format, sizeof(format));
         duration = extract_json_int(json_request, "duration", 1800);
+        long long start_at = extract_json_long(json_request, "start_at", 0);
+        int open_gate = extract_json_bool(json_request, "open_gate", 0);
 
-        int result = camera_device_start_recording_impl(clip_name, quality, duration, format);
+        int result = camera_device_start_recording_impl(clip_name, quality, duration, format, start_at, open_gate);
 
         if (result == 0) {
             snprintf(json_response, response_size,
@@ -489,6 +521,21 @@ int camera_control_service_invoke_json_impl(
             create_error_response(json_response, response_size, "Failed to cleanup files");
         }
     }
+    else if (strcmp(action, "play_tone") == 0 || strcmp(action, "playTone") == 0) {
+        int frequency   = extract_json_int(json_request, "frequency",   1000);
+        int duration_ms = extract_json_int(json_request, "duration_ms", 150);
+        long long start_at = extract_json_long(json_request, "start_at", 0);
+
+        int result = camera_device_play_tone_impl(frequency, duration_ms, start_at);
+
+        if (result == 0) {
+            snprintf(json_response, response_size,
+                "{\"success\":true,\"message\":\"Tone scheduled\",\"frequency\":%d,\"duration_ms\":%d}",
+                frequency, duration_ms);
+        } else {
+            create_error_response(json_response, response_size, "Failed to schedule tone");
+        }
+    }
     else {
         char error_msg[256];
         snprintf(error_msg, sizeof(error_msg), "Unknown action: %s", action);
@@ -535,13 +582,17 @@ int camera_device_start_recording_impl(
     const char* clip_name,
     const char* quality,
     int duration,
-    const char* format
+    const char* format,
+    long long start_at,
+    int open_gate
 ) {
     LOGI("camera_device_start_recording_impl called");
     LOGI("  clip_name: %s", clip_name ? clip_name : "NULL");
     LOGI("  quality: %s", quality ? quality : "NULL");
     LOGI("  duration: %d", duration);
     LOGI("  format: %s", format ? format : "NULL");
+    LOGI("  start_at: %lld", start_at);
+    LOGI("  open_gate: %d", open_gate);
 
     if (!clip_name || !quality) {
         LOGE("Invalid parameters: clip_name or quality is NULL");
@@ -553,9 +604,11 @@ int camera_device_start_recording_impl(
 
     LOGD("Generated operation ID: %s", operation_id);
 
-    /* Convert duration to string for intent extra */
+    /* Convert duration and start_at to strings for intent extras */
     char duration_str[16];
     snprintf(duration_str, sizeof(duration_str), "%d", duration);
+    char start_at_str[24];
+    snprintf(start_at_str, sizeof(start_at_str), "%lld", start_at);
 
     /* Build intent extras array - no shell parsing, immune to injection */
     intent_extra_t extras[] = {
@@ -564,12 +617,14 @@ int camera_device_start_recording_impl(
         {"--es", "clip_name", clip_name},
         {"--es", "quality", quality},
         {"--ei", "duration", duration_str},
-        {"--es", "format", format ? format : "MP4"}
+        {"--es", "format", format ? format : "MP4"},
+        {"--es", "start_at", start_at_str},
+        {"--es", "open_gate", open_gate ? "true" : "false"}
     };
 
     LOGI("Sending secure intent broadcast to start recording");
 
-    int result = send_intent_and_wait_for_response(operation_id, extras, 6);
+    int result = send_intent_and_wait_for_response(operation_id, extras, 8);
     if (result == 0) {
         LOGI("Recording started successfully via secure IPC");
     } else {
@@ -1004,3 +1059,49 @@ int camera_device_list_files_impl(const char* pattern, char* json_response, size
  * - Single file instead of two files with duplicated logic
  * - Follows the Axis2/C userguide sample pattern exactly
  */
+
+/* ─── play_tone implementation ─────────────────────────────────────────────────
+ * Sends a playTone broadcast to the Java layer (CameraControlReceiver).
+ * The Java layer synthesises and plays the tone via AudioTrack, optionally
+ * scheduled via start_at (UTC epoch ms) using the same Handler.postDelayed()
+ * mechanism as startRecording.
+ *
+ * Primary use: software sync slate — all cameras play a 1 kHz beep at the
+ * same start_at timestamp. The onset of the beep in each recording's audio
+ * track can be detected in post-production for sub-50 ms inter-camera sync.
+ */
+int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at) {
+    LOGI("camera_device_play_tone_impl: freq=%d duration_ms=%d start_at=%lld",
+         frequency, duration_ms, start_at);
+
+    if (frequency < 20 || frequency > 20000) {
+        LOGE("play_tone: invalid frequency %d (must be 20–20000 Hz)", frequency);
+        return -1;
+    }
+    if (duration_ms < 10 || duration_ms > 5000) {
+        LOGE("play_tone: invalid duration_ms %d (must be 10–5000)", duration_ms);
+        return -1;
+    }
+
+    char operation_id[64];
+    generate_operation_id(operation_id, sizeof(operation_id));
+
+    char freq_str[16];
+    char dur_str[16];
+    char start_at_str[24];
+    snprintf(freq_str,     sizeof(freq_str),     "%d",   frequency);
+    snprintf(dur_str,      sizeof(dur_str),       "%d",   duration_ms);
+    snprintf(start_at_str, sizeof(start_at_str),  "%lld", start_at);
+
+    intent_extra_t extras[] = {
+        {"--es", "action",       "play_tone"},
+        {"--es", "operation_id", operation_id},
+        {"--ei", "frequency",    freq_str},
+        {"--ei", "duration_ms",  dur_str},
+        {"--es", "start_at",     start_at_str}
+    };
+
+    int result = send_intent_and_wait_for_response(operation_id, extras, 5);
+    LOGI("camera_device_play_tone_impl: result=%d", result);
+    return result;
+}

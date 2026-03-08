@@ -34,6 +34,9 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import android.media.CamcorderProfile;
@@ -289,8 +292,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
             return;
         }
 
-        String action = intent.getStringExtra("action");
-        String operationId = intent.getStringExtra("operation_id");
+        final String action = intent.getStringExtra("action");
+        final String operationId = intent.getStringExtra("operation_id");
 
         if (action == null || operationId == null) {
             Log.e(TAG, "Missing required parameters: action or operation_id");
@@ -299,59 +302,70 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
         Log.d(TAG, String.format("Processing action: %s, operation: %s", action, operationId));
 
-        try {
-            JSONObject response;
-
-            switch (action) {
-                case "start_recording":
-                case "startRecording":
-                    response = handleStartRecording(context, intent);
-                    break;
-                case "stop_recording":
-                case "stopRecording":
-                    response = handleStopRecording(context, intent);
-                    break;
-                case "get_status":
-                case "getStatus":
-                    response = handleGetStatus(context, intent);
-                    break;
-                case "configure":
-                    response = handleConfigure(context, intent);
-                    break;
-                case "sftp_transfer":
-                case "sftpTransfer":
-                    response = handleSftpTransfer(context, intent);
-                    break;
-                case "delete_files":
-                case "deleteFiles":
-                    response = handleDeleteFiles(context, intent);
-                    break;
-                case "list_files":
-                case "listFiles":
-                    response = handleListFiles(context, intent);
-                    break;
-                case "play_tone":
-                case "playTone":
-                    response = handlePlayTone(context, intent);
-                    break;
-                default:
-                    Log.e(TAG, "Unknown action: " + action);
-                    response = createErrorResponse(operationId, "Unknown action: " + action);
-                    break;
-            }
-
-            // Write response to file for native C code to read
-            writeResponseToFile(context, operationId, response);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error processing camera control action: " + action, e);
+        // Run handlers on a background thread via goAsync().
+        //
+        // onReceive() is called on the main (UI) thread. Camera2 open/close callbacks are
+        // also dispatched via the main thread's Looper. If we block the main thread with
+        // Thread.sleep() (as handlers do while waiting for reopenCamera()), those callbacks
+        // are queued but never executed — the camera never reopens.
+        //
+        // goAsync() extends the broadcast lifetime; the background thread calls
+        // pendingResult.finish() when done. runOnUiThread() inside handlers now correctly
+        // POSTs to the main thread (which is free) instead of executing inline.
+        final BroadcastReceiver.PendingResult pendingResult = goAsync();
+        new Thread(() -> {
             try {
-                JSONObject errorResponse = createErrorResponse(operationId, "Exception: " + e.getMessage());
-                writeResponseToFile(context, operationId, errorResponse);
-            } catch (Exception e2) {
-                Log.e(TAG, "Failed to write error response", e2);
+                JSONObject response;
+                switch (action) {
+                    case "start_recording":
+                    case "startRecording":
+                        response = handleStartRecording(context, intent);
+                        break;
+                    case "stop_recording":
+                    case "stopRecording":
+                        response = handleStopRecording(context, intent);
+                        break;
+                    case "get_status":
+                    case "getStatus":
+                        response = handleGetStatus(context, intent);
+                        break;
+                    case "configure":
+                        response = handleConfigure(context, intent);
+                        break;
+                    case "sftp_transfer":
+                    case "sftpTransfer":
+                        response = handleSftpTransfer(context, intent);
+                        break;
+                    case "delete_files":
+                    case "deleteFiles":
+                        response = handleDeleteFiles(context, intent);
+                        break;
+                    case "list_files":
+                    case "listFiles":
+                        response = handleListFiles(context, intent);
+                        break;
+                    case "play_tone":
+                    case "playTone":
+                        response = handlePlayTone(context, intent);
+                        break;
+                    default:
+                        Log.e(TAG, "Unknown action: " + action);
+                        response = createErrorResponse(operationId, "Unknown action: " + action);
+                        break;
+                }
+                writeResponseToFile(context, operationId, response);
+            } catch (Exception e) {
+                Log.e(TAG, "Error processing camera control action: " + action, e);
+                try {
+                    writeResponseToFile(context, operationId,
+                            createErrorResponse(operationId, "Exception: " + e.getMessage()));
+                } catch (Exception e2) {
+                    Log.e(TAG, "Failed to write error response", e2);
+                }
+            } finally {
+                pendingResult.finish();
             }
-        }
+        }, "KanahaCameraControl").start();
     }
 
     /**
@@ -383,7 +397,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             }
 
             // Open gate overrides any explicit quality: find best native-ratio resolution and reopen camera.
-            // Must happen before startRecordingInternal; configureOpenGate sleeps 2500ms for reopen.
+            // Must happen before startRecordingInternal; configureOpenGate polls for camera readiness.
             if (openGate) {
                 configureOpenGate(mainActivity);
             } else if (quality != null) {
@@ -1260,10 +1274,16 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 mainActivity.takePicture(false);
             });
 
-            // Wait a bit and verify recording started
-            Thread.sleep(1000);
-
-            boolean isRecording = mainActivity.getPreview().isVideoRecording();
+            // Poll for recording start: after open-gate reopenCamera(), Camera2 needs up to
+            // ~3-4s to reconfigure streams. Check every 500ms for up to 5s total.
+            boolean isRecording = false;
+            for (int i = 0; i < 10 && !isRecording; i++) {
+                Thread.sleep(500);
+                isRecording = mainActivity.getPreview().isVideoRecording();
+                if (!isRecording) {
+                    Log.d(TAG, "Waiting for recording to start, attempt " + (i + 1));
+                }
+            }
             Log.i(TAG, "Recording started: " + isRecording);
             return isRecording;
 
@@ -1394,8 +1414,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
      * Implementation notes:
      *  - Does NOT set SCALER_CROP_REGION: at zoom=1 (default) Camera2 already uses the
      *    full SENSOR_INFO_ACTIVE_ARRAY_SIZE, so just selecting a 4:3 resolution is sufficient.
-     *  - Sleeps 2500ms after posting reopenCamera() so the camera session is ready before
-     *    startRecordingInternal() is called. This is consistent with existing sleep patterns.
+     *  - Uses clickedSwitchVideo (photo→video cycle) instead of reopenCamera() directly;
+     *    direct reopenCamera() calls across multiple attempts leave camera_controller null.
+     *  - Polls for readiness via runOnUiThread + CountDownLatch: camera_controller is a
+     *    UI-thread field with no volatile guarantee; background-thread reads are unreliable.
      */
     private static void configureOpenGate(MainActivity mainActivity) {
         Log.i(TAG, "configureOpenGate: searching for native-ratio video resolution");
@@ -1452,19 +1474,63 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     + "x" + best.videoFrameHeight + " quality=" + bestQuality);
 
             final String finalQuality = bestQuality;
+
+            // Step 1: Set quality preference and switch to photo mode if currently in video.
+            // We use clickedSwitchVideo (OpenCamera's official state-machine transition) rather
+            // than reopenCamera() directly, which can leave the camera in an unrecoverable null
+            // state across successive calls.
             mainActivity.runOnUiThread(() -> {
-                // Apply quality preference
                 mainActivity.getApplicationInterface().setVideoQualityPref(finalQuality);
-                // Reset digital zoom to 1x so no artificial crop is applied
                 if (preview.getCameraController() != null) {
                     preview.getCameraController().resetZoom();
                 }
-                // Reopen camera so setupCameraParameters() picks up the new quality
-                preview.reopenCamera();
+                if (preview.isVideo()) {
+                    Log.d(TAG, "configureOpenGate: switching to photo mode");
+                    mainActivity.clickedSwitchVideo(null); // video → photo, closes video session
+                }
             });
 
-            // Wait for the camera session to reopen before recording begins
-            Thread.sleep(2500);
+            // Wait for photo mode to stabilize before switching back.
+            Thread.sleep(2000);
+
+            // Step 2: Switch back to video mode — this triggers reopenCamera() inside
+            // OpenCamera which calls setupCamera() and picks up the new quality preference.
+            mainActivity.runOnUiThread(() -> {
+                if (!preview.isVideo()) {
+                    Log.d(TAG, "configureOpenGate: switching back to video mode");
+                    mainActivity.clickedSwitchVideo(null); // photo → video with new quality
+                }
+            });
+
+            // Step 3: Poll for camera readiness ON THE UI THREAD.
+            // camera_controller is written on the UI thread; reading it from a background
+            // thread without synchronization has Java Memory Model visibility issues.
+            // Using runOnUiThread + CountDownLatch ensures we see the authoritative value.
+            boolean cameraReady = false;
+            for (int i = 0; i < 20; i++) {
+                Thread.sleep(500);
+                CountDownLatch latch = new CountDownLatch(1);
+                AtomicBoolean ready = new AtomicBoolean(false);
+                mainActivity.runOnUiThread(() -> {
+                    ready.set(preview.getCameraController() != null && preview.isVideo());
+                    latch.countDown();
+                });
+                latch.await(1, TimeUnit.SECONDS);
+                if (ready.get()) {
+                    Log.i(TAG, "configureOpenGate: camera ready in video mode ("
+                            + ((i + 1) * 500) + "ms after video switch)");
+                    cameraReady = true;
+                    break;
+                }
+                Log.d(TAG, "configureOpenGate: waiting for camera ready, attempt " + (i + 1));
+            }
+            if (!cameraReady) {
+                Log.e(TAG, "configureOpenGate: camera not ready after 10s — aborting");
+                return;
+            }
+
+            // Allow startCameraPreview() to fully settle on the UI thread.
+            Thread.sleep(500);
             Log.i(TAG, "configureOpenGate: reopen wait complete, ready to record");
 
         } catch (Exception e) {

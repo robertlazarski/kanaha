@@ -49,27 +49,36 @@ Understanding bit depth matters for how much dynamic range and color information
 
 ### HTTP API
 
-Add `open_gate=true` to the `startRecording` command:
+Add `"open_gate": true` to the `startRecording` JSON body. Requires mTLS client cert (see `app/src/main/assets/ssl/`):
 
 ```bash
-curl -k -X POST https://<pixel9pro-ip>/camera/startRecording \
-  -d "open_gate=true&clip_name=shot01&duration=600"
+curl --cert client.crt --key client.key --cacert ca.crt \
+     --http2 -k \
+     -X POST https://192.168.1.182:8443/services/CameraControlService/startRecording \
+     -H 'Content-Type: application/json' \
+     -d '{"action":"startRecording","clip_name":"shot01","open_gate":true}'
 ```
 
 Or with `start_at` for synchronized multi-camera start (open gate on the Pixel only):
 
 ```bash
-START_AT=$(date -d "+3 seconds" +%s%3N)
+START_AT=$(date -d "+5 seconds" +%s%3N)  # 5s lead time for open gate reopen
 
 # Pixel 9 Pro — open gate
-curl -k -X POST https://192.168.1.182/camera/startRecording \
-  -d "open_gate=true&clip_name=A001&start_at=$START_AT"
+curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
+     -X POST https://192.168.1.182:8443/services/CameraControlService/startRecording \
+     -H 'Content-Type: application/json' \
+     -d "{\"action\":\"startRecording\",\"clip_name\":\"A001\",\"open_gate\":true,\"start_at\":$START_AT}"
 
-# Moto G cameras — standard 16:9 (open gate gracefully ignored / unavailable)
-curl -k -X POST https://192.168.1.95/camera/startRecording \
-  -d "clip_name=A001&start_at=$START_AT"
-curl -k -X POST https://192.168.1.170/camera/startRecording \
-  -d "clip_name=A001&start_at=$START_AT"
+# Moto G cameras — standard 16:9 (open_gate ignored if not supported)
+curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
+     -X POST https://192.168.1.95:8443/services/CameraControlService/startRecording \
+     -H 'Content-Type: application/json' \
+     -d "{\"action\":\"startRecording\",\"clip_name\":\"A001\",\"start_at\":$START_AT}"
+curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
+     -X POST https://192.168.1.170:8443/services/CameraControlService/startRecording \
+     -H 'Content-Type: application/json' \
+     -d "{\"action\":\"startRecording\",\"clip_name\":\"A001\",\"start_at\":$START_AT}"
 ```
 
 ### What Happens Internally
@@ -77,11 +86,18 @@ curl -k -X POST https://192.168.1.170/camera/startRecording \
 1. `configureOpenGate()` iterates all Camera2-reported video quality strings
 2. Resolves each to pixel dimensions via `Preview.getCamcorderProfile()`
 3. Selects the largest resolution with aspect ratio 4:3 ± 2%
-4. Writes the preference, resets zoom to 1x, calls `reopenCamera()` on the UI thread
-5. Sleeps 2500ms for the camera session to reopen
-6. `startRecordingInternal()` proceeds with the new quality active
+4. Sets the quality preference and resets zoom to 1x
+5. Calls `clickedSwitchVideo` (photo → video cycle) via `runOnUiThread` to trigger a clean camera session reopen with the new quality — this uses OpenCamera's official state-machine transition rather than `reopenCamera()` directly
+6. Polls every 500ms (up to 10s) for camera readiness; the readiness check runs **on the UI thread** via `runOnUiThread + CountDownLatch` to avoid Java Memory Model visibility issues with `camera_controller`
+7. `startRecordingInternal()` calls `takePicture(false)` and polls for `isVideoRecording()` (up to 5s)
 
 If no 4:3 resolution is found (Moto G phones), a warning is logged and recording starts with the existing quality unchanged.
+
+#### Critical Threading Note
+
+`CameraControlReceiver.onReceive()` runs on the **main UI thread**. Camera2 `onClosed`/`onOpened` callbacks are also dispatched via the main thread's Looper. If `onReceive()` blocks the main thread (e.g. with `Thread.sleep()` while waiting for a camera reopen), those callbacks are queued and never execute — the camera never reopens.
+
+The fix (committed 2026-03-08): `onReceive()` now calls `goAsync()` and dispatches all handler logic to a background thread (`KanahaCameraControl`). The main thread remains free to process Camera2 callbacks. `runOnUiThread()` inside handlers now correctly **posts** to the main thread (async) rather than executing inline.
 
 ### Sidecar JSON
 
@@ -165,7 +181,52 @@ Camera rumours as of early 2026:
 
 ## Limitations and Known Issues
 
-- **2500ms reopen delay**: `configureOpenGate()` sleeps 2500ms after posting `reopenCamera()`. This is safe for remote-controlled use (you trigger open gate, then start recording) but adds latency to the `open_gate=true` startRecording flow. For use with `start_at` scheduling, fire the open gate config command at least 5 seconds before the scheduled start.
+- **~3s reopen latency**: `configureOpenGate()` triggers a photo→video mode cycle which causes a camera session reopen. On the Pixel 9 Pro this typically completes in 500–2000ms; the poller returns as soon as the camera is ready (max 10s). The `open_gate=true` startRecording call therefore takes 3–5s to return. For use with `start_at` scheduling, the sidecar is written before the recording starts so timing is still accurate.
 - **Zoom reset**: `configureOpenGate()` resets digital zoom to 1x. If you need open gate at a specific focal length, use optical zoom (different lens) rather than digital zoom.
 - **12-bit not supported**: Kanaha records compressed video via MediaRecorder. 12-bit RAW requires an ImageReader pipeline (DNG capture) — out of scope for the current implementation.
 - **Moto G graceful fallback**: No error is returned; the phones simply record in their default quality. The `open_gate: false` in the sidecar confirms it was not applied.
+
+---
+
+## Build Process: Modifying the C Layer
+
+The HTTP server running on the phone is **`jniLibs/arm64-v8a/libhttpd.so`** — a pre-built ARM64 Apache + Axis2/C binary. Gradle does **not** rebuild this file. Any change to `camera_control_service.c` requires a manual cross-compilation step.
+
+### Workflow
+
+```bash
+# 1. Edit the C source
+vim app/src/main/cpp/axis2c/camera_control_service.c
+
+# 2. Cross-compile and relink
+~/android-cross-builds/link-httpd-axis2.sh
+
+# 3. Strip and copy to jniLibs
+llvm-strip --strip-all ~/android-cross-builds/httpd-2.4.66/httpd
+cp ~/android-cross-builds/httpd-2.4.66/httpd \
+   app/src/main/jniLibs/arm64-v8a/libhttpd.so
+
+# 4. Rebuild APK (includes updated libhttpd.so in assets)
+./gradlew assembleDebug
+
+# 5. Install
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+### What `link-httpd-axis2.sh` Does
+
+1. Compiles `axis2_static_service_adapter.c` + `camera_control_service.c` → `libkanaha_services.a`
+2. Links with all static Apache modules, Axis2/C libs, OpenSSL, APR, nghttp2, PCRE2 using NDK clang (`aarch64-linux-android21-clang`)
+3. Output: `~/android-cross-builds/httpd-2.4.66/httpd` (~9.4MB unstripped, ~5.5MB stripped)
+
+The resulting binary is the full Apache HTTP/2 + mTLS server with the Kanaha camera control service compiled in. The pre-built binary in `jniLibs/arm64-v8a/libhttpd.so` is the one actually deployed to the phone.
+
+### Verification
+
+After install, confirm the C layer picked up your changes:
+```bash
+# Check strings are present in the deployed binary
+adb shell "strings /data/app/*/org.kanaha.camera*/lib/arm64/libhttpd.so | grep open_gate"
+```
+
+See `docs/ANDROID_CROSS_COMPILATION.md` for the full toolchain setup and dependency build instructions.
