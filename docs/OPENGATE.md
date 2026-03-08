@@ -1,5 +1,24 @@
 # Open Gate Recording in Kanaha
 
+## BLUF
+
+Add `"open_gate": true` to a `startRecording` request. The camera reopens at its native 4:3 sensor resolution (2560×1920 on Pixel 9 Pro) and records with no horizontal or vertical crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1 — without upscaling.
+
+**What you need to know:**
+- Only the **Pixel 9 Pro** supports open gate. Moto G phones fall back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
+- The `startRecording` call **blocks 3–5 s** while the camera session reopens at 4:3. Account for this in `start_at` scheduling — use at least a 5 s lead time.
+- After an open gate session, the **next standard recording** triggers a second session reopen to reset quality back to 16:9. This is intentional and takes another ~2 s.
+- The sidecar JSON (`kanaha_recording_start.json`) includes `"open_gate": true` so post scripts know which clips need reframing.
+
+**Most bugs come from:**
+- Editing `camera_control_service.c` but **not rebuilding `libhttpd.so`** — Gradle does not rebuild it. Run `~/android-cross-builds/link-httpd-axis2.sh` then copy the output. See [Build Process](#build-process-modifying-the-c-layer) below.
+- Expecting `startRecording` to return immediately with `open_gate=true` — it returns only after the camera reopen completes (~3–5 s).
+- Reading UI-thread camera state from a background handler thread without a `CountDownLatch`. See [`docs/THREAD_MODEL.md`](THREAD_MODEL.md) for the full threading model.
+
+> **Quick reference**: For installation, certificate setup, and the full HTTP API, see the [README](../README.md).
+
+---
+
 ## What Is Open Gate?
 
 Open gate recording uses the **full active sensor area** — no horizontal or vertical crop. On a native 4:3 sensor, standard 16:9 video silently discards roughly the top and bottom 14% of sensor rows. Open gate preserves all of them, giving you a taller frame (~1.33:1) that you reframe in post-production (DaVinci Resolve, etc.) to whatever final aspect ratio you need: 16:9, 2.39:1 cinematic, 1:1 social, 9:16 vertical, or any custom crop.
