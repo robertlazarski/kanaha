@@ -15,6 +15,7 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 - **Software Sync Slate** - `playTone` API plays a synthesized sine wave on all cameras + laptop simultaneously; onset detection in post gives ~1–5 ms inter-camera sync with no hardware
 - **GPS Timestamping** - `getStatus` exposes GPS fix time and age for clock quality assessment
 - **Recording Start Sidecar** - Writes `kanaha_recording_start.json` at recording start (millisecond precision, GPS time); the post-processing analog of a BWF Time Reference
+- **Open Gate Recording** - Full 4:3 native sensor recording on supported devices (2560×1920 on Pixel 9 Pro) with no horizontal or vertical crop; see [Open Gate Recording](docs/OPENGATE.md)
 - **Built in C** - Native Apache httpd + Axis2/C for low latency and minimal memory footprint
 
 ## Installation
@@ -374,6 +375,8 @@ See [Security Documentation](docs/SECURITY.md) for threat model, certificate man
 | [Cross-Compilation](docs/ANDROID_CROSS_COMPILATION.md) | Building native C libraries |
 | [SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) | iRig Pro I/O + Tentacle Sync hardware timecode setup |
 | [GPS Synchronization](docs/GPS.md) | GPS/NTP soft sync, `start_at` scheduled recording, software slate (`playTone`), sync sidecar — vs. SMPTE/LTC for consumer and security use cases |
+| [Threading Model](docs/THREAD_MODEL.md) | IPC pipeline threading: C Apache/Axis2 worker → Android UI thread → background handler; JMM visibility rules, `CountDownLatch` patterns |
+| [Legal Review](docs/LEGAL.md) | License compatibility analysis for Apache httpd, Axis2/C, OpenCamera (GPL v3+) |
 
 ## Architecture
 

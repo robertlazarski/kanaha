@@ -18,3 +18,7 @@ captures/
 # Signing
 *.keystore
 *.jks
+
+# Build backup artifacts
+*.bak
+*.bak.*
