@@ -43,7 +43,7 @@ Understanding bit depth matters for how much dynamic range and color information
 - **Dynamic range**: ~12–13 stops usable depending on tone mapping
 - **Banding risk**: Rare even with aggressive grades
 - **File size**: ~20–30% larger than 8-bit
-- **Pixel 9 Pro**: Supports 10-bit HDR video (HLG/HDR10 profiles) — accessible via standard Camera2 API and therefore Kanaha
+- **Pixel 9 Pro**: Hardware supports 10-bit HDR video (HLG/HDR10 profiles) via Camera2, but Kanaha records **8-bit H.264** (OpenCamera default). Getting 10-bit requires explicitly requesting an HEVC Main 10 encoding profile — not currently implemented in Kanaha.
 - **Moto G 2025 / Moto G 5G 2024**: 8-bit only
 
 ### 12-bit (RAW DCG — Dual Conversion Gain)
@@ -58,7 +58,7 @@ Understanding bit depth matters for how much dynamic range and color information
 
 | Phone | Open Gate Support | Max Bit Depth via Kanaha | Max Bit Depth (any app) |
 |---|---|---|---|
-| Pixel 9 Pro | **Yes** — 4:3 resolution available via Camera2 | 10-bit HDR (HLG) | 10-bit (Camera2); 12-bit RAW via MotionCam Pro/Blackmagic (private API) |
+| Pixel 9 Pro | **Yes** — 4:3 resolution available via Camera2 | **8-bit H.264** (OpenCamera default; 10-bit not yet implemented) | 10-bit HDR (HLG) via Camera2; 12-bit RAW via MotionCam Pro/Blackmagic (private API) |
 | Moto G 2025 | No — HAL exposes 16:9 only | 8-bit | 8-bit |
 | Moto G 5G 2024 | No — HAL exposes 16:9 only | 8-bit | 8-bit |
 
