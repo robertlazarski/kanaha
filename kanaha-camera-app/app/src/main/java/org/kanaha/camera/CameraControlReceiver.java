@@ -17,6 +17,8 @@ package org.kanaha.camera;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationManager;
 import android.media.AudioAttributes;
@@ -1622,7 +1624,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     if (locationSupplier != null) {
                         gpsLoc = locationSupplier.getLocation();
                     }
-                    if (gpsLoc == null) {
+                    if (gpsLoc == null
+                            && context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                               == PackageManager.PERMISSION_GRANTED) {
                         LocationManager lm = (LocationManager)
                                 mainActivity.getSystemService(Context.LOCATION_SERVICE);
                         if (lm != null) {
@@ -1710,7 +1714,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 }
 
                 // Fallback: OS-cached last known location (may be stale if geotagging is off)
-                if (gpsLoc == null) {
+                if (gpsLoc == null
+                        && mainActivity.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                           == PackageManager.PERMISSION_GRANTED) {
                     LocationManager lm = (LocationManager) mainActivity.getSystemService(Context.LOCATION_SERVICE);
                     gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
                 }
