@@ -99,6 +99,8 @@ If no 4:3 resolution is found (Moto G phones), a warning is logged and recording
 
 The fix (committed 2026-03-08): `onReceive()` now calls `goAsync()` and dispatches all handler logic to a background thread (`KanahaCameraControl`). The main thread remains free to process Camera2 callbacks. `runOnUiThread()` inside handlers now correctly **posts** to the main thread (async) rather than executing inline.
 
+See `docs/THREAD_MODEL.md` for the full threading model, JMM visibility rules, and guidance for new handlers.
+
 ### Sidecar JSON
 
 The `kanaha_recording_start.json` sidecar now includes `open_gate`:
