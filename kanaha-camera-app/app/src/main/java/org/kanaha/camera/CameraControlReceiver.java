@@ -381,7 +381,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String quality = intent.getStringExtra("quality");
         int duration = intent.getIntExtra("duration", 1800); // Default 30 minutes
         String format = intent.getStringExtra("format");
-        boolean openGate = "true".equalsIgnoreCase(intent.getStringExtra("open_gate"));
+        boolean openGate = "1".equals(intent.getStringExtra("open_gate"));
 
         // Optional scheduled start: start_at is a Unix epoch ms timestamp on this device's clock
         String startAtStr = intent.getStringExtra("start_at");

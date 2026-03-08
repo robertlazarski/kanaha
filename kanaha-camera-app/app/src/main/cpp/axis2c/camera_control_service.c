@@ -303,7 +303,10 @@ static int extract_json_int(const char* json, const char* key, int default_value
     start += strlen(search_key);
     while (*start == ' ') start++;
 
-    return atoi(start);
+    char *endptr;
+    long value = strtol(start, &endptr, 10);
+    if (endptr == start) return default_value;
+    return (int)value;
 }
 
 static long long extract_json_long(const char* json, const char* key, long long default_value) {
@@ -316,7 +319,10 @@ static long long extract_json_long(const char* json, const char* key, long long 
     start += strlen(search_key);
     while (*start == ' ') start++;
 
-    return atoll(start);
+    char *endptr;
+    long long value = strtoll(start, &endptr, 10);
+    if (endptr == start) return default_value;
+    return value;
 }
 
 /* Returns 1 for JSON true, 0 for JSON false, default_value if key absent */
@@ -619,7 +625,7 @@ int camera_device_start_recording_impl(
         {"--ei", "duration", duration_str},
         {"--es", "format", format ? format : "MP4"},
         {"--es", "start_at", start_at_str},
-        {"--es", "open_gate", open_gate ? "true" : "false"}
+        {"--es", "open_gate", open_gate ? "1" : "0"}
     };
 
     LOGI("Sending secure intent broadcast to start recording");
