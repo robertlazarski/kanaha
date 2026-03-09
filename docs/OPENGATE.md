@@ -245,6 +245,8 @@ ffmpeg -i demo_og.mp4 \
 
 > **Do not stack LUT + Red emulation** on 8-bit phone footage — double-grading clips highlights in snow whites and crushes shadows.
 
+> **Better use case for Red emulation:** A scene with cloud shadows across snow — shadow zones at code value ~150 vs. lit snow at ~215 gives the contrast and gamma adjustments real midtone material to work with, and the warm/cool split between sunlit and shadowed areas is where `colorbalance` produces the characteristic Red look. Flat bright snow has no shadow zones, leaving the emulation with nothing to grade except already-compressed highlights.
+
 ---
 
 ## Demo: Deliverables Grid — One Shoot, Every Platform
