@@ -43,7 +43,8 @@ Understanding bit depth matters for how much dynamic range and color information
 - **Dynamic range**: ~12–13 stops usable depending on tone mapping
 - **Banding risk**: Rare even with aggressive grades
 - **File size**: ~20–30% larger than 8-bit
-- **Pixel 9 Pro**: Hardware supports 10-bit HDR video (HLG/HDR10 profiles) via Camera2, but Kanaha records **8-bit H.264** (OpenCamera default). Getting 10-bit requires explicitly requesting an HEVC Main 10 encoding profile — not currently implemented in Kanaha.
+- **Pixel 9 Pro**: Hardware supports 10-bit HDR but Google **locks the HLG profile at the HAL level** — only the stock Pixel Camera app can invoke it. Third-party Camera2 apps (including OpenCamera/Kanaha, Blackmagic Camera, MotionCam Pro) receive no 10-bit profile regardless of implementation. Kanaha records 8-bit H.264.
+- **Pixel 10 Pro**: First Pixel to unlock 10-bit (and 12-bit DCG) for third-party Camera2 apps. Kanaha could record 10-bit HLG on a Pixel 10 Pro with an HEVC Main 10 implementation — but OpenCamera upstream does not yet support it (ticket [#1218](https://sourceforge.net/p/opencamera/tickets/1218/), open as of early 2026, no developer response).
 - **Moto G 2025 / Moto G 5G 2024**: 8-bit only
 
 ### 12-bit (RAW DCG — Dual Conversion Gain)
@@ -58,7 +59,8 @@ Understanding bit depth matters for how much dynamic range and color information
 
 | Phone | Open Gate Support | Max Bit Depth via Kanaha | Max Bit Depth (any app) |
 |---|---|---|---|
-| Pixel 9 Pro | **Yes** — 4:3 resolution available via Camera2 | **8-bit H.264** (OpenCamera default; 10-bit not yet implemented) | 10-bit HDR (HLG) via Camera2; 12-bit RAW via MotionCam Pro/Blackmagic (private API) |
+| Pixel 9 Pro | **Yes** — 4:3 resolution available via Camera2 | **8-bit H.264** | 10-bit HLG via stock Pixel Camera app only (HAL-locked); 12-bit RAW via MotionCam Pro/Blackmagic (private API) |
+| Pixel 10 Pro | **Yes** — 4:3 resolution available via Camera2 | **8-bit H.264** (10-bit feasible once OpenCamera adds HEVC Main 10) | 10-bit HLG + 12-bit DCG RAW — unlocked for all Camera2 apps |
 | Moto G 2025 | No — HAL exposes 16:9 only | 8-bit | 8-bit |
 | Moto G 5G 2024 | No — HAL exposes 16:9 only | 8-bit | 8-bit |
 
