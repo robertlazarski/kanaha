@@ -157,48 +157,47 @@ adb -s <pixel-serial> pull \
 
 ---
 
-## Pixel 10 Pro — Worth Buying for Open Gate?
+## Pixel 10 Pro — Recommended Upgrade for Kanaha
 
-**Short answer: yes, a meaningful upgrade over the Pixel 9 Pro for open gate workflows.**
+**The recommended A-camera upgrade.** The Pixel 10 Pro is the first Pixel where the HAL is unlocked for third-party Camera2 apps — 10-bit HLG and 12-bit DCG are accessible to Kanaha directly, not just the stock camera app. This is the meaningful quality ceiling lift for the Claude + ffmpeg post pipeline.
 
 | Feature | Pixel 9 Pro | Pixel 10 Pro |
 |---|---|---|
 | Sensor | Samsung GNK, 1/1.31", 50MP | Samsung GNK successor, 1/1.31", 50MP |
 | Native aspect ratio | 4:3 | 4:3 |
-| Open gate resolution (Camera2) | ~3840×2880 (estimated) | 4030×3072 (confirmed) |
-| 10-bit HDR | Yes (HLG) | Yes (HLG) |
-| 12-bit RAW open gate | No (Camera2); Yes via private API | **Yes via standard Camera2** (DCG unlocked) |
+| Open gate resolution (Camera2) | 2560×1920 (confirmed) | 4030×3072 (confirmed) |
+| 10-bit HDR via Camera2 (third-party) | **No** — HAL-locked to stock Pixel Camera | **Yes** — unlocked |
+| 12-bit RAW open gate via Camera2 | **No** — HAL-locked | **Yes** — DCG unlocked |
 | DCG (Dual Conversion Gain) | Hardware present; software-locked for third-party | **Unlocked** — accessible to any Camera2 app |
+| ADB / developer experience | Standard Pixel | Identical |
+| Moto G compatibility | Unchanged | Unchanged |
 
-The Pixel 10 Pro is the **first Pixel where DCG is accessible via standard Camera2 API**, meaning Kanaha could eventually record 12-bit RAW open gate footage without relying on Blackmagic or MotionCam Pro's private APIs. The 4030×3072 open gate resolution is confirmed and accessible to third-party apps.
+**What this means for the Claude + ffmpeg pipeline:**
+- `lut3d` grading works on better source — 10-bit HLG gives real tonal headroom vs. 8-bit compressed highlights
+- `zscale + tonemap` HDR-to-SDR delivery becomes meaningful (you have actual HDR to deliver from)
+- 12-bit DCG: 14+ stops of dynamic range means shadow detail in snow scenes that 8-bit simply clips; `curves` and `eq` grading has real information to work with
 
-For your current DaVinci Resolve workflow, the Pixel 10 Pro would give you:
-- Slightly higher resolution open gate (4030×3072 vs estimated 3840×2880)
-- True 12-bit dynamic range (14+ stops vs ~12–13 stops at 10-bit)
-- Cleaner shadows — noticeably better in mixed lighting or when pulling exposures in Resolve
-
-**Note**: Kanaha's current implementation records compressed video (H.264/HEVC), not RAW DNG. Adding 12-bit RAW support would require significant MediaRecorder/ImageReader pipeline changes and is a separate workstream.
+**Note**: Kanaha currently records compressed video (H.264/HEVC), not RAW DNG. 12-bit RAW support would require an ImageReader pipeline — a separate workstream. The immediate gain is 10-bit HLG video via HEVC Main 10, which requires adding that profile to OpenCamera's codec selection (see [OpenCamera ticket #1218](https://sourceforge.net/p/opencamera/tickets/1218/)).
 
 ---
 
-## Pixel 11 Pro — September 2026 Release: Rumoured Outlook
+## Pixel 11 Pro — September 2026: Not Worth Waiting For (Kanaha)
 
 Expected release: **August/September 2026** (Tensor G6, TSMC N3P process).
 
-Camera rumours as of early 2026:
-- **64MP periscope telephoto** with up to 10x optical zoom
-- New **4K 30fps Cinematic Blur** video feature
-- **Ultra-low Light video** (5–10 lux capability)
-- Under-display IR camera for improved face unlock
-- Main sensor: unconfirmed, likely same class as Pixel 10 Pro or incremental improvement
+Credibly leaked AI camera features and their Kanaha accessibility:
 
-**Open gate outlook for Pixel 11 Pro**:
-- Almost certainly inherits the Pixel 10 Pro's DCG capability (now standard in Pixel lineage)
-- If the main sensor is upgraded (larger sensor or higher resolution), open gate resolution could increase
-- 12-bit RAW open gate via Camera2 expected to carry forward
-- **No strong reason to wait for Pixel 11 Pro specifically for open gate** — the Pixel 10 Pro already has the feature and the rumoured Pixel 11 Pro camera improvements (Cinematic Blur, low-light video) are primarily software/computational, not raw sensor improvements that would change open gate capability meaningfully
+| Feature | Leaked | Kanaha/Camera2 accessible? | Claude + ffmpeg equivalent |
+|---|---|---|---|
+| Tensor G6 ISP (TSMC fab) | Confirmed | **Yes — passive** — better base footage for all Camera2 apps | Partial — `hqdn3d`/`nlmeans`, but ISP multi-frame merge is better |
+| 4K Cinematic Blur | Credibly leaked | **No** — stock Pixel Camera only | OSS partial: MediaPipe segmentation + ffmpeg `gblur` — significant effort |
+| Video Relight | Credibly leaked | **No** — Google Photos/stock camera neural pipeline | Not replicable in ffmpeg — can adjust exposure but not light direction |
+| Ultra Low Light video | Credibly leaked | **No** — multi-frame ISP merge, stock camera only | `hqdn3d` + `eq` brightness lift — lower quality |
+| 8K/24fps Video Boost | Confirmed | **No** — cloud, stock camera pipeline only | Not replicable |
 
-**Recommendation**: If open gate and 12-bit RAW are the primary drivers, **buy the Pixel 10 Pro now**. If you are willing to wait ~6 months (September 2026), the Pixel 11 Pro will likely add the 10x telephoto and computational video features, but the open gate/DCG story will be similar.
+The Pixel 11's headline AI features are locked to the stock Pixel Camera app. Kanaha passively inherits better base footage from the Tensor G6 ISP — real but unquantifiable until hardware ships. The 10-bit/12-bit DCG story carries forward from Pixel 10 but adds nothing new for Kanaha.
+
+**Recommendation**: The Pixel 10 Pro delivers the only Camera2-accessible quality improvements that matter for Kanaha (10-bit HLG, 12-bit DCG, larger open gate). The Pixel 11 Pro's AI features are inaccessible to any OSS pipeline. Waiting 6 months for passive ISP improvement is not worth it. **Stay on Pixel + Motorola; upgrade the A-camera to Pixel 10 Pro.**
 
 ---
 
