@@ -140,6 +140,7 @@ endif()
 set(KANAHA_SOURCES
     apache-httpd/apache_httpd_android.c
     axis2c/camera_control_service.c
+    axis2c/kanaha_mcp.c
 )
 
 # ============================================================================
@@ -315,15 +316,56 @@ if(USE_CROSS_COMPILED_LIBS)
     # Install executable to the same location as shared libraries
     # This ensures it's included in the APK's lib/<abi>/ directory
     install(TARGETS kanaha_httpd.so DESTINATION lib/${ANDROID_ABI})
+
+    # ========================================================================
+    # MCP stdio binary — launched by Claude Desktop as a subprocess
+    # Named libkanaha_mcp.so for Android APK packaging convention
+    # ========================================================================
+    add_executable(
+        kanaha_mcp.so
+        axis2c/kanaha_mcp_main.c
+        axis2c/kanaha_mcp.c
+        axis2c/camera_control_service.c
+    )
+
+    set_target_properties(kanaha_mcp.so PROPERTIES
+        OUTPUT_NAME "kanaha_mcp"
+        PREFIX "lib"
+        SUFFIX ".so"
+        POSITION_INDEPENDENT_CODE ON
+    )
+
+    target_compile_options(kanaha_mcp.so PRIVATE
+        -Wall -Wextra -O2 -fPIE
+        -ffunction-sections -fdata-sections
+        -Wno-unused-parameter -Wno-unused-variable
+    )
+
+    target_link_libraries(
+        kanaha_mcp.so
+        ${log-lib}
+        ${z-lib}
+        json-c
+    )
+
+    target_link_options(kanaha_mcp.so PRIVATE
+        -fPIE -pie
+        -Wl,--gc-sections
+        -Wl,-z,max-page-size=16384
+        -Wl,-z,separate-loadable-segments
+    )
+
+    install(TARGETS kanaha_mcp.so DESTINATION lib/${ANDROID_ABI})
 endif()
 
 # ============================================================================
 # ARCHITECTURE NOTES
 # ============================================================================
 #
-# This build system creates two targets:
+# This build system creates three targets:
 # 1. libkanaha-camera-control.so - Shared library (for potential JNI use)
 # 2. libkanaha_httpd.so - Native executable (launched via ProcessBuilder)
+# 3. libkanaha_mcp.so - MCP stdio executable (launched by Claude Desktop)
 #
 # The executable approach is preferred as it provides:
 # - Clean process isolation between HTTP server and Android layer

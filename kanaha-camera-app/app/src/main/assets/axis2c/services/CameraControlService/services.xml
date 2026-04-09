@@ -1,108 +1,104 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- HTTP/2 JSON-RPC Camera Control Service Configuration for Android static linking -->
+<!-- Kanaha Camera Control Service — HTTP/2 JSON-RPC + MCP -->
 <serviceGroup>
     <service name="CameraControlService">
         <description>
-            Apache Axis2/C HTTP/2 Camera Control Service (Android Static Build)
-            JSON-RPC service with statically linked message receiver.
+            Kanaha Camera Control Service — remote camera control via HTTP/2 JSON-RPC
+            and MCP (Model Context Protocol). Enables AI assistants to discover and
+            control Android cameras with mTLS security and frame-accurate multi-camera
+            synchronization.
         </description>
 
         <serviceClass>camera_control_service</serviceClass>
         <parameter name="ServiceClass">camera_control_service</parameter>
 
-        <!-- JSON-RPC catch-all operation for method dispatch from body -->
+        <!-- JSON-RPC catch-all for method dispatch from body -->
         <operation name="jsonrpc">
-            <description>
-                JSON-RPC endpoint that routes methods based on "method" field in request body.
-                Supports: getStatus, takePhoto, startVideoRecording, stopVideoRecording, getCapabilities
-            </description>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/</parameter>
             <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
         </operation>
 
-        <!-- Individual operations for REST-style URLs -->
         <operation name="getStatus">
-            <description>Get current camera status</description>
+            <parameter name="mcpDescription">Get camera status: battery level, available storage, GPS timestamp and accuracy, current recording state, device model, and Android version. Use this to check if the camera is ready before starting operations.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{},"required":[]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/getStatus</parameter>
             <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
-        </operation>
-
-        <operation name="takePhoto">
-            <description>Capture a photo</description>
-            <messageReceiver class="axis2_json_rpc_msg_recv"/>
-            <parameter name="RESTMethod">POST</parameter>
-            <parameter name="RESTLocation">/takePhoto</parameter>
-            <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
         </operation>
 
         <operation name="startRecording">
-            <description>Start video recording</description>
+            <parameter name="mcpDescription">Start video recording. Supports scheduled start via start_at for frame-accurate multi-camera sync, and open gate recording (full 4:3 sensor) on compatible devices.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"clip_name":{"type":"string","description":"Clip name. Default: default_clip"},"quality":{"type":"string","description":"4K, 1080p, 720p. Default: 4K"},"duration":{"type":"integer","description":"Max duration seconds. Default: 1800"},"format":{"type":"string","description":"MP4, MKV. Default: MP4"},"start_at":{"type":"integer","description":"UTC epoch ms for scheduled start. 0=now"},"open_gate":{"type":"boolean","description":"Full 4:3 sensor (Pixel 9 Pro). Default: false"}},"required":[]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/startRecording</parameter>
             <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
         </operation>
 
         <operation name="stopRecording">
-            <description>Stop video recording</description>
+            <parameter name="mcpDescription">Stop the current video recording immediately.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{},"required":[]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/stopRecording</parameter>
             <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
         </operation>
 
-        <operation name="configure">
-            <description>Configure camera settings</description>
+        <operation name="playTone">
+            <parameter name="mcpDescription">Play a sync slate tone through the phone speaker. For multi-camera alignment — all cameras play at the same scheduled time. Post-processing detects waveform onset to ±1-5ms accuracy.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"frequency":{"type":"integer","description":"Tone frequency Hz. Default: 1000"},"duration_ms":{"type":"integer","description":"Duration ms. Default: 500"},"start_at":{"type":"integer","description":"UTC epoch ms for scheduled playback. 0=now"}},"required":[]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
-            <parameter name="RESTLocation">/configure</parameter>
+            <parameter name="RESTLocation">/playTone</parameter>
             <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
-        </operation>
-
-        <operation name="getCapabilities">
-            <description>Get camera capabilities</description>
-            <messageReceiver class="axis2_json_rpc_msg_recv"/>
-            <parameter name="RESTMethod">POST</parameter>
-            <parameter name="RESTLocation">/getCapabilities</parameter>
-            <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
-        </operation>
-
-        <operation name="sftpTransfer">
-            <description>Transfer file via SFTP to control station</description>
-            <messageReceiver class="axis2_json_rpc_msg_recv"/>
-            <parameter name="RESTMethod">POST</parameter>
-            <parameter name="RESTLocation">/sftpTransfer</parameter>
-            <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
         </operation>
 
         <operation name="listFiles">
-            <description>List video files on device</description>
+            <parameter name="mcpDescription">List recorded video files on the device with sizes, timestamps, and transfer status.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"pattern":{"type":"string","description":"Glob pattern. Default: * (all)"}},"required":[]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/listFiles</parameter>
             <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
         </operation>
 
         <operation name="deleteFiles">
-            <description>Delete video files matching pattern</description>
+            <parameter name="mcpDescription">Delete recorded video files matching a glob pattern.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"pattern":{"type":"string","description":"Glob pattern for files to delete"}},"required":["pattern"]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/deleteFiles</parameter>
             <parameter name="contentType">application/json</parameter>
-            <parameter name="responseType">application/json</parameter>
+        </operation>
+
+        <operation name="sftpTransfer">
+            <parameter name="mcpDescription">Transfer a video file to a remote storage server via SFTP with Ed25519 SSH key auth. Also transfers companion sidecar metadata.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"storage_server_id":{"type":"string","description":"Destination server ID"},"video_filename":{"type":"string","description":"Video file to transfer"},"destination_folder":{"type":"string","description":"Remote destination folder"}},"required":["storage_server_id","video_filename"]}</parameter>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/sftpTransfer</parameter>
+            <parameter name="contentType">application/json</parameter>
+        </operation>
+
+        <operation name="configure">
+            <parameter name="mcpDescription">Configure camera recording settings. Changes take effect on next startRecording.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"resolution":{"type":"string","description":"3840x2160, 1920x1080, 1280x720. Default: 1920x1080"},"fps":{"type":"string","description":"30, 60. Default: 30"},"codec":{"type":"string","description":"H264, HEVC. Default: H264"}},"required":[]}</parameter>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/configure</parameter>
+            <parameter name="contentType">application/json</parameter>
+        </operation>
+
+        <operation name="cleanupFiles">
+            <parameter name="mcpDescription">Clean up video files from the device based on policy: transferred files only, all files, or files older than a threshold.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"cleanup_policy":{"type":"string","description":"transferred_only, all, older_than. Default: transferred_only"},"days_threshold":{"type":"integer","description":"For older_than, days. Default: 30"},"file_pattern":{"type":"string","description":"Glob pattern. Default: *.mp4"}},"required":[]}</parameter>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/cleanupFiles</parameter>
+            <parameter name="contentType">application/json</parameter>
         </operation>
 
     </service>
