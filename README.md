@@ -282,9 +282,21 @@ cd kanaha-camera-app
 
 See [mTLS Setup Guide](docs/MULTI_CAMERA_DEPLOYMENT_SYSTEM.md#mtls-certificate-architecture) for certificate management and [SFTP Setup](docs/SFTP-FILE-TRANSFER.md) for SSH key configuration.
 
+## MCP (AI Assistant Integration)
+
+Kanaha supports [Model Context Protocol](https://modelcontextprotocol.io/) (MCP),
+enabling Claude Desktop and other AI assistants to discover and control cameras
+as tools. The MCP server is a 98 KB native binary — no JVM, no Python, sub-50ms
+startup.
+
+See [MCP Documentation](docs/MCP.md) for setup, tool catalog, and live examples
+tested on a Pixel 9 Pro.
+
 ## API Reference
 
 All endpoints are under `/services/CameraControlService/`. All requests require mTLS client certificates.
+Every curl command below has an MCP equivalent — see [MCP docs](docs/MCP.md) for
+the JSON-RPC 2.0 format.
 
 | Endpoint | Method | Key Parameters | Description |
 |----------|--------|----------------|-------------|
