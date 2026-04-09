@@ -429,6 +429,7 @@ See [Security Documentation](docs/SECURITY.md) for threat model, certificate man
 | [SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) | iRig Pro I/O + Tentacle Sync hardware timecode setup |
 | [GPS Synchronization](docs/GPS.md) | GPS/NTP soft sync, `start_at` scheduled recording, software slate (`playTone`), sync sidecar — vs. SMPTE/LTC for consumer and security use cases |
 | [Threading Model](docs/THREAD_MODEL.md) | IPC pipeline threading: C Apache/Axis2 worker → Android UI thread → background handler; JMM visibility rules, `CountDownLatch` patterns |
+| [MCP (AI Assistant)](docs/MCP.md) | Model Context Protocol integration — 9 camera tools, Claude Desktop config, live Pixel 9 Pro examples |
 | [Legal Review](docs/LEGAL.md) | License compatibility analysis for Apache httpd, Axis2/C, OpenCamera (GPL v3+) |
 
 ## Architecture
