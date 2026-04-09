@@ -57,18 +57,18 @@ discover_via_avahi() {
         # Check if this is a Kanaha camera (api=kanaha-camera-control in TXT)
         [[ "$txt" != *"api=kanaha-camera-control"* ]] && continue
 
-        # Extract TXT fields - handle both quoted and unquoted values
-        # TXT format: key=value or key="value with spaces"
-        dev_name=$(echo "$txt" | sed -n 's/.*name="\([^"]*\)".*/\1/p')
-        [[ -z "$dev_name" ]] && dev_name=$(echo "$txt" | sed -n 's/.*name=\([^ ]*\).*/\1/p')
+        # Extract TXT fields from avahi-browse -rp output.
+        # Format: "key1=value1" "key2=value with spaces" "key3=value3"
+        # Strip outer quotes from each pair, then extract by key name.
+        txt_clean=$(echo "$txt" | sed 's/" "/\n/g; s/^"//; s/"$//')
+
+        dev_name=$(echo "$txt_clean" | sed -n 's/^name=//p')
         [[ -z "$dev_name" ]] && dev_name="$name"
 
-        model=$(echo "$txt" | sed -n 's/.*model="\([^"]*\)".*/\1/p')
-        [[ -z "$model" ]] && model=$(echo "$txt" | sed -n 's/.*model=\([^ ]*\).*/\1/p')
+        model=$(echo "$txt_clean" | sed -n 's/^model=//p')
         [[ -z "$model" ]] && model="Unknown"
 
-        manufacturer=$(echo "$txt" | sed -n 's/.*manufacturer="\([^"]*\)".*/\1/p')
-        [[ -z "$manufacturer" ]] && manufacturer=$(echo "$txt" | sed -n 's/.*manufacturer=\([^ ]*\).*/\1/p')
+        manufacturer=$(echo "$txt_clean" | sed -n 's/^manufacturer=//p')
         [[ -z "$manufacturer" ]] && manufacturer="Unknown"
 
         # Get status via API for battery/storage
