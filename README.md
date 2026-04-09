@@ -16,6 +16,7 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 - **GPS Timestamping** - `getStatus` exposes GPS fix time and age for clock quality assessment
 - **Recording Start Sidecar** - Writes `kanaha_recording_start.json` at recording start (millisecond precision, GPS time); the post-processing analog of a BWF Time Reference
 - **Open Gate Recording** - Full 4:3 native sensor recording on supported devices (2560×1920 on Pixel 9 Pro) with no horizontal or vertical crop; see [Open Gate Recording](docs/OPENGATE.md)
+- **MCP (AI Assistant) Support** - [Model Context Protocol](https://modelcontextprotocol.io/) integration lets Claude Desktop and other AI assistants discover and control cameras as tools. 9 camera operations exposed with full parameter schemas. 98 KB native binary, no JVM; see [MCP Documentation](docs/MCP.md)
 
 ## Installation
 
