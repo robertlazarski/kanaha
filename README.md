@@ -16,7 +16,6 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 - **GPS Timestamping** - `getStatus` exposes GPS fix time and age for clock quality assessment
 - **Recording Start Sidecar** - Writes `kanaha_recording_start.json` at recording start (millisecond precision, GPS time); the post-processing analog of a BWF Time Reference
 - **Open Gate Recording** - Full 4:3 native sensor recording on supported devices (2560×1920 on Pixel 9 Pro) with no horizontal or vertical crop; see [Open Gate Recording](docs/OPENGATE.md)
-- **Built in C** - Native Apache httpd + Axis2/C for low latency and minimal memory footprint
 
 ## Installation
 
