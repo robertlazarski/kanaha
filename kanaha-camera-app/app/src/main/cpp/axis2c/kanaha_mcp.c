@@ -431,16 +431,29 @@ static json_object *mcp_handle_tools_call(
 
     LOGI("MCP tools/call: %s -> %s", tool_name, request_str);
 
-    /* Call the camera service */
-    char response_buf[CAMERA_RESPONSE_SIZE];
-    memset(response_buf, 0, sizeof(response_buf));
+    /*
+     * SECURITY: The camera service is responsible for sanitizing all
+     * user-provided string arguments (filenames, glob patterns) to prevent
+     * path traversal. This MCP layer validates tool names only.
+     */
+
+    /* Heap-allocate response buffer — avoids 64KB stack allocation */
+    char *response_buf = malloc(CAMERA_RESPONSE_SIZE);
+    if (!response_buf) {
+        *out_code = MCP_ERR_INTERNAL_ERROR;
+        *out_msg  = "Failed to allocate response buffer";
+        json_object_put(request);
+        return NULL;
+    }
+    memset(response_buf, 0, CAMERA_RESPONSE_SIZE);
 
     int rc = camera_control_service_invoke_json_impl(
-        request_str, response_buf, sizeof(response_buf));
+        request_str, response_buf, CAMERA_RESPONSE_SIZE);
 
     json_object_put(request);
 
     if (rc != 0 && response_buf[0] == '\0') {
+        free(response_buf);
         *out_code = MCP_ERR_INTERNAL_ERROR;
         *out_msg  = "Camera operation failed with no response";
         return NULL;
@@ -459,6 +472,7 @@ static json_object *mcp_handle_tools_call(
     json_object *result = json_object_new_object();
     json_object_object_add(result, "content", content_array);
 
+    free(response_buf);
     return result;
 }
 
