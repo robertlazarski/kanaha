@@ -293,9 +293,12 @@ kanaha-discover.sh --json
 kanaha-discover.sh --ip 192.168.1.100
 ```
 
-**Note**: mDNS discovery requires the phone and host to be on the same L2
-network with multicast enabled. If the phone has only a link-local IPv6
-address (no IPv4 DHCP), use ADB USB port forwarding:
+**Important**: The phone must have **WiFi enabled and connected** to the
+same network as the host. If WiFi is off (phone on cellular only), the
+phone has no local network address and cannot be discovered or reached.
+
+If WiFi is unavailable or the network isolates clients (e.g., guest
+networks), use ADB USB port forwarding as a fallback:
 
 ```bash
 adb forward tcp:18443 tcp:8443
