@@ -164,7 +164,19 @@ fi
 
 # Output results
 if [[ ! -s "$TMPFILE" ]]; then
-    [[ "$JSON" = true ]] && echo "[]" || echo "No Kanaha cameras found"
+    if [[ "$JSON" = true ]]; then
+        echo "[]"
+    else
+        echo "No Kanaha cameras found."
+        echo ""
+        echo "Troubleshooting:"
+        echo "  - Make sure WiFi is turned ON on all camera phones"
+        echo "    (phones on cellular-only have no local network address)"
+        echo "  - Verify the phone and this computer are on the same WiFi network"
+        echo "  - Open the Kanaha app and confirm the HTTP server is running"
+        echo "  - Try: $(basename "$0") --ip <phone-ip>"
+        echo "  - Fallback: adb forward tcp:18443 tcp:8443 (USB cable)"
+    fi
     exit 1
 fi
 
