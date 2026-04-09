@@ -260,6 +260,47 @@ The tone is synthesized via `AudioTrack MODE_STATIC` with 5 ms linear fades to p
 
 The workflow script `test-triple-camera-workflow.sh` exposes this as `play_slate_all()`, which automatically writes the `start_at` value to `/tmp/kanaha_slate_at.txt` for `parseWithoutLTC.sh` to read.
 
+#### MCP Tool Discovery
+
+Query the MCP tool catalog to see all available camera operations and their
+parameter schemas — this is what Claude Desktop reads to discover your camera:
+
+```bash
+# Via the MCP stdio binary on the phone (over ADB)
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
+  adb shell /data/app/.../org.kanaha.camera-.../lib/arm64/libkanaha_mcp.so
+```
+
+Response (9 tools with full inputSchema):
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "tools": [
+      {"name": "getStatus",      "description": "Get camera status: battery, storage, GPS...",
+       "inputSchema": {"type": "object", "properties": {}, "required": []}},
+      {"name": "startRecording", "description": "Start video recording. Supports scheduled start...",
+       "inputSchema": {"type": "object", "properties": {
+         "clip_name": {"type": "string"}, "quality": {"type": "string"},
+         "start_at": {"type": "integer"}, "open_gate": {"type": "boolean"}}, "required": []}},
+      {"name": "stopRecording",  "description": "Stop the current video recording immediately.", "...": "..."},
+      {"name": "playTone",       "description": "Play sync slate tone for multi-camera alignment.", "...": "..."},
+      {"name": "listFiles",      "description": "List recorded video files on the device.", "...": "..."},
+      {"name": "deleteFiles",    "description": "Delete files matching a glob pattern.", "...": "..."},
+      {"name": "sftpTransfer",   "description": "Transfer file via SFTP with Ed25519 SSH key auth.", "...": "..."},
+      {"name": "configure",      "description": "Set camera resolution, fps, codec.", "...": "..."},
+      {"name": "cleanupFiles",   "description": "Clean up transferred files.", "...": "..."}
+    ]
+  }
+}
+```
+
+Claude reads this schema and constructs valid requests from natural language —
+no documentation, no curl syntax, no certificate management needed by the user.
+See [MCP Documentation](docs/MCP.md) for the full tool catalog with complete
+`inputSchema` definitions.
+
 #### Workflow Scripts
 
 For complete record-transfer-cleanup workflows, use the included test scripts:
