@@ -140,8 +140,13 @@ endif()
 set(KANAHA_SOURCES
     apache-httpd/apache_httpd_android.c
     axis2c/camera_control_service.c
-    axis2c/kanaha_mcp.c
 )
+
+# MCP source is only compiled for the full cross-compiled build (arm64)
+# not the armeabi-v7a stub, because it requires json-c headers
+if(USE_CROSS_COMPILED_LIBS)
+    list(APPEND KANAHA_SOURCES axis2c/kanaha_mcp.c)
+endif()
 
 # ============================================================================
 # Create Shared Library
