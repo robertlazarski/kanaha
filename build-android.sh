@@ -98,7 +98,6 @@ $CC -fPIC -o httpd modules.o buildmark.o \
   $DEPS/lib/libaxis2_http_common.a \
   $DEPS/lib/libaxis2_http_util.a \
   $DEPS/lib/libaxis2_h2_transport.a \
-  $DEPS/lib/libaxis2_h2_util.a \
   $DEPS/lib/libaxis2_h2_sender.a \
   $DEPS/lib/libaxis2_axiom.a \
   $DEPS/lib/libaxis2_axiom_util.a \
