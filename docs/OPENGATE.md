@@ -181,6 +181,161 @@ adb -s <pixel-serial> pull \
 
 ---
 
+## Testing the Pixel 10 Pro XL
+
+**Rig status, September 2026:** the Pixel 9 Pro has been traded in. The
+Pixel 10 Pro XL is the A-camera. Every Pixel 9 Pro row in the tables above is
+historical — kept because it explains why the upgrade was worth making, not
+because that phone is still in the rig.
+
+The section above was written as a recommendation. This one is the procedure for
+confirming it on the actual hardware, in the order that fails cheapest first.
+
+### Step 1 — ask the phone what it exposes
+
+Before any code changes. Nothing here needs Kanaha built.
+
+```sh
+adb shell dumpsys media.camera | grep -iE "10.?bit|dynamic.?range|RAW|white level"
+```
+
+Three things to look for:
+
+- `REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT` — the phone will accept
+  a 10-bit profile. Without this, stop; nothing else matters.
+- `HLG10` in the supported dynamic range profiles. Android documents HLG10 as
+  mandatory wherever the ten-bit capability is present, but confirm rather than
+  assume.
+- `RAW12` alongside `RAW_SENSOR` in the output formats. This is the 12-bit
+  question and it is worth being clear about the answer: **Camera2 has no 12-bit
+  video path at all.** Its four HDR profiles — HLG10, HDR10, HDR10+, Dolby
+  Vision 8.4 — are every one of them 10-bit HEVC. `RAW12` is a stills format.
+  What other apps call "12-bit video" is a DNG sequence: numbered raw stills at
+  frame rate, no audio, no container. Nothing is locked; it is a different
+  capture mode, and one that does not fit Kanaha's HTTP-triggered, file-per-take
+  pipeline without a separate ImageReader workstream.
+
+### Step 2 — confirm the file is what you think it is
+
+After recording a 10-bit clip, before grading anything:
+
+```sh
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=pix_fmt,profile,color_transfer,color_primaries,color_space \
+  -of default=nw=1 demo_og.mp4
+```
+
+Wanted:
+
+```
+pix_fmt=yuv420p10le
+profile=Main 10
+color_transfer=arib-std-b67      <- HLG
+color_primaries=bt2020
+color_space=bt2020nc
+```
+
+`pix_fmt=yuv420p` means it recorded 8-bit and the rest of this section does not
+apply. Correct pixel format but `color_transfer=bt709` means the frames are
+10-bit HLG while the file claims Rec.709 — every player and NLE will then grade
+it wrongly, and it will look washed out. That is a tagging bug, not a capture
+failure, and `-color_trc arib-std-b67 -color_primaries bt2020 -colorspace
+bt2020nc` on a stream copy fixes it without re-encoding.
+
+### Step 3 — grade in HLG, do not convert to Rec.709
+
+Converting HLG to Rec.709 throws away the headroom that was the point of
+shooting 10-bit. Stay in BT.2020/HLG all the way to delivery.
+
+**The cost of that decision:** the IWLTBAP LUTs in `~/Downloads/lut/` are
+authored for Rec.709 input. They cannot be applied to HLG footage directly — the
+result is flat and wrongly saturated, and it looks like the 10-bit work failed
+when it did not. Two honest options.
+
+**3a. Grade with primitives, staying in HLG.** No LUT, nothing to convert, and
+the tonality stays where the camera put it:
+
+```sh
+HLG="setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc:range=tv"
+
+ffmpeg -i demo_og.mp4 \
+  -vf "format=gbrp10le,\
+       eq=saturation=1.10:contrast=1.05:gamma=0.96,\
+       colorbalance=rm=0.03:bm=-0.02:rh=0.01:bh=-0.02,\
+       format=yuv420p10le,${HLG}" \
+  -c:v libx265 -crf 18 -preset slow -pix_fmt yuv420p10le \
+  -tag:v hvc1 -c:a copy demo_og_graded.mp4
+```
+
+Tagging the output is not optional — without it the file carries 10-bit HLG
+frames labelled Rec.709 and every downstream tool misreads it. Note the tags are
+applied with the `setparams` **filter**, not the `-color_primaries` / `-color_trc`
+output options: tested on ffmpeg 8.0.1, those options set `colorspace` but leave
+`color_primaries` and `color_transfer` as `unknown`. `setparams` sets all three,
+verified with the `ffprobe` command in Step 2.
+
+**3b. Round-trip a Rec.709 LUT and come back to HLG.** Keeps the Aspen look and
+an HLG deliverable, at the cost of the LUT imposing SDR tonality on the middle of
+the range — you keep the container and the bit depth, not the full HDR intent:
+
+```sh
+LUT="$HOME/Downloads/lut/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
+HLG="setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc:range=tv"
+
+ffmpeg -i demo_og.mp4 \
+  -vf "format=yuv420p10le,${HLG},\
+       zscale=t=linear:npl=100,\
+       zscale=p=bt709:t=bt709:m=bt709:r=tv,\
+       format=gbrp10le,lut3d=file='${LUT}':interp=tetrahedral,\
+       zscale=t=linear,\
+       zscale=p=bt2020:t=arib-std-b67:m=bt2020nc:r=tv,\
+       format=yuv420p10le,${HLG}" \
+  -c:v libx265 -crf 18 -preset slow -pix_fmt yuv420p10le \
+  -tag:v hvc1 -c:a copy demo_og_aspen_hlg.mp4
+```
+
+The leading `${HLG}` is load-bearing. `zscale=t=linear` cannot linearise frames
+whose transfer function it does not know, and fails with nothing more useful than
+"Generic error in an external library". Tagging first tells it what it is
+holding. On correctly tagged footage the leading tag is redundant but harmless —
+and it is exactly what rescues a file that recorded 10-bit while claiming
+Rec.709, the failure described in Step 2.
+
+If you want the Aspen look properly in HDR rather than round-tripped, the answer
+is a LUT authored for HLG input, not a cleverer filter chain.
+
+### Step 4 — the A/B that decides whether any of this is worth it
+
+Half an hour, and it settles the question for your material rather than in the
+abstract. Shoot the same scene twice, 8-bit and 10-bit, tripod, same exposure.
+Run both through the same grade. Compare **a smooth gradient** — dusk sky,
+snowfield, a shaded wall — at 100%.
+
+What to expect, so the result is not a surprise:
+
+- **Ungraded, on a phone screen: no visible difference.** 10-bit is not "more
+  detail" and not "more dynamic range". The sensor captures the same light; the
+  extra bits describe it in finer steps.
+- **After the grade: the difference is banding.** A dusk sky spans perhaps thirty
+  8-bit levels; stretching it to "rich cinematic blue" makes those steps visible
+  as bands. 10-bit has roughly four times the steps and holds together.
+- **On an HDR display,** the wider BT.2020 gamut and the HLG curve are a more
+  obvious change than the bit depth itself, because highlights get to be bright
+  rather than clipped.
+
+If the gradients look the same after grading, 10-bit is not buying anything for
+the way you shoot, and the file sizes are not worth it.
+
+### A note that applies even on 8-bit
+
+The command in *Post-Production* below uses `format=rgb24` — eight bits per
+channel — so it truncates before the LUT is applied. Widening that intermediate
+to `format=gbrp10le` reduces banding even from an 8-bit source, because the LUT
+arithmetic stops rounding at every step. It cannot recover what was never
+captured, but it stops adding error. Free improvement, no re-shoot.
+
+---
+
 ## Pixel 11 Pro — September 2026: Not Worth Waiting For (Kanaha)
 
 Expected release: **August/September 2026** (Tensor G6, TSMC N3P process).
