@@ -279,7 +279,8 @@ an HLG deliverable, at the cost of the LUT imposing SDR tonality on the middle o
 the range — you keep the container and the bit depth, not the full HDR intent:
 
 ```sh
-LUT="$HOME/Downloads/lut/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
+LUT_DIR="${LUT_DIR:-$HOME/Downloads/lut}"   # see Post-Production, below
+LUT="$LUT_DIR/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
 HLG="setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc:range=tv"
 
 ffmpeg -i demo_og.mp4 \
@@ -398,14 +399,22 @@ Pro adds a better telephoto and AI features that no OSS pipeline can reach.
 
 ## Post-Production: LUT Grading with ffmpeg
 
+All commands below take the LUT pack location from `$LUT_DIR`. Set it once for
+the shell, or put it in your profile:
+
+```sh
+export LUT_DIR="$HOME/Downloads/lut"      # wherever the IWLTBAP pack was unpacked
+```
+
+
 Open gate footage from Kanaha is standard H.264/HEVC — it drops into any post pipeline. The recommended workflow is to shoot flat and grade in post; do not bake a LUT at capture.
 
 ### Recommended LUT for snow/winter exterior
 
-From the IWLTBAP Renata pack (`/home/robert/Downloads/lut/`), **Aspen Standard** works best for winter snow scenes: it lifts the sky to a rich cinematic blue, adds contrast to tree lines, and keeps snow whites natural without the teal push of Humble/Renata.
+From the IWLTBAP Renata pack (`$LUT_DIR`, below), **Aspen Standard** works best for winter snow scenes: it lifts the sky to a rich cinematic blue, adds contrast to tree lines, and keeps snow whites natural without the teal push of Humble/Renata.
 
 ```bash
-LUT="/home/robert/Downloads/lut/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
+LUT="$LUT_DIR/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
 
 ffmpeg -i demo_og.mp4 \
   -vf "format=rgb24,lut3d='${LUT}',format=yuv420p" \
@@ -504,7 +513,7 @@ grid.save("deliverables_grid.jpg", quality=94)
 
 **To reproduce the full demo from a raw clip:**
 ```bash
-LUT="/home/robert/Downloads/lut/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
+LUT="$LUT_DIR/IWLTBAP - Renata (Free LUT)/LUTs by IWLTBAP (CUBE)/BONUS/Aspen/IWLTBAP Aspen - Standard.cube"
 
 # 1. Extract best frame
 ffmpeg -ss 60 -i demo_og.mp4 -vframes 1 -update 1 -q:v 1 source.jpg
