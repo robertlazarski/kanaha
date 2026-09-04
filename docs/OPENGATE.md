@@ -336,23 +336,63 @@ captured, but it stops adding error. Free improvement, no re-shoot.
 
 ---
 
-## Pixel 11 Pro — September 2026: Not Worth Waiting For (Kanaha)
+## Pixel 11 Pro — shipped August 2026: still not an upgrade for Kanaha
 
-Expected release: **August/September 2026** (Tensor G6, TSMC N3P process).
+Announced 12 August 2026, released 20 August, Android 17, Tensor G6 on TSMC 3nm.
+The prediction in the earlier version of this section held; what follows is what
+actually shipped, checked in September 2026.
 
-Credibly leaked AI camera features and their Kanaha accessibility:
+**The conclusion is unchanged — but not for the reason first given.** The old
+text said the Pixel 11 was "largely the same hardware" with AI on top. That is
+wrong. The telephoto is a genuinely new part.
 
-| Feature | Leaked | Kanaha/Camera2 accessible? | Claude + ffmpeg equivalent |
-|---|---|---|---|
-| Tensor G6 ISP (TSMC fab) | Confirmed | **Yes — passive** — better base footage for all Camera2 apps | Partial — `hqdn3d`/`nlmeans`, but ISP multi-frame merge is better |
-| 4K Cinematic Blur | Credibly leaked | **No** — stock Pixel Camera only | OSS partial: MediaPipe segmentation + ffmpeg `gblur` — significant effort |
-| Video Relight | Credibly leaked | **No** — Google Photos/stock camera neural pipeline | Not replicable in ffmpeg — can adjust exposure but not light direction |
-| Ultra Low Light video | Credibly leaked | **No** — multi-frame ISP merge, stock camera only | `hqdn3d` + `eq` brightness lift — lower quality |
-| 8K/24fps Video Boost | Confirmed | **No** — cloud, stock camera pipeline only | Not replicable |
+| | Pixel 10 Pro | Pixel 11 Pro |
+|---|---|---|
+| Main (wide) | 50 MP, 1/1.31" | 50 MP, f/1.68, **1/1.3"** — unchanged |
+| Ultrawide | — | 48 MP, f/1.7, 1/2.51" |
+| Telephoto | — | 48 MP, f/2.8, 5×, **1/1.95" — larger sensor and optics** |
+| SoC | Tensor G5 | Tensor G6, TSMC 3nm, MediaTek modem |
+| Video (spec sheet) | — | 1080p/4K at 24/30/60, **8K at 24/30** |
 
-The Pixel 11's headline AI features are locked to the stock Pixel Camera app. Kanaha passively inherits better base footage from the Tensor G6 ISP — real but unquantifiable until hardware ships. The 10-bit/12-bit DCG story carries forward from Pixel 10 but adds nothing new for Kanaha.
+**Why it still does not matter here:** Kanaha's open gate work is main-sensor,
+and the main sensor did not change. 1/1.31" to 1/1.3" is rounding, not a new
+part. Everything Kanaha records comes off the lens that stayed the same.
 
-**Recommendation**: The Pixel 10 Pro delivers the only Camera2-accessible quality improvements that matter for Kanaha (10-bit HLG, 12-bit DCG, larger open gate). The Pixel 11 Pro's AI features are inaccessible to any OSS pipeline. Waiting 6 months for passive ISP improvement is not worth it. **Stay on Pixel + Motorola; upgrade the A-camera to Pixel 10 Pro.**
+The telephoto upgrade is real and is available to any Camera2 app — it is
+hardware, not an AI feature. It would matter for a tele B-camera or anything shot
+at 5×. It does not touch open gate.
+
+### What the headline features actually are
+
+| Feature | Shipped | Kanaha/Camera2 accessible? |
+|---|---|---|
+| Gemini Intelligence | Yes | **No** — agentic tooling on cloud Gemini plus on-device Gemma. Not a camera capability at all |
+| Pro Zoom (120×, up from 100×) | Yes | **No** — AI-assisted consumer zoom in the stock app |
+| Tensor G6 ISP | Yes | **Yes, passively** — better base footage for every Camera2 app, unquantified |
+| Larger telephoto | Yes | **Yes** — ordinary hardware, no gatekeeping |
+
+No new camera APIs for third-party developers are documented anywhere I could
+find.
+
+### Two things deliberately left unresolved
+
+Both would need a Pixel 11 in hand to settle, and neither changes the
+recommendation.
+
+- **Whether third-party 10-bit access is unchanged.** The sources covering this
+  phone do not mention 10-bit HDR, HLG, open gate or Camera2 at all, so "carries
+  forward from Pixel 10" is an assumption, not a finding. Android 17 could have
+  moved something.
+- **Whether the 8K in the spec sheet is reachable from Camera2.** The earlier
+  version of this section listed 8K as cloud-only Video Boost. Plain 8K/24/30 now
+  appears in the ordinary spec list, which hints at a normal encoder path, but
+  that is inference. `adb shell dumpsys media.camera` on the device would answer
+  it in one line.
+
+**Recommendation, unchanged:** the Pixel 10 Pro delivers the Camera2-accessible
+improvements that matter for Kanaha — 10-bit HLG, larger open gate. The Pixel 11
+Pro adds a better telephoto and AI features that no OSS pipeline can reach.
+**Not worth trading up for open gate work.**
 
 ---
 
