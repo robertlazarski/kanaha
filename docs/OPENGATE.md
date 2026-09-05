@@ -614,6 +614,35 @@ the work:
   `TextureView` is the wall, the preview has to move to `SurfaceView`, and every
   overlay's drawing path changes with it. **That is the week.**
 
+#### On a phone that cannot do 10-bit
+
+Three independent guards, because the failure mode is bad enough to be worth
+belt and braces: `setDynamicRangeProfile()` with an unadvertised profile fails
+**session configuration**, which kills the preview, not just the recording. The
+camera simply would not start.
+
+1. **The setting is removed** from Settings > Video (`PreferenceSubVideo`), so
+   there is no switch that silently does nothing.
+2. **`Preview` does not request it** — `setHlg10()` is passed
+   `supports_hlg10 && !is_extension && pref`.
+3. **The apply site refuses it** — `createOutputConfigurationList()` calls
+   `logHlg10Constraints()` and applies nothing if HLG10 is not in the camera's
+   supported set, whatever the layers above asked for.
+
+`supports_hlg10` requires all three of the `DYNAMIC_RANGE_TEN_BIT` capability,
+API 33, and HLG10 in `REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES`. It is logged
+unconditionally at camera open — `MyDebug.LOG` is `false` in release builds, and
+this is the one line that distinguishes a phone that genuinely cannot do 10-bit
+from a guard wrongly refusing on one that can:
+
+```sh
+adb logcat -d | grep KANAHA_HLG10
+# KANAHA_HLG10: supports_hlg10=true capabilities_10bit=true sdk=36
+```
+
+The Moto G cameras in the rig are the ones to check this against — they already
+ignore `open_gate`, and they will not offer the toggle at all.
+
 Verify the output rather than trusting the log — the encoder can accept a 10-bit
 profile request and quietly ignore it:
 
