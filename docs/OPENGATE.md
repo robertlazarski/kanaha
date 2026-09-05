@@ -440,11 +440,11 @@ you would guess.
 A one-minute take is 34–45 GB. That is the whole problem in one line, and it has
 three separate edges:
 
-1. **Sustained write rate.** UFS can burst far above this; holding 564 MB/s for
-   the length of a take, through the filesystem, with thirty file creations a
-   second, is a different question. Not measured — the phone dropped off the bus
-   before the probe ran. Worth measuring before anything else, because if
-   sustained write cannot hold the rate, nothing downstream matters.
+1. **Sustained write rate — measured, and fine.** 1.5 GB/s over a 10 GB write
+   with `fsync`, and 93 separate files a second. Roughly twice the throughput and
+   three times the file rate needed. Struck off the risk list; see the
+   implementation plan below for the figures. **Capacity** is the constraint that
+   replaces it: 180 GB free at 45 GB/min is four minutes of recording in total.
 2. **`DngCreator` is the likely wall.** It assembles a TIFF/DNG container on the
    CPU, per image, and was designed for someone pressing the shutter. Thirty a
    second is not what it is for. This is the piece most likely to fail first, and
@@ -467,17 +467,174 @@ delivers most of the grading benefit for a fraction of the work and none of the
 storage cost, and it fits the existing one-file-per-take model without touching
 it.
 
-**The one measurement that would move this from "compelling" to "scheduled":**
+That measurement has since been taken and storage passed comfortably, which
+moves the remaining risk onto `DngCreator` throughput and the file model — both
+tractable, both real work. The implementation plan below sizes them.
 
-```sh
-adb shell "dd if=/dev/zero of=/data/local/tmp/spd bs=1048576 count=2000 conv=fsync"
-adb shell "rm -f /data/local/tmp/spd"
-```
 
-If sustained write comfortably exceeds 600 MB/s, the remaining work is
-`DngCreator` throughput and the file model, both tractable. If it does not, the
-ceiling is the hardware and the honest answer is shorter takes or a lower
-resolution.
+---
+
+## Implementation plan: 10-bit and 12-bit
+
+Written to let the effort be judged before it is started. Everything below is
+from reading the OpenCamera 0dd4cbe tree and the device dump, with file and line
+references so the claims can be checked rather than trusted.
+
+### Storage: measured, and not the problem
+
+| Test | Result |
+|---|---|
+| 2 GB sequential, `conv=fsync` | 1.2 GB/s |
+| 10 GB sustained, `conv=fsync` | **1.5 GB/s**, no degradation |
+| 60 × 25 MB separate files + `sync` | 2340 MB/s, **93 files/sec** |
+
+RAW_SENSOR at 30 fps needs 752 MB/s and 30 files/sec. The phone delivers roughly
+**twice the throughput and three times the file rate** required. Storage speed can
+be struck off the risk list.
+
+**Capacity cannot.** 180 GB free of 228 GB usable, at 45 GB/min, is **four
+minutes of 12-bit recording in total** — not per take, in total, before the phone
+is full and needs offloading. External USB-C storage raises the ceiling but not
+the rate: USB 3.2 on a Pixel will not sustain 1.5 GB/s, so it is a capacity
+answer, not a throughput one. Offloading 45 GB over USB is itself several
+minutes.
+
+---
+
+### Part 1 — 10-bit HLG video
+
+**Estimate: 1–2 days**, with one genuine unknown that could turn it into a week.
+See "the risk" below before committing.
+
+#### What changes
+
+1. **`CameraController2.createOutputConfigurationList()`** (~line 5211). The call
+   is already written and commented out. Uncomment it, gate it on the Kanaha
+   preference, and apply it to **every** surface in the session, not just the
+   preview.
+2. **`VideoProfile.copyToMediaRecorder()`** (line 104 sets the encoder). Add
+   `media_recorder.setVideoEncodingProfileLevel(HEVCProfileMain10, level)`.
+   Nothing in the tree calls this today — there are zero references to
+   `CodecProfileLevel` anywhere — so the encoder has always run at its default
+   8-bit Main profile.
+3. **`Preview.java:3843`** already picks `MediaRecorder.VideoEncoder.HEVC` under
+   some conditions; 10-bit must force that branch, since Main 10 is an HEVC
+   profile and H.264 cannot carry it.
+4. **A Kanaha preference and an HTTP parameter**, so the setting is reachable from
+   the existing `startRecording` API alongside `open_gate`.
+
+#### The guards, and why each exists
+
+- **`capabilities_10bit`** is already computed at `CameraController2:1936-2012`
+  from `REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT`. Refuse if absent.
+- **API 33+**, since `DynamicRangeProfiles` does not exist before it.
+- **Refuse if histogram, zebra stripes, focus peaking or pre-shots are on.**
+  `DrawPreview.java:2871` sets
+  `want_preview_bitmap = want_histogram || want_zebra_stripes || want_focus_peaking || want_pre_shots`,
+  and when that is true `Preview.java:8834` pulls frames with
+  `textureView.getBitmap()` into an `ARGB_8888` bitmap — 8-bit sRGB. On a 10-bit
+  surface those overlays would either fail or, worse, quietly misreport exposure.
+  All four default off and Kanaha drives the camera headlessly, so this guard
+  costs nothing and prevents a viewfinder aid that lies.
+
+#### The risk that decides the estimate
+
+**The preview cannot stay 8-bit.** The device reports
+`availableDynamicRangeProfilesMap = [2, 2, 0]`: profile HLG10, and a concurrent-use
+constraint set containing HLG10 *only*. Reading that literally, STANDARD and HLG10
+cannot coexist in one capture session — so enabling 10-bit for the recorder forces
+the preview to HLG10 as well. Worth confirming at runtime with
+`DynamicRangeProfiles.getProfileCaptureRequestConstraints(HLG10)` before writing
+any code; it is one log line and it settles the whole shape of the work.
+
+That matters because **Camera2 mode hardcodes `TextureView`**
+(`Preview.java:470-476`; `MySurfaceView` is only used with the legacy Camera1
+API). `TextureView` renders through a `SurfaceTexture`, and that path has
+historically been the weak one for 10-bit HDR formats, where `SurfaceView` is
+the supported route.
+
+This is almost certainly the wall the upstream maintainer hit.
+`MyApplicationInterface.java:1784` disables Ultra HDR stills during video with the
+comment *"video recording fails if CameraController2 sets
+`config.setDynamicRangeProfile(DynamicRangeProfiles.HLG10)` for the preview"*, and
+the call at `CameraController2:5222` is commented out with a note that it gave
+"much lower saturation" on a Galaxy S24+. Two devices, two different failures,
+and he backed out.
+
+**So there are two outcomes.** If `TextureView` accepts HLG10 on this phone, the
+work is the 1–2 days above. If it does not, the preview has to move to
+`SurfaceView` for 10-bit sessions — and the comment at `Preview.java:479` explains
+the knock-on: *"a TextureView can't be used both as a camera preview, and used for
+drawing on, so we use a separate CanvasView"*. Changing the surface type changes
+how every overlay is drawn. That is the week, not the two days.
+
+**Find out first.** Set the profile on both surfaces, start a recording, read
+logcat. Half a day of work that de-risks the entire estimate, and it can be done
+before committing to anything.
+
+---
+
+### Part 2 — 12-bit RAW as DNG sequences
+
+**Estimate: 2–4 weeks**, and the shape of the work is different — nothing is
+locked, but three things need building that do not exist.
+
+#### What already exists, and it is more than expected
+
+- The sensor: `whiteLevel 4095`, `RAW12` and `RAW_SENSOR` at 4080×3072,
+  **30 fps, stall duration 0**. The pipeline will sustain it.
+- The writer: OpenCamera already carries the whole DNG path — `DngCreator` in
+  `CameraController2:940`, `RawImage.writeImage()` called from
+  `ImageSaver.java:2447`. It is used one frame at a time for stills.
+- Storage: measured above, twice the headroom needed.
+
+#### What does not exist
+
+**1. `DngCreator` at 30 fps — the real wall.** It assembles a TIFF/DNG container
+on the CPU, per image, for someone pressing a shutter. Thirty a second is not
+what it is for, and it is the piece most likely to fail first. The workaround is
+to write frames raw during the take and build DNGs afterwards, which turns one
+API call into a capture format, an index, and an offline converter. Measure it
+before designing around it: time `DngCreator.writeImage()` on one 4080×3072 frame.
+If it is under 33 ms the naive path works; if it is 100 ms it does not, and the
+deferred design is mandatory.
+
+**2. OpenCamera never requests RAW12 or RAW10.** It only ever asks for
+`RAW_SENSOR` (`CameraController2:2143`). `RAW_SENSOR` is a 16-bit container
+holding the 12 significant bits, which is what `DngCreator` consumes — so it
+works, but costs 25.1 MB/frame against RAW12's 18.8 MB. Using packed RAW12 saves
+25% of the data rate and means writing the DNG assembly by hand, because
+`DngCreator` expects `RAW_SENSOR`. A real trade, not an obvious one.
+
+**3. Kanaha assumes one file per take.** The HTTP API returns a path; the sidecar
+JSON describes a file; the ffmpeg steps open a file. A DNG sequence is a
+directory of a few thousand files with no audio and no container. Every stage
+needs a notion of "a take is a directory", including whatever offloads it.
+
+#### The capacity question, honestly
+
+Four minutes of total recording on the free space available. That is not a
+technical blocker; it is a workflow one. It means offload between takes, every
+take, and it means a shoot is planned around storage in a way an H.265 shoot is
+not. External USB-C storage moves the ceiling and is worth testing if this
+proceeds — but test the *sustained* rate over USB before relying on it, because
+the internal 1.5 GB/s does not transfer.
+
+---
+
+### Suggested order, and why
+
+**Do Part 1 first, and do the half-day probe before Part 1.** The probe answers
+whether 10-bit is two days or a week. Part 1 delivers most of the grading benefit
+— banding resistance through a LUT, which is the thing that actually shows — at a
+fraction of the cost, with no change to the storage story and no change to the
+one-file-per-take model.
+
+**Part 2 is compelling and it is not next.** Everything hard about it is real
+engineering rather than a locked door, which is unusual and worth saying. But it
+is 2–4 weeks, it rewrites the file model, and it caps a shooting day at four
+minutes of footage between offloads. It earns its place after 10-bit has been
+shot with in anger and the grading benefit is known rather than assumed.
 
 
 ## Post-Production: LUT Grading with ffmpeg
