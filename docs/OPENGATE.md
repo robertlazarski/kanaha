@@ -590,8 +590,55 @@ The two widened session gates are the easiest thing to miss. Without them
 `createOutputConfigurationList()` is never called at all, the profile is never
 set, and the probe silently reports success while recording 8-bit.
 
-**Not yet run.** The build installs and the app is healthy, but the phone came
-off USB before the recording test. To finish:
+#### Probe result, 2026-09-05: it works
+
+**`TextureView` accepts HLG10. This is the 1-2 day path, not the week.**
+
+Recorded on the Pixel 10 Pro XL (`sdk=37`), verified with `ffprobe`:
+
+```
+codec_name=hevc          profile=Main 10
+pix_fmt=yuv420p10le      1920x1080 @ 29.75fps, 27 Mbps
+color_transfer=arib-std-b67    color_primaries=bt2020    color_space=bt2020nc
+```
+
+Genuinely 10-bit, genuinely HLG, and **correctly tagged by the camera**. That
+last part matters for post: the `setparams` filter documented below exists
+because the 8-bit files came out untagged. Camera-native 10-bit files do not
+need it, and `zscale=t=linear` will work on them directly.
+
+The capability line and the constraint set, confirmed at runtime:
+
+```
+KANAHA_HLG10: supports_hlg10=true capabilities_10bit=true sdk=37
+KANAHA_HLG10: supported profiles: [1, 2]
+KANAHA_HLG10: HLG10 concurrent constraints: [2]
+KANAHA_HLG10: STANDARD NOT allowed - every surface must be HLG10
+```
+
+So the `[2, 2, 0]` dumpsys reading was right: HLG10 permits no other profile
+alongside it. That has two consequences that cost a false negative before they
+were understood, and both are now in the code:
+
+- **HLG10 only goes on the preview and recorder surfaces.** The first probe run
+  applied it to *every* surface, including the JPEG `ImageReader`.
+  `setDynamicRangeProfile()` is not meaningful on a JPEG/BLOB surface, and that
+  alone fails configuration — producing `Failed to create capture session` that
+  looks exactly like `TextureView` rejecting HLG10. It is not. **If you take one
+  thing from this section, take that:** a configuration failure here does not
+  identify which surface caused it.
+- **Only during a recording session, and no video snapshots.** The idle preview
+  session carries a JPEG reader that must stay STANDARD, so the preview flips to
+  HLG10 when recording starts and back to 8-bit when it stops. Video snapshots
+  are dropped for the duration, since that reader cannot join an HLG10 session.
+
+**Still to do** for the 1-2 days: the HTTP `startRecording` parameter, and the
+histogram/zebra/focus-peaking/pre-shots refusal described above (all four default
+off, so nothing currently trips it).
+
+#### Running it again
+
+To finish:
 
 ```sh
 adb install -r app/build/outputs/apk/debug/app-debug.apk
