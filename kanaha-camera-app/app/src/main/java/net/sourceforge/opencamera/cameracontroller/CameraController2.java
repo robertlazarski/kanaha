@@ -5264,19 +5264,33 @@ public class CameraController2 extends CameraController {
         // Last line of defence: never hand setDynamicRangeProfile() a profile this
         // camera did not advertise. It would fail session configuration, which
         // takes the preview down with it.
-        boolean set_hlg10 = want_hlg10 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        // Only for a recording session. HLG10 cannot coexist with STANDARD on this
+        // hardware, and the idle preview session carries a JPEG ImageReader that
+        // has to stay STANDARD -- so the preview flips to HLG10 when recording
+        // starts and back to 8-bit when it stops.
+        boolean set_hlg10 = want_hlg10 && video_recorder_surface != null
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && logHlg10Constraints();
         for(Surface surface : surfaces) {
             OutputConfiguration config = new OutputConfiguration(surface);
             if( cameraIdSPhysical != null ) {
                 config.setPhysicalCameraId(cameraIdSPhysical);
             }
-            // Kanaha: apply HLG10 to every surface, not just the recorder. The
-            // constraint set logged above says STANDARD cannot be mixed in, so a
-            // part-way application would fail session configuration.
+            // Kanaha: HLG10 goes on the preview and the video recorder only.
+            // setDynamicRangeProfile() is meaningful for 10-bit-capable formats;
+            // the JPEG ImageReader used for stills and video snapshots is not one,
+            // and setting it there fails session configuration on its own -- which
+            // looks exactly like the preview surface rejecting HLG10.
             if( set_hlg10 ) {
-                config.setDynamicRangeProfile(DynamicRangeProfiles.HLG10);
-                Log.d(TAG, "KANAHA_HLG10: set HLG10 on surface" + (surface == preview_surface ? " (preview)" : ""));
+                boolean is_preview = surface == preview_surface;
+                boolean is_recorder = surface == video_recorder_surface;
+                if( is_preview || is_recorder ) {
+                    config.setDynamicRangeProfile(DynamicRangeProfiles.HLG10);
+                    Log.d(TAG, "KANAHA_HLG10: set HLG10 on " + (is_preview ? "preview" : "recorder") + " surface");
+                }
+                else {
+                    Log.d(TAG, "KANAHA_HLG10: left surface at STANDARD (not preview/recorder): " + surface);
+                }
             }
             // On Galaxy S24+ at least, we seem to get Ultra HDR photos even without setting DynamicRangeProfiles.HLG10
             // furthermore, calling setDynamicRangeProfile with HLG10 gives photos with much lower saturation, so have
@@ -5621,7 +5635,10 @@ public class CameraController2 extends CameraController {
             synchronized( background_camera_lock ) {
                 preview_surface = getPreviewSurface();
                 if( video_recorder != null ) {
-                    if( supports_photo_video_recording && !want_video_high_speed && want_photo_video_recording ) {
+                    // Kanaha: no video snapshots while recording 10-bit. The JPEG
+                    // ImageReader would sit at STANDARD in a session where HLG10
+                    // permits no other profile, and configuration would fail.
+                    if( supports_photo_video_recording && !want_video_high_speed && want_photo_video_recording && !want_hlg10 ) {
                         surfaces = Arrays.asList(preview_surface, video_recorder_surface, imageReader.getSurface());
                     }
                     else {

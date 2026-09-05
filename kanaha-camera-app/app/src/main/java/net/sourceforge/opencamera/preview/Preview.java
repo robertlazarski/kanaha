@@ -3849,7 +3849,6 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
                     video_profile.fileFormat = MediaRecorder.OutputFormat.MPEG_4;
                     video_profile.videoCodec = MediaRecorder.VideoEncoder.HEVC;
                     video_profile.audioCodec = MediaRecorder.AudioEncoder.AAC;
-                    video_profile.hlg10 = this.supports_hlg10 && applicationInterface.getHlg10Pref();
                 }
                 // else treat as default
                 break;
@@ -3875,6 +3874,19 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
                 // treat as default
                 Log.e(TAG, "unknown pref_video_output_format: " + pref_video_output_format);
                 break;
+        }
+
+        // Kanaha: 10-bit HLG forces HEVC regardless of the chosen output format.
+        // Main 10 is an HEVC profile; H.264 has no 10-bit profile on this
+        // hardware, so honouring the format preference here would silently give
+        // an 8-bit file from a 10-bit capture session.
+        if( this.supports_hlg10 && applicationInterface.getHlg10Pref() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N ) {
+            video_profile.fileFormat = MediaRecorder.OutputFormat.MPEG_4;
+            video_profile.videoCodec = MediaRecorder.VideoEncoder.HEVC;
+            video_profile.audioCodec = MediaRecorder.AudioEncoder.AAC;
+            video_profile.fileExtension = "mp4";
+            video_profile.hlg10 = true;
+            Log.i(TAG, "KANAHA_HLG10: forcing HEVC Main 10 for 10-bit capture");
         }
 
         if( MyDebug.LOG )

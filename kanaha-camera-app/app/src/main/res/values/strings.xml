@@ -1119,5 +1119,5 @@
     <string name="permission_camera_control_label">Camera Control</string>
     <string name="permission_camera_control_description">Allows sending camera control commands via Intent broadcast. Only apps signed with the same certificate can use this permission.</string>
     <string name="preference_kanaha_hlg10">10-bit HLG video</string>
-    <string name="preference_kanaha_hlg10_summary">Record HDR video in 10-bit HLG. Requires the HEVC output format. The preview also switches to HLG10, so colours on screen may look flat.</string>
+    <string name="preference_kanaha_hlg10_summary">Record HDR video in 10-bit HLG. Forces HEVC output. The preview also switches to HLG10 while recording, and video snapshots are unavailable.</string>
 </resources>

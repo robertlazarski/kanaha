@@ -1802,10 +1802,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     public boolean getHlg10Pref() {
         if( !sharedPreferences.getBoolean(PreferenceKeys.Hlg10PreferenceKey, false) )
             return false;
-        if( !main_activity.getPreview().isVideo() )
-            return false;
-        String output_format = sharedPreferences.getString(PreferenceKeys.VideoFormatPreferenceKey, "preference_video_output_format_default");
-        return output_format.equals("preference_video_output_format_mpeg4_hevc");
+        return main_activity.getPreview().isVideo();
     }
 
     private ImageSaver.Request.ImageFormat getImageFormatPref() {
