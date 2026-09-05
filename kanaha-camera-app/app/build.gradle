@@ -50,8 +50,16 @@ android {
     buildTypes {
         debug {
             // Probe builds install alongside the working app rather than over it.
-            applicationIdSuffix ".probe"
-            versionNameSuffix "-probe"
+            // Opt-in only: ./gradlew assembleDebug -PprobeSuffix
+            // Camera control does NOT work in a .probe build --
+            // camera_control_service.c hardcodes the broadcast target as
+            // org.kanaha.camera, so the intent round-trip reaches no receiver and
+            // the request blocks until the client times out. Use a probe build for
+            // the camera/preview path only.
+            if( project.hasProperty('probeSuffix') ) {
+                applicationIdSuffix ".probe"
+                versionNameSuffix "-probe"
+            }
         }
         release {
             minifyEnabled false

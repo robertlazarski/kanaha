@@ -1009,10 +1009,11 @@ The installation process is identical for older devices. The same APK runs witho
 
 ### Tested Devices
 
-| Device | Year | Android | ADB Tests | WiFi Tests | SFTP Transfer | Notes |
-|--------|------|---------|-----------|------------|---------------|-------|
-| Google Pixel 9 Pro | 2024 | 15 (API 36) | Pass | Pass | Pass | Primary development device |
-| Motorola Moto X4 | 2017 | 9 (API 28) | Pass | Pass | Pass | No adjustments needed |
+| Device | Year | Android | ADB Tests | WiFi Tests | SFTP Transfer | Last verified | Notes |
+|--------|------|---------|-----------|------------|---------------|---------------|-------|
+| Google Pixel 10 Pro XL | 2025 | 16 (API 37) | Pass | Pass | Not re-run | 2026-09-05 | Primary development device |
+| Motorola Moto X4 | 2017 | 9 (API 28) | Pass | Pass | Pass | 2026-09-05 | Oldest supported; runs Camera1 by default |
+| Google Pixel 9 Pro | 2024 | 14 | Pass | Pass | Pass | 2026-01 (device traded in) | Superseded by the 10 Pro XL |
 
 **Tests Verified on Both Devices (via ADB and WiFi):**
 - `getStatus` - Camera status and device info
@@ -1035,6 +1036,66 @@ While the APK is identical, hardware capabilities vary by device:
 | Battery Life | 5000mAh+ | 3000mAh |
 
 The C-based server handles these differences gracefully—the same code runs efficiently regardless of available RAM or CPU speed.
+
+### Tweaks for Serious Use on Older Hardware
+
+Kanaha ships one configuration for every phone deliberately — the defaults are
+not tuned per device. Everything below is optional and applies only to sustained
+production use on older hardware. Verified on the Moto X4 (2017, API 28, 2.8 GB
+RAM) on 2026-09-05.
+
+**Switch to the Camera2 API if you want manual controls.** Open Camera only
+auto-selects Camera2 for Google (API 31+), Nokia (API 28+), Samsung (API 31+) and
+OnePlus (API 34+). Motorola is not on that list, so a fresh install runs the
+**legacy Camera1 API** — even on the X4, which reports Camera2 hardware
+`LEVEL_3`, the highest tier. Recording, the HTTP API and SFTP all work fine on
+Camera1; what you lose is manual exposure/focus/white balance and RAW.
+Settings > Camera API > Camera2 API (the app restarts).
+
+**Bring the app to the foreground before calling `startRecording`.** The status
+fields `camera_available` and `preview_active` are `false` while the activity is
+backgrounded, and `startRecording` returns
+`{"success": false, "error": "Failed to start recording"}`. This is not
+age-related, but it is the first thing to check when a scripted shoot fails to
+start. Poll `getStatus` and confirm `camera_available` before issuing the start.
+
+**Memory: measured, and not the problem people expect.** `mod_axis2` uses an
+allocator whose `free` has no body, and `httpd.conf` ships
+`MaxConnectionsPerChild 0`, so the httpd child never recycles and its memory only
+grows. Measured on the X4 over 200 authenticated JSON requests:
+
+| | |
+|---|---|
+| Growth per request | ~7 kB |
+| Requests to grow 256 MB | ~37,600 |
+| At 1 request/second, continuously | ~10.5 hours |
+
+For camera control — dozens of commands per shoot — this never matters. Set
+`MaxConnectionsPerChild 500` in `assets/apache/httpd.conf` only if you intend to
+poll continuously for many hours. On loopback with four threads the recycle cost
+is negligible. Note this figure is a **floor, not a worst case**: it was measured
+on lightweight status calls, and heavier operations allocate more.
+
+**Storage is the real constraint.** The X4 under test had 2174 MB free and
+records 4K. That is roughly four minutes of 4K footage. Check
+`storage_available_mb` from `getStatus` before a shoot, and use `deleteFiles` or
+`sftpTransfer` between takes rather than after.
+
+**USB on eight-year-old hardware.** A worn or partially-seated connector gives
+power but not data: the phone reports "charging slowly", offers a USB mode in its
+settings, and never appears in `lsusb` on the host at all. If the host sees no
+device, the problem is physical — no adb configuration will help. Try a cable
+known to carry data, then clean the port (powered off, wooden toothpick or
+plastic SIM tool, never metal). Android 9 has no wireless-debugging pairing, so
+`adb tcpip 5555` still has to be enabled over USB at least once.
+
+**Developer note: `.probe` builds cannot serve camera control.**
+`camera_control_service.c` hardcodes its broadcast target as
+`org.kanaha.camera`, so a build carrying `applicationIdSuffix ".probe"` sends the
+intent to a receiver that is not there and the request **blocks until the client
+times out** rather than failing fast. The suffix is opt-in
+(`./gradlew assembleDebug -PprobeSuffix`) and should be used only for testing the
+camera and preview path.
 
 ### Tips for Legacy Hardware
 
@@ -1107,7 +1168,7 @@ Kanaha is a standard Android application that uses standard Android APIs. It wor
 
 | Manufacturer | Tested Device | Android Version | ADB | WiFi | SFTP |
 |--------------|---------------|-----------------|-----|------|------|
-| **Google** | Pixel 9 Pro (2024) | Android 15 | Pass | Pass | Pass |
+| **Google** | Pixel 10 Pro XL (2025) | Android 16 | Pass | Pass | Not re-run |
 | **Motorola** | Moto X4 (2017) | Android 9 | Pass | Pass | Pass |
 | **Samsung** | Not yet tested | - | - | - | - |
 | **OnePlus** | Not yet tested | - | - | - | - |
@@ -1117,11 +1178,11 @@ Kanaha is a standard Android application that uses standard Android APIs. It wor
 
 Google and Motorola have traditionally been more developer-friendly with open documentation, stock Android experiences, and accessible Developer Options. However, **for Kanaha specifically, there is no functional difference between manufacturers** - the app uses standard APIs available on all Android devices.
 
-The successful test on Moto X4 (2017) and Pixel 9 Pro (2024) demonstrates compatibility across:
-- **7 years** of Android development (2017-2024)
+The successful test on Moto X4 (2017) and Pixel 10 Pro XL (2025) demonstrates compatibility across:
+- **8 years** of Android development (2017-2025)
 - **Two different manufacturers** (Motorola, Google)
-- **Multiple Android versions** (Android 9 to Android 15)
-- **Different hardware capabilities** (3GB RAM to 16GB RAM)
+- **Multiple Android versions** (Android 9 / API 28 to Android 16 / API 37)
+- **Different hardware capabilities** (2.8 GB RAM to 16 GB RAM)
 
 ### Device Selection Recommendations
 
