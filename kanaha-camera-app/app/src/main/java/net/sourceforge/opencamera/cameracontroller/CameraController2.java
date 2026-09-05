@@ -2038,6 +2038,22 @@ public class CameraController2 extends CameraController {
 
         android.util.Size [] camera_picture_sizes = configs.getOutputSizes(ImageFormat.JPEG);
 
+        // Kanaha: 10-bit HLG needs the DYNAMIC_RANGE_TEN_BIT capability, API 33
+        // for DynamicRangeProfiles at all, and HLG10 in the supported set. Without
+        // all three, setDynamicRangeProfile() fails session configuration -- which
+        // takes down the preview, not just the recording.
+        camera_features.supports_hlg10 = false;
+        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && capabilities_10bit ) {
+            DynamicRangeProfiles hlg_profiles = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES);
+            camera_features.supports_hlg10 = hlg_profiles != null
+                    && hlg_profiles.getSupportedProfiles().contains(DynamicRangeProfiles.HLG10);
+        }
+        // Unconditional: this one line is how you tell a phone that cannot do
+        // 10-bit from a guard that is wrongly refusing on one that can.
+        Log.i(TAG, "KANAHA_HLG10: supports_hlg10=" + camera_features.supports_hlg10
+                + " capabilities_10bit=" + capabilities_10bit
+                + " sdk=" + Build.VERSION.SDK_INT);
+
         camera_features.supports_jpeg_r = false;
         if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && capabilities_10bit ) {
             long debug_time = 0;
@@ -5220,16 +5236,16 @@ public class CameraController2 extends CameraController {
      *  10-bit; if it lists HLG10 only, every surface in the session must match.
      */
     @RequiresApi(api = Build.VERSION_CODES.TIRAMISU)
-    private void logHlg10Constraints() {
+    private boolean logHlg10Constraints() {
         DynamicRangeProfiles profiles = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES);
         if( profiles == null ) {
             Log.d(TAG, "KANAHA_HLG10: no DynamicRangeProfiles on this camera");
-            return;
+            return false;
         }
         Log.d(TAG, "KANAHA_HLG10: supported profiles: " + profiles.getSupportedProfiles());
         if( !profiles.getSupportedProfiles().contains(DynamicRangeProfiles.HLG10) ) {
             Log.d(TAG, "KANAHA_HLG10: HLG10 not supported");
-            return;
+            return false;
         }
         Set<Long> constraints = profiles.getProfileCaptureRequestConstraints(DynamicRangeProfiles.HLG10);
         Log.d(TAG, "KANAHA_HLG10: HLG10 concurrent constraints: " + constraints);
@@ -5239,15 +5255,17 @@ public class CameraController2 extends CameraController {
             Log.d(TAG, "KANAHA_HLG10: STANDARD allowed alongside - preview may stay 8-bit");
         else
             Log.d(TAG, "KANAHA_HLG10: STANDARD NOT allowed - every surface must be HLG10");
+        return true;
     }
 
     @RequiresApi(api = Build.VERSION_CODES.P)
     private List<OutputConfiguration> createOutputConfigurationList(List<Surface> surfaces, Surface preview_surface) {
         List<OutputConfiguration> outputs = new ArrayList<>();
-        boolean set_hlg10 = want_hlg10 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU;
-        if( set_hlg10 ) {
-            logHlg10Constraints();
-        }
+        // Last line of defence: never hand setDynamicRangeProfile() a profile this
+        // camera did not advertise. It would fail session configuration, which
+        // takes the preview down with it.
+        boolean set_hlg10 = want_hlg10 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && logHlg10Constraints();
         for(Surface surface : surfaces) {
             OutputConfiguration config = new OutputConfiguration(surface);
             if( cameraIdSPhysical != null ) {

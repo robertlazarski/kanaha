@@ -125,6 +125,7 @@ public abstract class CameraController {
         public boolean supports_focus_bracketing; // whether setBurstTye(BURSTTYPE_FOCUS) can be used
         public boolean supports_burst; // whether setBurstTye(BURSTTYPE_NORMAL) can be used
         public boolean supports_jpeg_r; // whether supports JPEG_R (Ultra HDR)
+        public boolean supports_hlg10; // Kanaha: whether supports 10-bit HLG capture
         public boolean supports_raw;
         public float view_angle_x; // horizontal angle of view in degrees (when unzoomed)
         public float view_angle_y; // vertical angle of view in degrees (when unzoomed)

@@ -47,6 +47,20 @@ public class PreferenceSubVideo extends PreferenceSubScreen {
         if( MyDebug.LOG )
             Log.d(TAG, "fps_value: " + fps_value);
 
+        // Kanaha: hide the 10-bit HLG toggle entirely on cameras that cannot do it,
+        // rather than offering a switch that silently does nothing.
+        final boolean supports_hlg10 = bundle.getBoolean("supports_hlg10");
+        if( MyDebug.LOG )
+            Log.d(TAG, "supports_hlg10: " + supports_hlg10);
+        if( !supports_hlg10 ) {
+            Preference hlg10_pref = findPreference(PreferenceKeys.Hlg10PreferenceKey);
+            if( hlg10_pref != null ) {
+                PreferenceGroup hlg10_pg = (PreferenceGroup)this.findPreference("preferences_root");
+                if( hlg10_pg != null )
+                    hlg10_pg.removePreference(hlg10_pref);
+            }
+        }
+
         final boolean supports_tonemap_curve = bundle.getBoolean("supports_tonemap_curve");
         if( MyDebug.LOG )
             Log.d(TAG, "supports_tonemap_curve: " + supports_tonemap_curve);

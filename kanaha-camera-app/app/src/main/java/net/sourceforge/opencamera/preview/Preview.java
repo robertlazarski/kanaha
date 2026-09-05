@@ -332,6 +332,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
     private boolean supports_focus_bracketing;
     private boolean supports_burst;
     private boolean supports_jpeg_r;
+    private boolean supports_hlg10; // Kanaha
     private boolean supports_raw;
     private float view_angle_x;
     private float view_angle_y;
@@ -1702,6 +1703,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
         supports_focus_bracketing = false;
         supports_burst = false;
         supports_jpeg_r = false;
+        supports_hlg10 = false;
         supports_raw = false;
         view_angle_x = 55.0f; // set a sensible default
         view_angle_y = 43.0f; // set a sensible default
@@ -2236,7 +2238,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
 
         // Kanaha: 10-bit HLG. Must be set before the capture session is created,
         // since it changes how every output surface is configured.
-        camera_controller.setHlg10(applicationInterface.getHlg10Pref());
+        camera_controller.setHlg10(this.supports_hlg10 && !is_extension && applicationInterface.getHlg10Pref());
 
         if( this.supports_raw && applicationInterface.getRawPref() != ApplicationInterface.RawPref.RAWPREF_JPEG_ONLY ) {
             camera_controller.setRaw(true, applicationInterface.getMaxRawImages());
@@ -2552,6 +2554,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
             this.supports_focus_bracketing = camera_features.supports_focus_bracketing;
             this.supports_burst = camera_features.supports_burst;
             this.supports_jpeg_r = camera_features.supports_jpeg_r;
+            this.supports_hlg10 = camera_features.supports_hlg10;
             this.supports_raw = camera_features.supports_raw;
             this.view_angle_x = camera_features.view_angle_x;
             this.view_angle_y = camera_features.view_angle_y;
@@ -3846,7 +3849,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
                     video_profile.fileFormat = MediaRecorder.OutputFormat.MPEG_4;
                     video_profile.videoCodec = MediaRecorder.VideoEncoder.HEVC;
                     video_profile.audioCodec = MediaRecorder.AudioEncoder.AAC;
-                    video_profile.hlg10 = applicationInterface.getHlg10Pref();
+                    video_profile.hlg10 = this.supports_hlg10 && applicationInterface.getHlg10Pref();
                 }
                 // else treat as default
                 break;
@@ -7756,6 +7759,11 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
 
     public boolean supportsJpegR() {
         return this.supports_jpeg_r;
+    }
+
+    /** Kanaha: whether this camera advertises 10-bit HLG capture. */
+    public boolean supportsHlg10() {
+        return this.supports_hlg10;
     }
 
     public boolean supportsRaw() {
