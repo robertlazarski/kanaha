@@ -2,7 +2,7 @@
 
 ## BLUF
 
-Add `"open_gate": true` to a `startRecording` request. The camera reopens at its native 4:3 sensor resolution (2560×1920 on Pixel 9 Pro) and records with no horizontal or vertical crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1 — without upscaling.
+Add `"open_gate": true` to a `startRecording` request. The camera reopens at its native 4:3 sensor resolution (2560×1920 on Pixel 9 Pro; **4032×3024** on Pixel 10 Pro XL) and records with no horizontal or vertical crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1 — without upscaling.
 
 **What you need to know:**
 - Only the **Pixel 9 Pro** supports open gate. Moto G phones fall back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
@@ -52,7 +52,7 @@ Understanding bit depth matters for how much dynamic range and color information
 - **Dynamic range**: 14+ stops; DCG captures two analog gains simultaneously and merges before digitization, giving cleaner shadows and highlights than any tone-mapped 10-bit
 - **File size**: Very large (DNG sequences, not H.264/HEVC)
 - **Pixel 9 Pro**: Hardware capable but **not accessible via standard Camera2 API** — requires MotionCam Pro or Blackmagic Camera using privileged/private Google APIs. Kanaha uses Camera2 only and therefore **cannot reach 12-bit RAW**.
-- **Pixel 10 Pro**: First Pixel to unlock DCG as a Camera2-accessible feature (as of late 2025). Third-party apps including Blackmagic Camera and MotionCam Pro can access 12-bit RAW at 4030×3072 open gate.
+- **Pixel 10 Pro**: First Pixel to unlock DCG as a Camera2-accessible feature (as of late 2025). Third-party apps can access 12-bit RAW at 4080×3072 — see the 12-bit section below, where this was measured on the device rather than taken from a spec sheet.
 - **Moto G 2025 / Moto G 5G 2024**: 8-bit only; no DCG hardware
 
 ### Summary table for the current Kanaha rig
@@ -165,7 +165,7 @@ adb -s <pixel-serial> pull \
 |---|---|---|
 | Sensor | Samsung GNK, 1/1.31", 50MP | Samsung GNK successor, 1/1.31", 50MP |
 | Native aspect ratio | 4:3 | 4:3 |
-| Open gate resolution (Camera2) | 2560×1920 (confirmed) | 4030×3072 (confirmed) |
+| Open gate resolution (Camera2) | 2560×1920 (confirmed) | **4032×3024** for video; 4080×3072 for RAW (measured 2026-09-04) |
 | 10-bit HDR via Camera2 (third-party) | **No** — HAL-locked to stock Pixel Camera | **Yes** — unlocked |
 | 12-bit RAW open gate via Camera2 | **No** — HAL-locked | **Yes** — DCG unlocked |
 | DCG (Dual Conversion Gain) | Hardware present; software-locked for third-party | **Unlocked** — accessible to any Camera2 app |
@@ -396,6 +396,89 @@ Pro adds a better telephoto and AI features that no OSS pipeline can reach.
 **Not worth trading up for open gate work.**
 
 ---
+
+---
+
+## 12-bit RAW: what the Pixel 10 Pro XL actually offers
+
+Measured on the device with `adb shell dumpsys media.camera`, 2026-09-04, not
+taken from a spec sheet. Every number below is from that dump.
+
+### The capability is real and nothing is gatekeeping it
+
+| Finding | Value |
+|---|---|
+| `sensor.info.whiteLevel` (main rear camera) | **4095** — 2¹²−1, a genuine 12-bit readout |
+| `RAW12` (format 38) output size | **4080×3072** |
+| `RAW_SENSOR` (format 32) output size | 4080×3072 |
+| Min frame duration at that size | **33,333,333 ns = 30 fps** |
+| **Stall duration** | **0 ns** |
+| Pixel array / binned | 8160×6144 → 4080×3072 |
+
+The other physical cameras report `whiteLevel` 1023 — 10-bit. The 12-bit
+readout is the main sensor only.
+
+**The stall duration is the number that matters.** Zero means the pipeline does
+not block when a RAW12 frame is pulled: the sensor will sustain 30 fps of 12-bit
+frames without holding up anything else in the session. The camera is not the
+constraint. Neither is the API, and neither is OpenCamera — it already carries
+the whole DNG path (`DngCreator` in `CameraController2`, `RawImage.writeImage`
+in `ImageSaver`), it simply uses it one frame at a time for stills.
+
+So this is genuinely closer than it looks. It is also blocked, and not where
+you would guess.
+
+### Where it is actually blocked
+
+**Throughput, not permission.**
+
+| Stream | Per frame | At 30 fps | Per minute |
+|---|---|---|---|
+| RAW12 packed | 18.8 MB | **564 MB/s** | 33.8 GB |
+| RAW_SENSOR (16-bit container, what `DngCreator` consumes) | 25.1 MB | **752 MB/s** | 45.1 GB |
+
+A one-minute take is 34–45 GB. That is the whole problem in one line, and it has
+three separate edges:
+
+1. **Sustained write rate.** UFS can burst far above this; holding 564 MB/s for
+   the length of a take, through the filesystem, with thirty file creations a
+   second, is a different question. Not measured — the phone dropped off the bus
+   before the probe ran. Worth measuring before anything else, because if
+   sustained write cannot hold the rate, nothing downstream matters.
+2. **`DngCreator` is the likely wall.** It assembles a TIFF/DNG container on the
+   CPU, per image, and was designed for someone pressing the shutter. Thirty a
+   second is not what it is for. This is the piece most likely to fail first, and
+   the one with no easy answer short of writing frames raw and building DNGs
+   afterwards.
+3. **Kanaha's model assumes one file per take.** The HTTP API returns a path. A
+   DNG sequence is a directory of a few thousand files with no audio and no
+   container, which every part of the pipeline — the service response, the
+   sidecar JSON, the ffmpeg steps — currently assumes does not happen.
+
+### Honest read
+
+The interesting half is done and was done by other people: the sensor exposes
+it, the frame rate is there, the pipeline does not stall, and the DNG writer is
+already in the tree. What remains is a sustained-throughput problem and a
+file-model problem, and those are ordinary engineering rather than a locked door.
+
+That makes it worth doing at some point. It does not make it next — 10-bit HLG
+delivers most of the grading benefit for a fraction of the work and none of the
+storage cost, and it fits the existing one-file-per-take model without touching
+it.
+
+**The one measurement that would move this from "compelling" to "scheduled":**
+
+```sh
+adb shell "dd if=/dev/zero of=/data/local/tmp/spd bs=1048576 count=2000 conv=fsync"
+adb shell "rm -f /data/local/tmp/spd"
+```
+
+If sustained write comfortably exceeds 600 MB/s, the remaining work is
+`DngCreator` throughput and the file model, both tractable. If it does not, the
+ceiling is the hardware and the honest answer is shorter takes or a lower
+resolution.
+
 
 ## Post-Production: LUT Grading with ffmpeg
 
