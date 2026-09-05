@@ -345,6 +345,11 @@ public class PreferenceKeys {
 
     public static final String VideoProfileGammaPreferenceKey = "preference_video_profile_gamma";
 
+    // Kanaha: opt-in 10-bit HLG video capture. Off by default -- it forces the
+    // preview into HLG10 too (the device reports HLG10 as its own only
+    // concurrent-use constraint), so it is not a safe default.
+    public static final String Hlg10PreferenceKey = "preference_kanaha_hlg10";
+
     public static final String VideoMaxDurationPreferenceKey = "preference_video_max_duration";
 
     public static final String VideoRestartPreferenceKey = "preference_video_restart";

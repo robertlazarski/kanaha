@@ -534,6 +534,12 @@ public abstract class CameraController {
      */
     public abstract void setJpegR(boolean want_jpeg_r);
 
+    /** Kanaha: request 10-bit HLG for the capture session. No-op on the old
+     *  camera API, which has no dynamic-range concept at all.
+     */
+    public void setHlg10(boolean want_hlg10) {
+    }
+
     /**
      * @param want_raw       Whether to enable taking photos in RAW (DNG) format.
      * @param max_raw_images The maximum number of unclosed DNG images that may be held in memory at any one

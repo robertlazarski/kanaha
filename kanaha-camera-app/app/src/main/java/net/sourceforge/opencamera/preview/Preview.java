@@ -2234,6 +2234,10 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
             camera_controller.setJpegR(false);
         }
 
+        // Kanaha: 10-bit HLG. Must be set before the capture session is created,
+        // since it changes how every output surface is configured.
+        camera_controller.setHlg10(applicationInterface.getHlg10Pref());
+
         if( this.supports_raw && applicationInterface.getRawPref() != ApplicationInterface.RawPref.RAWPREF_JPEG_ONLY ) {
             camera_controller.setRaw(true, applicationInterface.getMaxRawImages());
         }
@@ -3842,6 +3846,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
                     video_profile.fileFormat = MediaRecorder.OutputFormat.MPEG_4;
                     video_profile.videoCodec = MediaRecorder.VideoEncoder.HEVC;
                     video_profile.audioCodec = MediaRecorder.AudioEncoder.AAC;
+                    video_profile.hlg10 = applicationInterface.getHlg10Pref();
                 }
                 // else treat as default
                 break;

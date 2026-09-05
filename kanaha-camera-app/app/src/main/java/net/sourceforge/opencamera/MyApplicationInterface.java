@@ -1795,6 +1795,19 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         return false;
     }
 
+    /** Kanaha: 10-bit HLG video. Video only, and only when the encoder is HEVC --
+     *  H.264 has no 10-bit profile on this hardware. Off unless explicitly enabled.
+     */
+    @Override
+    public boolean getHlg10Pref() {
+        if( !sharedPreferences.getBoolean(PreferenceKeys.Hlg10PreferenceKey, false) )
+            return false;
+        if( !main_activity.getPreview().isVideo() )
+            return false;
+        String output_format = sharedPreferences.getString(PreferenceKeys.VideoFormatPreferenceKey, "preference_video_output_format_default");
+        return output_format.equals("preference_video_output_format_mpeg4_hevc");
+    }
+
     private ImageSaver.Request.ImageFormat getImageFormatPref() {
         switch( sharedPreferences.getString(PreferenceKeys.ImageFormatPreferenceKey, "preference_image_format_jpeg") ) {
             case "preference_image_format_webp":

@@ -1,7 +1,9 @@
 package net.sourceforge.opencamera.preview;
 
 import android.media.CamcorderProfile;
+import android.media.MediaCodecInfo;
 import android.media.MediaRecorder;
+import android.os.Build;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -32,6 +34,7 @@ public class VideoProfile {
     public int videoBitRate;
     public int videoFrameHeight;
     public int videoFrameWidth;
+    public boolean hlg10; // Kanaha: encode HEVC Main 10 rather than Main
 
     /** Returns a dummy video profile, used if video isn't supported.
      */
@@ -102,6 +105,15 @@ public class VideoProfile {
         media_recorder.setVideoSize(this.videoFrameWidth, this.videoFrameHeight);
         media_recorder.setVideoEncodingBitRate(this.videoBitRate);
         media_recorder.setVideoEncoder(this.videoCodec);
+        if( this.hlg10 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N ) {
+            // Kanaha: 10-bit input needs a 10-bit encoder profile, otherwise the
+            // HLG10 surface is silently truncated back to 8 bits.
+            if( MyDebug.LOG )
+                Log.d(TAG, "KANAHA_HLG10: request HEVC Main 10 encoder profile");
+            media_recorder.setVideoEncodingProfileLevel(
+                    MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
+                    MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51);
+        }
         if( record_audio ) {
             media_recorder.setAudioEncodingBitRate(this.audioBitRate);
             media_recorder.setAudioChannels(this.audioChannels);

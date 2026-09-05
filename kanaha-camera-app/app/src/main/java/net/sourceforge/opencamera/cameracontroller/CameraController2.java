@@ -240,6 +240,7 @@ public class CameraController2 extends CameraController {
     //private boolean dummy_capture_hack = true; // test
 
     private boolean want_jpeg_r;
+    private boolean want_hlg10; // Kanaha: 10-bit HLG capture session
     private boolean want_raw;
     //private boolean want_raw = true;
     private int max_raw_images;
@@ -3763,6 +3764,13 @@ public class CameraController2 extends CameraController {
     }
 
     @Override
+    public void setHlg10(boolean want_hlg10) {
+        if( MyDebug.LOG )
+            Log.d(TAG, "setHlg10: " + want_hlg10);
+        this.want_hlg10 = want_hlg10;
+    }
+
+    @Override
     public void setJpegR(boolean want_jpeg_r) {
         if( MyDebug.LOG ) {
             Log.d(TAG, "setJpegR: " + want_jpeg_r);
@@ -5207,13 +5215,50 @@ public class CameraController2 extends CameraController {
         }
     }
 
+    /** Kanaha: log what the device says about HLG10 concurrency. The constraint
+     *  set decides whether the preview can stay 8-bit while the recorder is
+     *  10-bit; if it lists HLG10 only, every surface in the session must match.
+     */
+    @RequiresApi(api = Build.VERSION_CODES.TIRAMISU)
+    private void logHlg10Constraints() {
+        DynamicRangeProfiles profiles = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES);
+        if( profiles == null ) {
+            Log.d(TAG, "KANAHA_HLG10: no DynamicRangeProfiles on this camera");
+            return;
+        }
+        Log.d(TAG, "KANAHA_HLG10: supported profiles: " + profiles.getSupportedProfiles());
+        if( !profiles.getSupportedProfiles().contains(DynamicRangeProfiles.HLG10) ) {
+            Log.d(TAG, "KANAHA_HLG10: HLG10 not supported");
+            return;
+        }
+        Set<Long> constraints = profiles.getProfileCaptureRequestConstraints(DynamicRangeProfiles.HLG10);
+        Log.d(TAG, "KANAHA_HLG10: HLG10 concurrent constraints: " + constraints);
+        if( constraints.isEmpty() )
+            Log.d(TAG, "KANAHA_HLG10: unconstrained - preview may stay STANDARD");
+        else if( constraints.contains(DynamicRangeProfiles.STANDARD) )
+            Log.d(TAG, "KANAHA_HLG10: STANDARD allowed alongside - preview may stay 8-bit");
+        else
+            Log.d(TAG, "KANAHA_HLG10: STANDARD NOT allowed - every surface must be HLG10");
+    }
+
     @RequiresApi(api = Build.VERSION_CODES.P)
     private List<OutputConfiguration> createOutputConfigurationList(List<Surface> surfaces, Surface preview_surface) {
         List<OutputConfiguration> outputs = new ArrayList<>();
+        boolean set_hlg10 = want_hlg10 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU;
+        if( set_hlg10 ) {
+            logHlg10Constraints();
+        }
         for(Surface surface : surfaces) {
             OutputConfiguration config = new OutputConfiguration(surface);
             if( cameraIdSPhysical != null ) {
                 config.setPhysicalCameraId(cameraIdSPhysical);
+            }
+            // Kanaha: apply HLG10 to every surface, not just the recorder. The
+            // constraint set logged above says STANDARD cannot be mixed in, so a
+            // part-way application would fail session configuration.
+            if( set_hlg10 ) {
+                config.setDynamicRangeProfile(DynamicRangeProfiles.HLG10);
+                Log.d(TAG, "KANAHA_HLG10: set HLG10 on surface" + (surface == preview_surface ? " (preview)" : ""));
             }
             // On Galaxy S24+ at least, we seem to get Ultra HDR photos even without setting DynamicRangeProfiles.HLG10
             // furthermore, calling setDynamicRangeProfile with HLG10 gives photos with much lower saturation, so have
@@ -5667,7 +5712,7 @@ public class CameraController2 extends CameraController {
             //if( want_video_high_speed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ) {
                 if( MyDebug.LOG )
                     Log.d(TAG, "create high speed capture session");
-                if( ( cameraIdSPhysical != null || want_jpeg_r ) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ) {
+                if( ( cameraIdSPhysical != null || want_jpeg_r || want_hlg10 ) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ) {
                     List<OutputConfiguration> outputs = createOutputConfigurationList(surfaces, preview_surface);
                     SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_HIGH_SPEED, outputs, executor, myStateCallback);
                     launchCameraSession(wait_until_started, new CreateCaptureSessionFunction() {
@@ -5719,7 +5764,7 @@ public class CameraController2 extends CameraController {
                 if( MyDebug.LOG )
                     Log.d(TAG, "create capture session");
                 try {
-                    if( ( cameraIdSPhysical != null || want_jpeg_r ) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ) {
+                    if( ( cameraIdSPhysical != null || want_jpeg_r || want_hlg10 ) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ) {
                         List<OutputConfiguration> outputs = createOutputConfigurationList(surfaces, preview_surface);
                         /*camera.createCaptureSessionByOutputConfigurations(outputs,
                                 myStateCallback,

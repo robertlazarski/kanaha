@@ -26,6 +26,13 @@
         android:defaultValue="preference_video_output_format_default"
         />
 
+    <CheckBoxPreference
+        android:key="preference_kanaha_hlg10"
+        android:title="@string/preference_kanaha_hlg10"
+        android:summary="@string/preference_kanaha_hlg10_summary"
+        android:defaultValue="false"
+        />
+
     <!--  if we move this to another PreferenceGroup, we should update code for the findPreference() call -->
     <ListPreference
         android:key="preference_video_log"
