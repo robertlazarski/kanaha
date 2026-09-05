@@ -572,6 +572,58 @@ how every overlay is drawn. That is the week, not the two days.
 logcat. Half a day of work that de-risks the entire estimate, and it can be done
 before committing to anything.
 
+#### The probe, as built
+
+Implemented on branch `opencamera-upgrade` (`b201bbf`), gated behind a new
+**Settings > Video > 10-bit HLG video** checkbox (`preference_kanaha_hlg10`,
+default off). It is deliberately the smallest thing that answers the question:
+
+| File | Change |
+|---|---|
+| `CameraController2.createOutputConfigurationList()` | `setDynamicRangeProfile(HLG10)` on **every** surface, plus `logHlg10Constraints()` |
+| `CameraController2` session gates (2 sites) | widened to `cameraIdSPhysical != null \|\| want_jpeg_r \|\| want_hlg10`, or the `OutputConfiguration` path is never taken |
+| `VideoProfile.copyToMediaRecorder()` | `setVideoEncodingProfileLevel(HEVCProfileMain10, HEVCMainTierLevel51)` |
+| `Preview.java` | `camera_controller.setHlg10(...)` before session creation; tags `video_profile.hlg10` |
+| `MyApplicationInterface.getHlg10Pref()` | the gate: pref on **and** video mode **and** HEVC output format |
+
+The two widened session gates are the easiest thing to miss. Without them
+`createOutputConfigurationList()` is never called at all, the profile is never
+set, and the probe silently reports success while recording 8-bit.
+
+**Not yet run.** The build installs and the app is healthy, but the phone came
+off USB before the recording test. To finish:
+
+```sh
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+# Settings > Video > output format = HEVC, then tick "10-bit HLG video"
+adb logcat -c && adb logcat | grep -E "KANAHA_HLG10|CameraController2|MediaRecorder"
+# start a recording from the UI or the HTTP API
+```
+
+**What each outcome means.** `logHlg10Constraints()` prints the constraint set
+before anything is configured, so the first two lines already settle the shape of
+the work:
+
+- `STANDARD allowed alongside` — the preview can stay 8-bit. Best case, and it
+  would contradict the `[2, 2, 0]` reading from dumpsys.
+- `STANDARD NOT allowed - every surface must be HLG10` — expected. Then the
+  question is only whether `TextureView` accepts it.
+- Session configures and recording starts — **1–2 days**, finish the remaining
+  guards and the HTTP parameter.
+- `onConfigureFailed`, or a preview that is black, green or washed out —
+  `TextureView` is the wall, the preview has to move to `SurfaceView`, and every
+  overlay's drawing path changes with it. **That is the week.**
+
+Verify the output rather than trusting the log — the encoder can accept a 10-bit
+profile request and quietly ignore it:
+
+```sh
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=pix_fmt,profile,color_transfer,color_primaries \
+  -of default=nw=1 recorded.mp4
+# want: pix_fmt=yuv420p10le  profile=Main 10  color_transfer=arib-std-b67
+```
+
 ---
 
 ### Part 2 — 12-bit RAW as DNG sequences
