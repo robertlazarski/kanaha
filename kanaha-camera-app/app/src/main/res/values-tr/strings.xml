@@ -99,7 +99,7 @@
     <string name="preference_burst_interval">Patlama modu süresi</string>
     <string name="preference_screen_camera_controls_more">Daha fazla kamera kontrol ayarı…</string>
     <string name="preference_touch_capture">Yakalamak için dokunun</string>
-    <string name="preference_touch_capture_summary">Sadece dokunarak fotoğraf çekin ya da önizlemek için ardarda dokunun</string>
+    <string name="preference_touch_capture_summary">Sadece dokunarak fotoğraf çekin ya da önizlemek için ardarda dokunun\n%s</string>
     <string name="preference_pause_preview">Fotoğraf çektikten sonra beklet</string>
     <string name="preference_pause_preview_summary">Fotoğraf çektikten sonra fotoğrafı paylaşma ya da silme seçeneği için ekranı duraklat</string>
     <string name="preference_shutter_sound">Fotoğraf çekme sesi</string>
@@ -126,8 +126,6 @@
     <string name="preference_immersive_mode">Immersive(Tutulma) mod</string>
     <string name="preference_show_zoom">Zoomu göster</string>
     <string name="preference_show_zoom_summary">Ekranda şu anki zoom seviyesini göster(büyütüldüğünde)</string>
-    <string name="preference_show_zoom_controls">Zoom -/+ kontrollerini göster</string>
-    <string name="preference_show_zoom_controls_summary">Zoom kontrolü için -/+ butonlarını göster</string>
     <string name="preference_show_zoom_slider_controls">Zoom kaydırma kontrolünü göster</string>
     <string name="preference_show_zoom_slider_controls_summary">Zoom kontrolü için kaydırma barını göster</string>
     <string name="preference_show_iso">ISO yu göster</string>
@@ -139,7 +137,7 @@
     <string name="preference_show_angle_line">Açı hattı çizgisini göster</string>
     <string name="preference_show_angle_line_summary">Ufuk çizgisini göster</string>
     <string name="preference_angle_highlight_color">Açı hat rengi</string>
-    <string name="preference_angle_highlight_color_summary">Kamera sıfır seviyesine geldiğinde renklendir</string>
+    <string name="preference_angle_highlight_color_summary">Kamera sıfır seviyesine geldiğinde renklendir\n%s</string>
     <string name="preference_show_geo_direction">Pusula yönünü göster</string>
     <string name="preference_show_geo_direction_summary">Ekran üzerinde cihazın pusula yönünü göster</string>
     <string name="preference_show_time">Zamanı göster</string>
@@ -209,8 +207,6 @@
     
     <string name="preference_category_online">Karışık</string>
     <string name="preference_online_help">Online yardım</string>
-    <string name="preference_donate">Geliştirmeyi desteklemek için bağışta bulunun</string>
-    <string name="preference_donate_summary">Uygulamayı beğendiyseniz, bağış yapmayı düşünebilirsiniz. "donation app" satın alarak bunu yapabilirsiniz - bu seçeneğe tıkladığınızda bağış uygulaması için sayfam açılacaktır. Teşekkürler!</string>
     <string name="preference_use_camera2">Camera2 API sini kullan</string>
     <string name="preference_use_camera2_summary">Etkinleştirir Camera2 API - ekstra özellikler sunar fakat şuan deneyseldir(yeniden başlatacaktır)</string>
     <string name="preference_about">Hakkında</string>

@@ -35,6 +35,11 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
+    public String getCameraIdSPhysicalPref() {
+        return null;
+    }
+
+    @Override
     public String getFlashPref() {
         return "flash_off";
     }
@@ -370,6 +375,11 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
+    public boolean getJpegRPref() {
+        return false;
+    }
+
+    @Override
     public RawPref getRawPref() {
         return RawPref.RAWPREF_JPEG_ONLY;
     }
@@ -406,6 +416,11 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
 
     @Override
     public boolean allowZoom() {
+        return true;
+    }
+
+    @Override
+    public boolean optimiseFocusForLatency() {
         return true;
     }
 
@@ -532,7 +547,7 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
-    public void setCameraIdPref(int cameraId) {
+    public void setCameraIdPref(int cameraId, String cameraIdSPhysical) {
 
     }
 
@@ -642,7 +657,7 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
-    public boolean onBurstPictureTaken(List<byte[]> images, Date current_date) {
+    public boolean onBurstPictureTaken(List<byte[]> images, Date current_date, Location location) {
         return false;
     }
 

@@ -5,7 +5,6 @@ import net.sourceforge.opencamera.cameracontroller.CameraController;
 import net.sourceforge.opencamera.MainActivity;
 import net.sourceforge.opencamera.MyDebug;
 import net.sourceforge.opencamera.PreferenceKeys;
-import net.sourceforge.opencamera.preview.ApplicationInterface;
 import net.sourceforge.opencamera.preview.Preview;
 import net.sourceforge.opencamera.R;
 
@@ -21,9 +20,8 @@ import android.media.AudioManager;
 import android.os.Build;
 import android.os.Handler;
 import android.preference.PreferenceManager;
-import android.util.DisplayMetrics;
 import android.util.Log;
-import android.view.Display;
+import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.OrientationEventListener;
 import android.view.Surface;
@@ -31,7 +29,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
+import android.view.animation.AnimationSet;
+import android.view.animation.AnimationUtils;
 import android.view.animation.ScaleAnimation;
 import android.widget.Button;
 import android.widget.HorizontalScrollView;
@@ -39,7 +40,6 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.SeekBar;
-import android.widget.ZoomControls;
 
 import java.util.ArrayList;
 import java.util.Hashtable;
@@ -52,6 +52,8 @@ public class MainUI {
     private static final String TAG = "MainUI";
 
     private final MainActivity main_activity;
+
+    private final OnScreenIcons onScreenIcons;
 
     private volatile boolean popup_view_is_open; // must be volatile for test project reading the state
     private PopupView popup_view;
@@ -66,6 +68,8 @@ public class MainUI {
     }
     private UIPlacement ui_placement = UIPlacement.UIPLACEMENT_RIGHT;
     private View top_icon = null;
+    private int navigation_gap_landscape_align_parent_bottom;
+    private int navigation_gap_reverse_landscape_align_parent_bottom;
     private boolean view_rotate_animation;
     private float view_rotate_animation_start; // for MainActivity.lock_to_landscape==false
     private final static int view_rotate_animation_duration = 100; // duration in ms of the icon rotation animation
@@ -97,19 +101,27 @@ public class MainUI {
     public int test_saved_popup_width;
     public int test_saved_popup_height;
     public volatile int test_navigation_gap;
+    public volatile int test_navigation_gap_landscape;
+    public volatile int test_navigation_gap_reversed_landscape;
 
     public MainUI(MainActivity main_activity) {
         if( MyDebug.LOG )
             Log.d(TAG, "MainUI");
         this.main_activity = main_activity;
 
+        this.onScreenIcons = new OnScreenIcons(main_activity);
+
         this.setSeekbarColors();
+    }
+
+    public OnScreenIcons getOnScreenIcons() {
+        return this.onScreenIcons;
     }
 
     private void setSeekbarColors() {
         if( MyDebug.LOG )
             Log.d(TAG, "setSeekbarColors");
-        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
+        {
             ColorStateList progress_color = ColorStateList.valueOf( Color.argb(255, 240, 240, 240) );
             ColorStateList thumb_color = ColorStateList.valueOf( Color.argb(255, 255, 255, 255) );
 
@@ -162,13 +174,13 @@ public class MainUI {
             rotate_by += 360.0f;
         // view.animate() modifies the view's rotation attribute, so it ends up equivalent to view.setRotation()
         // we use rotationBy() instead of rotation(), so we get the minimal rotation for clockwise vs anti-clockwise
-        if( main_activity.is_test && Build.VERSION.SDK_INT <= Build.VERSION_CODES.JELLY_BEAN_MR2 ) {
+        /*if( main_activity.is_test && Build.VERSION.SDK_INT <= Build.VERSION_CODES.JELLY_BEAN_MR2 ) {
             // We randomly get a java.lang.ArrayIndexOutOfBoundsException crash when running MainTests suite
             // on Android emulator with Android 4.3, from deep below ViewPropertyAnimator.start().
             // Unclear why this is - I haven't seen this on real devices and can't find out info about it.
             view.setRotation(ui_rotation);
         }
-        else {
+        else*/ {
             view.animate().rotationBy(rotate_by).setDuration(view_rotate_animation_duration).setInterpolator(new AccelerateDecelerateInterpolator()).start();
         }
     }
@@ -219,7 +231,6 @@ public class MainUI {
             Log.d(TAG, "    system_orientation_portrait? " + system_orientation_portrait);
         }
 
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
         // we cache the preference_ui_placement to save having to check it in the draw() method
         this.ui_placement = computeUIPlacement();
         if( MyDebug.LOG )
@@ -344,8 +355,7 @@ public class MainUI {
         }
 
         Point display_size = new Point();
-        Display display = main_activity.getWindowManager().getDefaultDisplay();
-        display.getSize(display_size);
+        main_activity.getApplicationInterface().getDisplaySize(display_size, true);
         this.layoutUI_display_w = display_size.x;
         this.layoutUI_display_h = display_size.y;
         if( MyDebug.LOG ) {
@@ -372,6 +382,17 @@ public class MainUI {
             }
         }*/
         int navigation_gap = main_activity.getNavigationGap();
+        int navigation_gap_landscape = main_activity.getNavigationGapLandscape();
+        int navigation_gap_reverse_landscape = main_activity.getNavigationGapReverseLandscape();
+        // navigation gaps for UI elements that are aligned to align_parent_bottom (the landscape edge, or reversed landscape edge if left-handed):
+        this.navigation_gap_landscape_align_parent_bottom = navigation_gap_landscape;
+        this.navigation_gap_reverse_landscape_align_parent_bottom = navigation_gap_reverse_landscape;
+        if( ui_placement == UIPlacement.UIPLACEMENT_LEFT ) {
+            navigation_gap_landscape_align_parent_bottom = 0;
+        }
+        else {
+            navigation_gap_reverse_landscape_align_parent_bottom = 0;
+        }
         int gallery_navigation_gap = navigation_gap;
 
         int gallery_top_gap = 0;
@@ -397,6 +418,8 @@ public class MainUI {
             gallery_navigation_gap += privacy_indicator_gap;
         }
         test_navigation_gap = navigation_gap;
+        test_navigation_gap_landscape = navigation_gap_landscape;
+        test_navigation_gap_reversed_landscape = navigation_gap_reverse_landscape;
         if( MyDebug.LOG ) {
             Log.d(TAG, "navigation_gap: " + navigation_gap);
             Log.d(TAG, "gallery_navigation_gap: " + gallery_navigation_gap);
@@ -407,7 +430,7 @@ public class MainUI {
             // reset:
             top_icon = null;
 
-            // we use a dummy button, so that the GUI buttons keep their positioning even if the Settings button is hidden (visibility set to View.GONE)
+            // we use a dummy view, so that the GUI buttons keep their positioning even if the Settings button is hidden (visibility set to View.GONE)
             View view = main_activity.findViewById(R.id.gui_anchor);
             RelativeLayout.LayoutParams layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
             layoutParams.addRule(iconpanel_align_parent_left, 0);
@@ -447,17 +470,9 @@ public class MainUI {
             buttons_permanent.add(main_activity.findViewById(R.id.exposure));
             //buttons_permanent.add(main_activity.findViewById(R.id.switch_video));
             //buttons_permanent.add(main_activity.findViewById(R.id.switch_camera));
-            buttons_permanent.add(main_activity.findViewById(R.id.exposure_lock));
-            buttons_permanent.add(main_activity.findViewById(R.id.white_balance_lock));
-            buttons_permanent.add(main_activity.findViewById(R.id.cycle_raw));
-            buttons_permanent.add(main_activity.findViewById(R.id.store_location));
-            buttons_permanent.add(main_activity.findViewById(R.id.text_stamp));
-            buttons_permanent.add(main_activity.findViewById(R.id.stamp));
-            buttons_permanent.add(main_activity.findViewById(R.id.focus_peaking));
-            buttons_permanent.add(main_activity.findViewById(R.id.auto_level));
-            buttons_permanent.add(main_activity.findViewById(R.id.cycle_flash));
-            buttons_permanent.add(main_activity.findViewById(R.id.face_detection));
-            buttons_permanent.add(main_activity.findViewById(R.id.audio_control));
+
+            onScreenIcons.addOnScreenIcons(buttons_permanent);
+
             buttons_permanent.add(main_activity.findViewById(R.id.kraken_icon));
 
             List<View> buttons_all = new ArrayList<>(buttons_permanent);
@@ -544,9 +559,15 @@ public class MainUI {
                             // is displayed (when taking a photo) if it is still shown left-most, rather than centred; also
                             // needed for "pause preview" trash/icons to be shown properly (test by rotating the phone to update
                             // the layout)
-                            int margin_first = this_view==first_visible_view ? 0 : margin/2;
-                            int margin_last = this_view==last_visible_view ? 0 : margin/2;
-                            setMarginsForSystemUI(layoutParams, 0, margin_first, 0, margin_last);
+                            int margin_first = this_view==first_visible_view ? navigation_gap_reverse_landscape : margin/2;
+                            int margin_last = this_view==last_visible_view ? navigation_gap_landscape : margin/2;
+                            // avoid risk of privacy dot appearing on top of icon - in practice this is only a risk when in
+                            // reverse landscape mode, but we apply in all orientations to avoid icons jumping about;
+                            // similarly, as noted above we use a hardcoded dp rather than
+                            // WindowInsets.getPrivacyIndicatorBounds(), as we want the icons to stay in the same location even as
+                            // the device is rotated
+                            final int privacy_gap_left = (int) (12 * scale + 0.5f); // convert dps to pixels
+                            setMarginsForSystemUI(layoutParams, privacy_gap_left, margin_first, 0, margin_last);
                             layoutParams.width = button_size;
                             layoutParams.height = button_size;
                             this_view.setLayoutParams(layoutParams);
@@ -559,14 +580,15 @@ public class MainUI {
                 // need to reset size/margins to their default
                 // except for gallery, which still needs its margins set for navigation gap! (and we
                 // shouldn't change it's size, which isn't necessarily button_size)
+                // other icons still needs margins set for navigation_gap_landscape and navigation_gap_reverse_landscape
                 view = main_activity.findViewById(R.id.gallery);
                 layoutParams = (RelativeLayout.LayoutParams) view.getLayoutParams();
-                setMarginsForSystemUI(layoutParams, 0, gallery_top_gap, gallery_navigation_gap, 0);
+                setMarginsForSystemUI(layoutParams, 0, Math.max(gallery_top_gap, navigation_gap_reverse_landscape), gallery_navigation_gap, navigation_gap_landscape);
                 view.setLayoutParams(layoutParams);
                 for(View this_view : buttons_permanent) {
                     if( this_view != view ) {
                         layoutParams = (RelativeLayout.LayoutParams)this_view.getLayoutParams();
-                        layoutParams.setMargins(0, 0, 0, 0);
+                        setMarginsForSystemUI(layoutParams, 0, navigation_gap_reverse_landscape, 0, navigation_gap_landscape);
                         layoutParams.width = button_size;
                         layoutParams.height = button_size;
                         this_view.setLayoutParams(layoutParams);
@@ -675,45 +697,22 @@ public class MainUI {
             view.setLayoutParams(layoutParams);
             setViewRotation(view, ui_rotation);
 
-            view = main_activity.findViewById(R.id.zoom);
+            view = main_activity.findViewById(R.id.zoom_seekbar);
             layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
+            // align close to the edge of screen
             layoutParams.addRule(align_parent_left, 0);
             layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
             layoutParams.addRule(align_parent_top, 0);
             layoutParams.addRule(align_parent_bottom, RelativeLayout.TRUE);
-            view.setLayoutParams(layoutParams);
-            setFixedRotation(main_activity.findViewById(R.id.zoom), 0, 0, navigation_gap, 0);
-            view.setRotation(view.getRotation()+180.0f); // should always match the zoom_seekbar, so that zoom in and out are in the same directions
-
-            view = main_activity.findViewById(R.id.zoom_seekbar);
-            layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
-            // if we are showing the zoom control, the align next to that; otherwise have it aligned close to the edge of screen
-            if( sharedPreferences.getBoolean(PreferenceKeys.ShowZoomControlsPreferenceKey, false) ) {
-                layoutParams.addRule(align_parent_left, 0);
-                layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
-                layoutParams.addRule(align_parent_top, 0);
-                layoutParams.addRule(align_parent_bottom, 0);
-                layoutParams.addRule(above, R.id.zoom);
-                layoutParams.addRule(below, 0);
-                layoutParams.addRule(left_of, 0);
-                layoutParams.addRule(right_of, 0);
-                // margins set below in setFixedRotation()
-            }
-            else {
-                layoutParams.addRule(align_parent_left, 0);
-                layoutParams.addRule(align_parent_right, RelativeLayout.TRUE);
-                layoutParams.addRule(align_parent_top, 0);
-                layoutParams.addRule(align_parent_bottom, RelativeLayout.TRUE);
-                // margins set below in setFixedRotation()
-                // need to clear the others, in case we turn zoom controls on/off
-                layoutParams.addRule(above, 0);
-                layoutParams.addRule(below, 0);
-                layoutParams.addRule(left_of, 0);
-                layoutParams.addRule(right_of, 0);
-            }
+            // margins set below in setFixedRotation()
+            // need to clear the others, in case we turn zoom controls on/off
+            layoutParams.addRule(above, 0);
+            layoutParams.addRule(below, 0);
+            layoutParams.addRule(left_of, 0);
+            layoutParams.addRule(right_of, 0);
             view.setLayoutParams(layoutParams);
             int margin = (int) (20 * scale + 0.5f); // convert dps to pixels
-            setFixedRotation(main_activity.findViewById(R.id.zoom_seekbar), 0, 0, margin+navigation_gap, 0);
+            setFixedRotation(main_activity.findViewById(R.id.zoom_seekbar), 0, navigation_gap_reverse_landscape_align_parent_bottom, margin+navigation_gap, navigation_gap_landscape_align_parent_bottom);
 
             view = main_activity.findViewById(R.id.focus_seekbar);
             layoutParams = (RelativeLayout.LayoutParams)view.getLayoutParams();
@@ -842,9 +841,6 @@ public class MainUI {
             lp.height = height_pixels;
             view.setLayoutParams(lp);
 
-            view = main_activity.findViewById(R.id.exposure_seekbar_zoom);
-            view.setAlpha(0.5f);
-
             view = main_activity.findViewById(R.id.iso_seekbar);
             lp = (RelativeLayout.LayoutParams)view.getLayoutParams();
             lp.width = width_pixels;
@@ -918,12 +914,7 @@ public class MainUI {
                             setPopupViewRotation(ui_rotation, display_height);
 
                             // stop listening - only want to call this once!
-                            if( Build.VERSION.SDK_INT > Build.VERSION_CODES.ICE_CREAM_SANDWICH_MR1 ) {
-                                view.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                            }
-                            else {
-                                view.getViewTreeObserver().removeGlobalOnLayoutListener(this);
-                            }
+                            view.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                         }
                     }
             );
@@ -945,6 +936,7 @@ public class MainUI {
     void setMarginsForSystemUI(RelativeLayout.LayoutParams layoutParams, int left, int top, int right, int bottom) {
         MainActivity.SystemOrientation system_orientation = main_activity.getSystemOrientation();
         if( system_orientation == MainActivity.SystemOrientation.PORTRAIT ) {
+            //noinspection SuspiciousNameCombination
             layoutParams.setMargins(bottom, left, top, right);
         }
         else if( system_orientation == MainActivity.SystemOrientation.REVERSE_LANDSCAPE ) {
@@ -986,7 +978,8 @@ public class MainUI {
     }
 
     void setFocusSeekbarsRotation() {
-        setFixedRotation(main_activity.findViewById(R.id.focus_seekbar), 0, 0, 0, 0);
+        setFixedRotation(main_activity.findViewById(R.id.focus_seekbar), 0, navigation_gap_reverse_landscape_align_parent_bottom, 0, navigation_gap_landscape_align_parent_bottom);
+        // don't need to set margins for navigation gap landscape for focus_bracketing_target_seekbar, as it sits above the source focus_seekbar
         setFixedRotation(main_activity.findViewById(R.id.focus_bracketing_target_seekbar), 0, 0, 0, 0);
     }
 
@@ -1159,7 +1152,7 @@ public class MainUI {
         pauseVideoButton.setContentDescription(main_activity.getResources().getString(content_description));
     }
 
-    public UIPlacement getUIPlacement() {
+    UIPlacement getUIPlacement() {
         return this.ui_placement;
     }
 
@@ -1233,86 +1226,6 @@ public class MainUI {
         }
     }
 
-    public boolean showExposureLockIcon() {
-        if( !main_activity.getPreview().supportsExposureLock() )
-            return false;
-        if( main_activity.getApplicationInterface().isCameraExtensionPref() ) {
-            // not supported for camera extensions
-            return false;
-        }
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowExposureLockPreferenceKey, true);
-    }
-
-    public boolean showWhiteBalanceLockIcon() {
-        if( !main_activity.getPreview().supportsWhiteBalanceLock() )
-            return false;
-        if( main_activity.getApplicationInterface().isCameraExtensionPref() ) {
-            // not supported for camera extensions
-            return false;
-        }
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowWhiteBalanceLockPreferenceKey, false);
-    }
-
-    public boolean showCycleRawIcon() {
-        if( !main_activity.getPreview().supportsRaw() )
-            return false;
-        if( !main_activity.getApplicationInterface().isRawAllowed(main_activity.getApplicationInterface().getPhotoMode()) )
-            return false;
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowCycleRawPreferenceKey, false);
-    }
-
-    public boolean showStoreLocationIcon() {
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowStoreLocationPreferenceKey, false);
-    }
-
-    public boolean showTextStampIcon() {
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowTextStampPreferenceKey, false);
-    }
-
-    public boolean showStampIcon() {
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowStampPreferenceKey, false);
-    }
-
-    public boolean showFocusPeakingIcon() {
-        if( !main_activity.supportsPreviewBitmaps() )
-            return false;
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowFocusPeakingPreferenceKey, false);
-    }
-
-    public boolean showAutoLevelIcon() {
-        if( !main_activity.supportsAutoStabilise() )
-            return false;
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowAutoLevelPreferenceKey, false);
-    }
-
-    public boolean showCycleFlashIcon() {
-        if( !main_activity.getPreview().supportsFlash() )
-            return false;
-        if( main_activity.getPreview().isVideo() )
-            return false; // no point showing flash icon in video mode, as we only allow flash auto and flash torch, and we don't support torch on the on-screen cycle flash icon
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowCycleFlashPreferenceKey, false);
-    }
-
-    public boolean showFaceDetectionIcon() {
-        if( !main_activity.getPreview().supportsFaceDetection() )
-            return false;
-        if( main_activity.getApplicationInterface().isCameraExtensionPref() ) {
-            // not supported for camera extensions
-            return false;
-        }
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(main_activity);
-        return sharedPreferences.getBoolean(PreferenceKeys.ShowFaceDetectionPreferenceKey, false);
-    }
-
     public void setImmersiveMode(final boolean immersive_mode) {
         if( MyDebug.LOG )
             Log.d(TAG, "setImmersiveMode: " + immersive_mode);
@@ -1330,21 +1243,9 @@ public class MainUI {
                 View switchMultiCameraButton = main_activity.findViewById(R.id.switch_multi_camera);
                 View switchVideoButton = main_activity.findViewById(R.id.switch_video);
                 View exposureButton = main_activity.findViewById(R.id.exposure);
-                View exposureLockButton = main_activity.findViewById(R.id.exposure_lock);
-                View whiteBalanceLockButton = main_activity.findViewById(R.id.white_balance_lock);
-                View cycleRawButton = main_activity.findViewById(R.id.cycle_raw);
-                View storeLocationButton = main_activity.findViewById(R.id.store_location);
-                View textStampButton = main_activity.findViewById(R.id.text_stamp);
-                View stampButton = main_activity.findViewById(R.id.stamp);
-                View focusPeakingButton = main_activity.findViewById(R.id.focus_peaking);
-                View autoLevelButton = main_activity.findViewById(R.id.auto_level);
-                View cycleFlashButton = main_activity.findViewById(R.id.cycle_flash);
-                View faceDetectionButton = main_activity.findViewById(R.id.face_detection);
-                View audioControlButton = main_activity.findViewById(R.id.audio_control);
                 View popupButton = main_activity.findViewById(R.id.popup);
                 View galleryButton = main_activity.findViewById(R.id.gallery);
                 View settingsButton = main_activity.findViewById(R.id.settings);
-                View zoomControls = main_activity.findViewById(R.id.zoom);
                 View zoomSeekBar = main_activity.findViewById(R.id.zoom_seekbar);
                 View focusSeekBar = main_activity.findViewById(R.id.focus_seekbar);
                 View focusBracketingTargetSeekBar = main_activity.findViewById(R.id.focus_bracketing_target_seekbar);
@@ -1355,36 +1256,12 @@ public class MainUI {
                 switchVideoButton.setVisibility(visibility);
                 if( main_activity.supportsExposureButton() )
                     exposureButton.setVisibility(visibility);
-                if( showExposureLockIcon() )
-                    exposureLockButton.setVisibility(visibility);
-                if( showWhiteBalanceLockIcon() )
-                    whiteBalanceLockButton.setVisibility(visibility);
-                if( showCycleRawIcon() )
-                    cycleRawButton.setVisibility(visibility);
-                if( showStoreLocationIcon() )
-                    storeLocationButton.setVisibility(visibility);
-                if( showTextStampIcon() )
-                    textStampButton.setVisibility(visibility);
-                if( showStampIcon() )
-                    stampButton.setVisibility(visibility);
-                if( showFocusPeakingIcon() )
-                    focusPeakingButton.setVisibility(visibility);
-                if( showAutoLevelIcon() )
-                    autoLevelButton.setVisibility(visibility);
-                if( showCycleFlashIcon() )
-                    cycleFlashButton.setVisibility(visibility);
-                if( showFaceDetectionIcon() )
-                    faceDetectionButton.setVisibility(visibility);
-                if( main_activity.hasAudioControl() )
-                    audioControlButton.setVisibility(visibility);
+                onScreenIcons.setVisibility(visibility, visibility);
                 popupButton.setVisibility(visibility);
                 galleryButton.setVisibility(visibility);
                 settingsButton.setVisibility(visibility);
                 if( MyDebug.LOG ) {
                     Log.d(TAG, "has_zoom: " + main_activity.getPreview().supportsZoom());
-                }
-                if( main_activity.getPreview().supportsZoom() && sharedPreferences.getBoolean(PreferenceKeys.ShowZoomControlsPreferenceKey, false) ) {
-                    zoomControls.setVisibility(visibility);
                 }
                 if( main_activity.getPreview().supportsZoom() && sharedPreferences.getBoolean(PreferenceKeys.ShowZoomSliderControlsPreferenceKey, true) ) {
                     zoomSeekBar.setVisibility(visibility);
@@ -1393,7 +1270,7 @@ public class MainUI {
                     focusSeekBar.setVisibility(visibility);
                 if( main_activity.showManualFocusSeekbar(true) )
                     focusBracketingTargetSeekBar.setVisibility(visibility);
-                String pref_immersive_mode = sharedPreferences.getString(PreferenceKeys.ImmersiveModePreferenceKey, "immersive_mode_low_profile");
+                String pref_immersive_mode = sharedPreferences.getString(PreferenceKeys.ImmersiveModePreferenceKey, "immersive_mode_off");
                 if( pref_immersive_mode.equals("immersive_mode_everything") ) {
                     if( sharedPreferences.getBoolean(PreferenceKeys.ShowTakePhotoPreferenceKey, true) ) {
                         View takePhotoButton = main_activity.findViewById(R.id.take_photo);
@@ -1453,22 +1330,13 @@ public class MainUI {
                 final boolean is_panorama_recording = main_activity.getApplicationInterface().getGyroSensor().isRecording();
                 final int visibility = is_panorama_recording ? View.GONE : (show_gui_photo && show_gui_video) ? View.VISIBLE : View.GONE; // for UI that is hidden while taking photo or video
                 final int visibility_video = is_panorama_recording ? View.GONE : show_gui_photo ? View.VISIBLE : View.GONE; // for UI that is only hidden while taking photo
+                View settingsButton = main_activity.findViewById(R.id.settings);
                 View switchCameraButton = main_activity.findViewById(R.id.switch_camera);
                 View switchMultiCameraButton = main_activity.findViewById(R.id.switch_multi_camera);
                 View switchVideoButton = main_activity.findViewById(R.id.switch_video);
                 View exposureButton = main_activity.findViewById(R.id.exposure);
-                View exposureLockButton = main_activity.findViewById(R.id.exposure_lock);
-                View whiteBalanceLockButton = main_activity.findViewById(R.id.white_balance_lock);
-                View cycleRawButton = main_activity.findViewById(R.id.cycle_raw);
-                View storeLocationButton = main_activity.findViewById(R.id.store_location);
-                View textStampButton = main_activity.findViewById(R.id.text_stamp);
-                View stampButton = main_activity.findViewById(R.id.stamp);
-                View focusPeakingButton = main_activity.findViewById(R.id.focus_peaking);
-                View autoLevelButton = main_activity.findViewById(R.id.auto_level);
-                View cycleFlashButton = main_activity.findViewById(R.id.cycle_flash);
-                View faceDetectionButton = main_activity.findViewById(R.id.face_detection);
-                View audioControlButton = main_activity.findViewById(R.id.audio_control);
                 View popupButton = main_activity.findViewById(R.id.popup);
+                settingsButton.setVisibility(visibility_video); // still allow settings when recording video - arguably we shouldn't, but looks wierd given that the other default icons aren't hidden when recording video
                 if( main_activity.getPreview().getCameraControllerManager().getNumberOfCameras() > 1 )
                     switchCameraButton.setVisibility(visibility);
                 if( main_activity.showSwitchMultiCamIcon() )
@@ -1476,28 +1344,7 @@ public class MainUI {
                 switchVideoButton.setVisibility(visibility);
                 if( main_activity.supportsExposureButton() )
                     exposureButton.setVisibility(visibility_video); // still allow exposure when recording video
-                if( showExposureLockIcon() )
-                    exposureLockButton.setVisibility(visibility_video); // still allow exposure lock when recording video
-                if( showWhiteBalanceLockIcon() )
-                    whiteBalanceLockButton.setVisibility(visibility_video); // still allow white balance lock when recording video
-                if( showCycleRawIcon() )
-                    cycleRawButton.setVisibility(visibility);
-                if( showStoreLocationIcon() )
-                    storeLocationButton.setVisibility(visibility);
-                if( showTextStampIcon() )
-                    textStampButton.setVisibility(visibility);
-                if( showStampIcon() )
-                    stampButton.setVisibility(visibility);
-                if( showFocusPeakingIcon() )
-                    focusPeakingButton.setVisibility(visibility);
-                if( showAutoLevelIcon() )
-                    autoLevelButton.setVisibility(visibility);
-                if( showCycleFlashIcon() )
-                    cycleFlashButton.setVisibility(visibility);
-                if( showFaceDetectionIcon() )
-                    faceDetectionButton.setVisibility(visibility);
-                if( main_activity.hasAudioControl() )
-                    audioControlButton.setVisibility(visibility);
+                onScreenIcons.setVisibility(visibility, visibility_video);
                 if( !(show_gui_photo && show_gui_video) ) {
                     closePopup(); // we still allow the popup when recording video, but need to update the UI (so it only shows flash options), so easiest to just close
                 }
@@ -1519,131 +1366,6 @@ public class MainUI {
                 }
             }
         });
-    }
-
-    public void updateExposureLockIcon() {
-        ImageButton view = main_activity.findViewById(R.id.exposure_lock);
-        boolean enabled = main_activity.getPreview().isExposureLocked();
-        view.setImageResource(enabled ? R.drawable.exposure_locked : R.drawable.exposure_unlocked);
-        view.setContentDescription( main_activity.getResources().getString(enabled ? R.string.exposure_unlock : R.string.exposure_lock) );
-    }
-
-    public void updateWhiteBalanceLockIcon() {
-        ImageButton view = main_activity.findViewById(R.id.white_balance_lock);
-        boolean enabled = main_activity.getPreview().isWhiteBalanceLocked();
-        view.setImageResource(enabled ? R.drawable.white_balance_locked : R.drawable.white_balance_unlocked);
-        view.setContentDescription( main_activity.getResources().getString(enabled ? R.string.white_balance_unlock : R.string.white_balance_lock) );
-    }
-
-    public void updateCycleRawIcon() {
-        ApplicationInterface.RawPref raw_pref = main_activity.getApplicationInterface().getRawPref();
-        ImageButton view = main_activity.findViewById(R.id.cycle_raw);
-        if( raw_pref == ApplicationInterface.RawPref.RAWPREF_JPEG_DNG ) {
-            if( main_activity.getApplicationInterface().isRawOnly() ) {
-                // actually RAW only
-                view.setImageResource(R.drawable.raw_only_icon);
-            }
-            else {
-                view.setImageResource(R.drawable.raw_icon);
-            }
-        }
-        else {
-            view.setImageResource(R.drawable.raw_off_icon);
-        }
-    }
-
-    public void updateStoreLocationIcon() {
-        ImageButton view = main_activity.findViewById(R.id.store_location);
-        boolean enabled = main_activity.getApplicationInterface().getGeotaggingPref();
-        view.setImageResource(enabled ? R.drawable.ic_gps_fixed_red_48dp : R.drawable.ic_gps_fixed_white_48dp);
-        view.setContentDescription( main_activity.getResources().getString(enabled ? R.string.preference_location_disable : R.string.preference_location_enable) );
-    }
-
-    public void updateTextStampIcon() {
-        ImageButton view = main_activity.findViewById(R.id.text_stamp);
-        boolean enabled = !main_activity.getApplicationInterface().getTextStampPref().isEmpty();
-        view.setImageResource(enabled ? R.drawable.baseline_text_fields_red_48 : R.drawable.baseline_text_fields_white_48);
-    }
-
-    public void updateStampIcon() {
-        ImageButton view = main_activity.findViewById(R.id.stamp);
-        boolean enabled = main_activity.getApplicationInterface().getStampPref().equals("preference_stamp_yes");
-        view.setImageResource(enabled ? R.drawable.ic_text_format_red_48dp : R.drawable.ic_text_format_white_48dp);
-        view.setContentDescription( main_activity.getResources().getString(enabled ? R.string.stamp_disable : R.string.stamp_enable) );
-    }
-
-    public void updateFocusPeakingIcon() {
-        ImageButton view = main_activity.findViewById(R.id.focus_peaking);
-        boolean enabled = main_activity.getApplicationInterface().getFocusPeakingPref();
-        view.setImageResource(enabled ? R.drawable.key_visualizer_red : R.drawable.key_visualizer);
-        view.setContentDescription( main_activity.getResources().getString(enabled ? R.string.focus_peaking_disable : R.string.focus_peaking_enable) );
-    }
-
-    public void updateAutoLevelIcon() {
-        ImageButton view = main_activity.findViewById(R.id.auto_level);
-        boolean enabled = main_activity.getApplicationInterface().getAutoStabilisePref();
-        view.setImageResource(enabled ? R.drawable.auto_stabilise_icon_red : R.drawable.auto_stabilise_icon);
-        view.setContentDescription( main_activity.getResources().getString(enabled ? R.string.auto_level_disable : R.string.auto_level_enable) );
-    }
-
-    public void updateCycleFlashIcon() {
-        // n.b., read from preview rather than saved application preference - so the icon updates correctly when in flash
-        // auto mode, but user switches to manual ISO where flash auto isn't supported
-        String flash_value = main_activity.getPreview().getCurrentFlashValue();
-        if( flash_value != null ) {
-            ImageButton view = main_activity.findViewById(R.id.cycle_flash);
-            switch( flash_value ) {
-                case "flash_off":
-                    view.setImageResource(R.drawable.flash_off);
-                    break;
-                case "flash_auto":
-                case "flash_frontscreen_auto":
-                    view.setImageResource(R.drawable.flash_auto);
-                    break;
-                case "flash_on":
-                case "flash_frontscreen_on":
-                    view.setImageResource(R.drawable.flash_on);
-                    break;
-                case "flash_torch":
-                case "flash_frontscreen_torch":
-                    view.setImageResource(R.drawable.baseline_highlight_white_48);
-                    break;
-                case "flash_red_eye":
-                    view.setImageResource(R.drawable.baseline_remove_red_eye_white_48);
-                    break;
-                default:
-                    // just in case??
-                    Log.e(TAG, "unknown flash value " + flash_value);
-                    view.setImageResource(R.drawable.flash_off);
-                    break;
-            }
-        }
-        else {
-            ImageButton view = main_activity.findViewById(R.id.cycle_flash);
-            view.setImageResource(R.drawable.flash_off);
-        }
-    }
-
-    public void updateFaceDetectionIcon() {
-        ImageButton view = main_activity.findViewById(R.id.face_detection);
-        boolean enabled = main_activity.getApplicationInterface().getFaceDetectionPref();
-        view.setImageResource(enabled ? R.drawable.ic_face_red_48dp : R.drawable.ic_face_white_48dp);
-        view.setContentDescription( main_activity.getResources().getString(enabled ? R.string.face_detection_disable : R.string.face_detection_enable) );
-    }
-
-    public void updateOnScreenIcons() {
-        if( MyDebug.LOG )
-            Log.d(TAG, "updateOnScreenIcons");
-        this.updateExposureLockIcon();
-        this.updateWhiteBalanceLockIcon();
-        this.updateCycleRawIcon();
-        this.updateStoreLocationIcon();
-        this.updateTextStampIcon();
-        this.updateStampIcon();
-        this.updateFocusPeakingIcon();
-        this.updateAutoLevelIcon();
-        this.updateCycleFlashIcon();
-        this.updateFaceDetectionIcon();
     }
 
     public void audioControlStarted() {
@@ -1677,7 +1399,10 @@ public class MainUI {
         if( isExposureUIOpen() ) {
             closeExposureUI();
         }
-        else if( main_activity.getPreview().getCameraController() != null && main_activity.supportsExposureButton() ) {
+        else if( main_activity.getPreview().getCameraController() != null && !main_activity.getPreview().isPreviewStarting() && main_activity.supportsExposureButton() ) {
+            // make sure preview is not starting - risk here is if preview is currently opening on
+            // background thread - don't want to open exposure UI that would allow being
+            // able to change settings that would then require restarting the preview
             setupExposureUI();
             if (main_activity.getBluetoothRemoteControl().remoteEnabled()) {
                 initRemoteControlForExposureUI();
@@ -1826,7 +1551,9 @@ public class MainUI {
                 changeSeekbar(R.id.exposure_time_seekbar, 5);
                 break;
             case 3:
-                changeSeekbar(R.id.exposure_seekbar, 1);
+                //changeSeekbar(R.id.exposure_seekbar, 1);
+                // call via MainActivity.changeExposure(), to handle repeated zeroes
+                main_activity.changeExposure(1);
                 break;
             case 4:
                 changeSeekbar(R.id.white_balance_seekbar, 3);
@@ -1848,7 +1575,9 @@ public class MainUI {
                 changeSeekbar(R.id.exposure_time_seekbar, -5);
                 break;
             case 3:
-                changeSeekbar(R.id.exposure_seekbar, -1);
+                //changeSeekbar(R.id.exposure_seekbar, -1);
+                // call via MainActivity.changeExposure(), to handle repeated zeroes
+                main_activity.changeExposure(-1);
                 break;
             case 4:
                 changeSeekbar(R.id.white_balance_seekbar, -3);
@@ -1867,13 +1596,13 @@ public class MainUI {
         boolean found = false;
         for(int i = 0; i < count; i++) {
             Button button = (Button)iso_buttons.get(i);
-            String button_text = "" + button.getText();
+            String button_text = String.valueOf(button.getText());
             if( ISOTextEquals(button_text, current_iso) ) {
                 found = true;
                 // Select next one, unless it's "Manual", which we skip since
                 // it's not practical in remote mode.
                 Button nextButton = (Button) iso_buttons.get((i + count + step)%count);
-                String nextButton_text = "" + nextButton.getText();
+                String nextButton_text = String.valueOf(nextButton.getText());
                 if( nextButton_text.contains("m") ) {
                     nextButton = (Button) iso_buttons.get((i+count+ 2*step)%count);
                 }
@@ -1914,7 +1643,7 @@ public class MainUI {
             Button manualButton = null;
             for(View view : iso_buttons) {
                 Button button = (Button)view;
-                String button_text = "" + button.getText();
+                String button_text = String.valueOf(button.getText());
                 if( ISOTextEquals(button_text, current_iso) ) {
                     PopupView.setButtonSelected(button, true);
                     //button.setBackgroundColor(highlightColorExposureUIElement);
@@ -1972,18 +1701,17 @@ public class MainUI {
      * @param centred If true, then find the max height for a view that will be centred.
      */
     int getMaxHeightDp(boolean centred) {
-        Display display = main_activity.getWindowManager().getDefaultDisplay();
         // ensure we have display for landscape orientation (even if we ever allow Open Camera
-        DisplayMetrics outMetrics = new DisplayMetrics();
-        display.getMetrics(outMetrics);
+        Point display_size = new Point();
+        main_activity.getApplicationInterface().getDisplaySize(display_size, true);
 
         // normally we should always have heightPixels < widthPixels, but good not to assume we're running in landscape orientation
-        int smaller_dim = Math.min(outMetrics.widthPixels, outMetrics.heightPixels);
+        int smaller_dim = Math.min(display_size.x, display_size.y);
         // the smaller dimension should limit the width, due to when held in portrait
         final float scale = main_activity.getResources().getDisplayMetrics().density;
         int dpHeight = (int)(smaller_dim / scale);
         if( MyDebug.LOG ) {
-            Log.d(TAG, "display size: " + outMetrics.widthPixels + " x " + outMetrics.heightPixels);
+            Log.d(TAG, "display size: " + display_size.x + " x " + display_size.y);
             Log.d(TAG, "dpHeight: " + dpHeight);
         }
         // allow space for the icons at top/right of screen
@@ -2067,6 +1795,8 @@ public class MainUI {
         view.setImageResource(R.drawable.ic_exposure_red_48dp);
         View sliders_container = main_activity.findViewById(R.id.sliders_container);
         sliders_container.setVisibility(View.VISIBLE);
+        Animation animation = AnimationUtils.loadAnimation(main_activity, R.anim.fade_in);
+        sliders_container.startAnimation(animation);
         ViewGroup iso_buttons_container = main_activity.findViewById(R.id.iso_buttons);
         iso_buttons_container.removeAllViews();
         List<String> supported_isos;
@@ -2141,8 +1871,8 @@ public class MainUI {
                                 int iso = preview.getCameraController().captureResultIso();
                                 if( MyDebug.LOG )
                                     Log.d(TAG, "apply existing iso of " + iso);
-                                editor.putString(PreferenceKeys.ISOPreferenceKey, "" + iso);
-                                toast_option = "" + iso;
+                                editor.putString(PreferenceKeys.ISOPreferenceKey, String.valueOf(iso));
+                                toast_option = String.valueOf(iso);
                             }
                             else {
                                 if( MyDebug.LOG )
@@ -2177,7 +1907,7 @@ public class MainUI {
                             // if user selected the generic "manual", then just keep the previous non-ISO option
                             if( MyDebug.LOG )
                                 Log.d(TAG, "keep existing iso of " + old_iso);
-                            editor.putString(PreferenceKeys.ISOPreferenceKey, "" + old_iso);
+                            editor.putString(PreferenceKeys.ISOPreferenceKey, old_iso);
                         }
 
                         editor.apply();
@@ -2233,8 +1963,6 @@ public class MainUI {
 
             if( main_activity.getPreview().supportsExposures() ) {
                 exposure_seek_bar.setVisibility(View.VISIBLE);
-                ZoomControls seek_bar_zoom = main_activity.findViewById(R.id.exposure_seekbar_zoom);
-                seek_bar_zoom.setVisibility(View.VISIBLE);
             }
             else {
                 exposure_seek_bar.setVisibility(View.GONE);
@@ -2278,7 +2006,7 @@ public class MainUI {
     public static String ISOToButtonText(int iso) {
         // n.b., if we change how the ISO is converted to a string for the button, will also need
         // to update updateSelectedISOButton()
-        return "" + iso;
+        return String.valueOf(iso);
     }
 
     /** If the exposure panel is open, updates the selected ISO button to match the current ISO value,
@@ -2299,7 +2027,7 @@ public class MainUI {
                 Button button = (Button)view;
                 if( MyDebug.LOG )
                     Log.d(TAG, "button: " + button.getText());
-                String button_text = "" + button.getText();
+                String button_text = String.valueOf(button.getText());
                 if( ISOTextEquals(button_text, current_iso) ) {
                     PopupView.setButtonSelected(button, true);
                     found = true;
@@ -2376,7 +2104,7 @@ public class MainUI {
         String flash_value = main_activity.getPreview().getCurrentFlashValue();
         if( MyDebug.LOG )
             Log.d(TAG, "flash_value: " + flash_value);
-        if( main_activity.getMainUI().showCycleFlashIcon() ) {
+        if( main_activity.getMainUI().getOnScreenIcons().showCycleFlashIcon() ) {
             popup.setImageResource(R.drawable.popup);
         }
         else if( flash_value != null && flash_value.equals("flash_off") ) {
@@ -2617,6 +2345,16 @@ public class MainUI {
                 Log.d(TAG, "camera not opened!");
             return;
         }
+        else if( main_activity.getPreview().isPreviewStarting() ) {
+            if( MyDebug.LOG )
+                Log.d(TAG, "preview is starting!");
+            // risk if preview is currently opening on background thread - don't want to open popup menu that would allow being
+            // able to change settings that would then require restarting the preview
+            // still allow opening popup if preview is not started (but not starting in background) - in practice this means the
+            // preview failed to start, so can be useful to allow opening the popup to change modes (in case failing to start is
+            // due to a specific photo mode or other setting)
+            return;
+        }
 
         if( MyDebug.LOG )
             Log.d(TAG, "open popup");
@@ -2631,8 +2369,7 @@ public class MainUI {
 
         {
             // prevent popup being transparent
-            popup_container.setBackgroundColor(Color.BLACK);
-            popup_container.setAlpha(0.9f);
+            popup_container.setBackgroundColor(Color.argb(230, 0, 0, 0));
         }
 
         if( popup_view == null ) {
@@ -2669,12 +2406,7 @@ public class MainUI {
                         if( MyDebug.LOG )
                             Log.d(TAG, "time after layoutUI: " + (System.currentTimeMillis() - time_s));
                         // stop listening - only want to call this once!
-                        if( Build.VERSION.SDK_INT > Build.VERSION_CODES.ICE_CREAM_SANDWICH_MR1 ) {
-                            popup_container.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                        }
-                        else {
-                            popup_container.getViewTreeObserver().removeGlobalOnLayoutListener(this);
-                        }
+                        popup_container.getViewTreeObserver().removeOnGlobalLayoutListener(this);
 
                         UIPlacement ui_placement = computeUIPlacement();
                         MainActivity.SystemOrientation system_orientation = main_activity.getSystemOrientation();
@@ -2726,8 +2458,14 @@ public class MainUI {
                                 break;
                         }
                         ScaleAnimation animation = new ScaleAnimation(0.0f, 1.0f, 0.0f, 1.0f, Animation.RELATIVE_TO_SELF, pivot_x, Animation.RELATIVE_TO_SELF, pivot_y);
-                        animation.setDuration(100);
-                        popup_container.setAnimation(animation);
+                        animation.setDuration(200);
+                        //popup_container.setAnimation(animation);
+                        AlphaAnimation fade_animation = new AlphaAnimation(0.0f, 1.0f);
+                        fade_animation.setDuration(200);
+                        AnimationSet animation_set = new AnimationSet(false);
+                        animation_set.addAnimation(animation);
+                        animation_set.addAnimation(fade_animation);
+                        popup_container.setAnimation(animation_set);
                     }
                 }
         );
@@ -3055,6 +2793,11 @@ public class MainUI {
         alertDialog.setTitle(title_id);
         if( info_id != 0 )
             alertDialog.setMessage(info_id);
+        else {
+            // Setting an empty string here is still needed to allow setting a message later after it's been created.
+            // Needed for MagneticSensor's dialog
+            alertDialog.setMessage("");
+        }
         alertDialog.setPositiveButton(android.R.string.ok, null);
         alertDialog.setNegativeButton(R.string.dont_show_again, new DialogInterface.OnClickListener() {
             @Override
@@ -3068,8 +2811,8 @@ public class MainUI {
             }
         });
 
-        main_activity.showPreview(false);
-        main_activity.setWindowFlagsForSettings(false); // set set_lock_protect to false, otherwise if screen is locked, user will need to unlock to see the info dialog!
+        //main_activity.showPreview(false);
+        //main_activity.setWindowFlagsForSettings(false); // set set_lock_protect to false, otherwise if screen is locked, user will need to unlock to see the info dialog!
 
         AlertDialog alert = alertDialog.create();
         // AlertDialog.Builder.setOnDismissListener() requires API level 17, so do it this way instead
@@ -3078,11 +2821,12 @@ public class MainUI {
             public void onDismiss(DialogInterface arg0) {
                 if( MyDebug.LOG )
                     Log.d(TAG, "info dialog dismissed");
-                main_activity.setWindowFlagsForCamera();
-                main_activity.showPreview(true);
+                //main_activity.setWindowFlagsForCamera();
+                //main_activity.showPreview(true);
             }
         });
-        main_activity.showAlert(alert);
+        //main_activity.showAlert(alert);
+        alert.show();
         return alert;
     }
 
@@ -3316,6 +3060,26 @@ public class MainUI {
 
     View getTopIcon() {
         return this.top_icon;
+    }
+
+    /** Performs haptic feedback, if allowed by settings.
+     */
+    public static long performHapticFeedback(SeekBar seekBar, long last_haptic_time) {
+        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(seekBar.getContext());
+        if( sharedPreferences.getBoolean(PreferenceKeys.AllowHapticFeedbackPreferenceKey, true) ) {
+            long time_ms = System.currentTimeMillis();
+            if( time_ms > last_haptic_time + 16 ) {
+                last_haptic_time = time_ms;
+                // SEGMENT_TICK or SEGMENT_TICK doesn't work on Galaxy S24+ at least, even though on Android 14!
+                /*if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ) {
+                    seekBar.performHapticFeedback(HapticFeedbackConstants.SEGMENT_FREQUENT_TICK);
+                }
+                else*/ {
+                    seekBar.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+                }
+            }
+        }
+        return last_haptic_time;
     }
 
     // for testing

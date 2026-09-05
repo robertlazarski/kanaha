@@ -71,8 +71,7 @@ public class PreferenceSubSettingsManager extends PreferenceSubScreen {
                             editText.setSelection(mediaFilename.length());
                         }
                         catch(IOException e) {
-                            Log.e(TAG, "failed to obtain a filename");
-                            e.printStackTrace();
+                            MyDebug.logStackTrace(TAG, "failed to obtain a filename", e);
                         }
 
                         alertDialog.setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
@@ -146,9 +145,7 @@ public class PreferenceSubSettingsManager extends PreferenceSubScreen {
                                     editor.putInt(PreferenceKeys.LatestVersionPreferenceKey, version_code);
                                 }
                                 catch(PackageManager.NameNotFoundException e) {
-                                    if (MyDebug.LOG)
-                                        Log.d(TAG, "NameNotFoundException exception trying to get version number");
-                                    e.printStackTrace();
+                                    MyDebug.logStackTrace(TAG, "NameNotFoundException trying to get version number", e);
                                 }
                                 editor.apply();
                                 MainActivity main_activity = (MainActivity)PreferenceSubSettingsManager.this.getActivity();

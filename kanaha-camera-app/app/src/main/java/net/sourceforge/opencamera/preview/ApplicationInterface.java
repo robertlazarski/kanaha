@@ -2,11 +2,13 @@ package net.sourceforge.opencamera.preview;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.Serial;
 import java.util.Date;
 import java.util.List;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Point;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
@@ -27,6 +29,7 @@ import net.sourceforge.opencamera.cameracontroller.RawImage;
  */
 public interface ApplicationInterface {
     class NoFreeStorageException extends Exception {
+        @Serial
         private static final long serialVersionUID = -2021932609486148748L;
     }
     class VideoMaxFileSize {
@@ -54,6 +57,7 @@ public interface ApplicationInterface {
     // if you just want a default or don't really care, see the comments for each method for a default or possible options
     // if Preview doesn't support the requested setting, it will check this, and choose its own
     int getCameraIdPref(); // camera to use, from 0 to getCameraControllerManager().getNumberOfCameras()
+    String getCameraIdSPhysicalPref(); // if non-null, the Camera2 physical camera ID (must be one of Preview.getPhysicalCameras())
     String getFlashPref(); // flash_off, flash_auto, flash_on, flash_torch, flash_red_eye
     String getFocusPref(boolean is_video); // focus_mode_auto, focus_mode_infinity, focus_mode_macro, focus_mode_locked, focus_mode_fixed, focus_mode_manual2, focus_mode_edof, focus_mode_continuous_picture, focus_mode_continuous_video
     boolean isVideoPref(); // start up in video mode?
@@ -157,7 +161,8 @@ public interface ApplicationInterface {
     int getDisplayRotation(boolean prefer_later);
     // Camera2 only modes:
     long getExposureTimePref(); // only called if getISOPref() is not "default"
-    float getFocusDistancePref(boolean is_target_distance);
+    float getFocusDistancePref(boolean is_target_distance); // if isFocusBracketingPref()==true, returns the source or target focus distance
+    boolean isFocusBracketingSourceAutoPref(); // if isFocusBracketingPref()==true, returns whether the source focus distance should be set by calling CameraController.setFocusBracketingSourceDistanceFromCurrent()
     boolean isExpoBracketingPref(); // whether to enable burst photos with expo bracketing
     int getExpoBracketingNImagesPref(); // how many images to take for exposure bracketing
     double getExpoBracketingStopsPref(); // stops per image for exposure bracketing
@@ -176,6 +181,7 @@ public interface ApplicationInterface {
     @RequiresApi(api = Build.VERSION_CODES.S)
     int getCameraExtensionPref(); // if isCameraExtensionPref() returns true, the camera extension mode to use
     float getAperturePref(); // get desired aperture (called if Preview.getSupportedApertures() returns non-null); return -1.0f for no preference
+    boolean getJpegRPref(); // whether to request JPEG_R (Ultra HDR) photos
     enum RawPref {
         RAWPREF_JPEG_ONLY, // JPEG only
         RAWPREF_JPEG_DNG // JPEG and RAW (DNG)
@@ -188,6 +194,15 @@ public interface ApplicationInterface {
     boolean usePhotoVideoRecording(); // whether to enable support for taking photos when recording video (if not supported, this won't be called)
     boolean isPreviewInBackground(); // if true, then Preview can disable real-time effects (e.g., computing histogram); also it won't try to open the camera when in the background
     boolean allowZoom(); // if false, don't allow zoom functionality even if the device supports it - Preview.supportsZoom() will also return false; if true, allow zoom if the device supports it
+    boolean optimiseFocusForLatency(); // behaviour for taking photos with continuous focus mode: if true, optimise focus for latency (take photo asap); if false, optimise for quality (don't take photo until scene is focused)
+
+    /** Return size of default display, e.g., Activity.getWindowManager().getDefaultDisplay().getSize().
+     * @param display_size The returned display size.
+     * @param exclude_insets If the activity is running in edge-to-edge mode, then whether to exclude
+     *                       insets. If the activity is not running in edge-to-edge mode, then this should
+     *                       be ignored, and insets should always be excluded.
+     */
+    void getDisplaySize(Point display_size, boolean exclude_insets);
 
     // for testing purposes:
     boolean isTestAlwaysFocus(); // if true, pretend autofocus always successful
@@ -221,7 +236,7 @@ public interface ApplicationInterface {
     void requestTakePhoto(); // requesting taking a photo (due to single/double tap, if either getTouchCapturePref(), getDoubleTouchCapturePref() options are enabled)
     // the set/clear*Pref() methods are called if Preview decides to override the requested pref (because Camera device doesn't support requested pref) (clear*Pref() is called if the feature isn't supported at all)
     // the application can use this information to update its preferences
-    void setCameraIdPref(int cameraId);
+    void setCameraIdPref(int cameraId, String cameraIdSPhysical);
     void setFlashPref(String flash_value);
     void setFocusPref(String focus_value, boolean is_video);
     void setVideoPref(boolean is_video);
@@ -251,8 +266,8 @@ public interface ApplicationInterface {
 
     // callbacks
     void onDrawPreview(Canvas canvas);
-    boolean onPictureTaken(byte [] data, Date current_date);
-    boolean onBurstPictureTaken(List<byte []> images, Date current_date);
+    boolean onPictureTaken(byte [] data, Date current_date, Location location);
+    boolean onBurstPictureTaken(List<byte []> images, Date current_date, Location location);
     boolean onRawPictureTaken(RawImage raw_image, Date current_date);
     boolean onRawBurstPictureTaken(List<RawImage> raw_images, Date current_date);
     void onCaptureStarted(); // called immediately before we start capturing the picture

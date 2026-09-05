@@ -99,7 +99,7 @@
     <string name="preference_burst_interval">Mezidobí sekvenčního snímání</string>
     <string name="preference_screen_camera_controls_more">Více nastavení fotoaparátu…</string>
     <string name="preference_touch_capture">Vyfotit dotykem</string>
-    <string name="preference_touch_capture_summary">Pořídit fotografii pouze dotykem nebo poklepáním na náhled</string>
+    <string name="preference_touch_capture_summary">Pořídit fotografii pouze dotykem nebo poklepáním na náhled\n%s</string>
     <string name="preference_pause_preview">Pauza po pořízení fotografie</string>
     <string name="preference_pause_preview_summary">Zobrazit fotografii po pořízení s možností sdílení nebo vymazání fotografie</string>
     <string name="preference_shutter_sound">Zvuk závěrky</string>
@@ -126,8 +126,6 @@
     <string name="preference_immersive_mode">Immersive režim</string>
     <string name="preference_show_zoom">Zobrazit zoom</string>
     <string name="preference_show_zoom_summary">Zobrazovat aktuální přiblížení na obrazovce (při přiblížení)</string>
-    <string name="preference_show_zoom_controls">Zobrazit -/+ ovládání přiblížení</string>
-    <string name="preference_show_zoom_controls_summary">Zobrazit -/+ tlačítka pro ovládání přiblížení</string>
     <string name="preference_show_zoom_slider_controls">Zobrazit jezdec přiblížení</string>
     <string name="preference_show_zoom_slider_controls_summary">Zobrazovat jezdec pro ovládání přiblížení</string>
     <string name="preference_show_iso">Zobrazit ISO</string>
@@ -139,7 +137,7 @@
     <string name="preference_show_angle_line">Zobrazit úhlovou linku</string>
     <string name="preference_show_angle_line_summary">Zobrazovat vodorovnou vyrovnávací linku</string>
     <string name="preference_angle_highlight_color">Barva zvýraznění úhlu</string>
-    <string name="preference_angle_highlight_color_summary">Barva zvýraznění použita pokud je fotoaparát téměř vyrovnán</string>
+    <string name="preference_angle_highlight_color_summary">Barva zvýraznění použita pokud je fotoaparát téměř vyrovnán\n%s</string>
     <string name="preference_show_geo_direction">Zobrazit směr kompasu</string>
     <string name="preference_show_geo_direction_summary">Zobrazovat světový směr zařízení na obrazovce</string>
     <string name="preference_show_time">Zobrazit čas</string>
@@ -210,8 +208,6 @@
     
     <string name="preference_category_online">Různé</string>
     <string name="preference_online_help">Online nápověda</string>
-    <string name="preference_donate">Přispět na podporu vývoje</string>
-    <string name="preference_donate_summary">Pokud se Vám tato aplikace líbí, prosím zvažte přispění koupí mé "darovací aplikace" - tato volba otevře stránku mé darovací aplikace. Díky!</string>
     <string name="preference_use_camera2">Použít Camera2 API</string>
     <string name="preference_use_camera2_summary">Zapne Camera2 API - nabízí možnosti navíc, ale je v současné době experimentální (způsobí restart aplikace)</string>
     <string name="preference_about">O programu</string>

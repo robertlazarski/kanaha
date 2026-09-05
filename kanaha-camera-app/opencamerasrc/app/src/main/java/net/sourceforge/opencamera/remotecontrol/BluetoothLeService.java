@@ -20,6 +20,7 @@ import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+
 import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
 
@@ -33,7 +34,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.UUID;
 
-@RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR2)
+@RequiresApi(api = Build.VERSION_CODES.S)
 public class BluetoothLeService extends Service {
     private final static String TAG = "BluetoothLeService";
 
@@ -258,7 +259,7 @@ public class BluetoothLeService extends Service {
         sendBroadcast(intent);
     }
 
-    private void broadcastUpdate(String action, final BluetoothGattCharacteristic characteristic) {
+    private void broadcastUpdate(String ignoredAction, final BluetoothGattCharacteristic characteristic) {
         UUID uuid = characteristic.getUuid();
         final int format_uint8 = BluetoothGattCharacteristic.FORMAT_UINT8;
         final int format_uint16 = BluetoothGattCharacteristic.FORMAT_UINT16;

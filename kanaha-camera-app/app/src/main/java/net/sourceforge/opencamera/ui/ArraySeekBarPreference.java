@@ -78,10 +78,15 @@ public class ArraySeekBarPreference extends DialogPreference {
                 seekbar.setProgress(index);
         }
         seekbar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            private long last_haptic_time;
+
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 String new_entry = entries[progress].toString();
                 textView.setText(new_entry);
+                if( fromUser ) {
+                    last_haptic_time = MainUI.performHapticFeedback(seekBar, last_haptic_time);
+                }
             }
 
             @Override
@@ -223,7 +228,7 @@ public class ArraySeekBarPreference extends DialogPreference {
         }
 
         public static final Parcelable.Creator<SavedState> CREATOR =
-                new Parcelable.Creator<SavedState>() {
+                new Parcelable.Creator<>() {
                     public SavedState createFromParcel(Parcel in) {
                         return new SavedState(in);
                     }

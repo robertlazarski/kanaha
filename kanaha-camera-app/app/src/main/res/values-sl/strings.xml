@@ -100,7 +100,7 @@
     <string name="preference_burst_interval">Razmik zaporednega načina</string>
     <string name="preference_screen_camera_controls_more">Več nastavitev fotoaparata …</string>
     <string name="preference_touch_capture">Dotik za zajem</string>
-    <string name="preference_touch_capture_summary">Posnemi fotografijo z dotikom ali dvojnim dotikom predogleda</string>
+    <string name="preference_touch_capture_summary">Posnemi fotografijo z dotikom ali dvojnim dotikom predogleda\n%s</string>
     <string name="preference_pause_preview">Premor po slikanju fotografije</string>
     <string name="preference_pause_preview_summary">Premor zaslona po slikanju fotografje z možnostjo deljenja ali izbrisa fotografije</string>
     <string name="preference_shutter_sound">Zvok zaklopa</string>
@@ -109,7 +109,7 @@
     <string name="preference_audio_control">Možnosti nadzora zvoka</string>
 	<!-- preference_audio_control_summary defined below -->
     <string name="preference_audio_noise_control_sensitivity">Nadzor občutljivosti zvoka</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Občutljivost ravni za možnost zvoka (glasen zvok)</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Občutljivost ravni za možnost zvoka (glasen zvok)\n%s</string>
     <string name="preference_save_location">Mesto za shranjevanje</string>
     <string name="preference_save_location_summary">Mapa za shranjevanje datotek fotografij/videoposnetkov</string>
     <string name="preference_using_saf_summary">Ali naj se za shranjevanje fotografij in videoposnetkov uporabi ogrodje za dostop do pomnilniške naprave.  Omogočite to, da dovolite shranjevanje na zunanje kartice SD.  Na Androidih 10+ morate to možnost omogočiti, če želite shranjevati v mapo zunaj mape DCIM.</string>
@@ -132,8 +132,6 @@
     <string name="preference_immersive_mode">Vdelan način</string>
     <string name="preference_show_zoom">Prikaži povečavo</string>
     <string name="preference_show_zoom_summary">Prikaži trenutno raven povečave na zaslonu (ob povečavi)</string>
-    <string name="preference_show_zoom_controls">Prikaži nadzorna gumba za povečavo -/+</string>
-    <string name="preference_show_zoom_controls_summary">Prikaži gumba -/+ za nadzor povečave</string>
     <string name="preference_show_zoom_slider_controls">Prikaži drsnik povečave</string>
     <string name="preference_show_zoom_slider_controls_summary">Prikaži drsnik za nadzor povečave</string>
     <string name="preference_show_iso">Prikaži ISO</string>
@@ -145,7 +143,7 @@
     <string name="preference_show_angle_line">Prikaži črto kota</string>
     <string name="preference_show_angle_line_summary">Prikaži črto vodoravne ravni</string>
     <string name="preference_angle_highlight_color">Barva poudarjanja kota/višine</string>
-    <string name="preference_angle_highlight_color_summary">Barva poudarjanja, ko je fotoaparat skoraj vodoraven</string>
+    <string name="preference_angle_highlight_color_summary">Barva poudarjanja, ko je fotoaparat skoraj vodoraven\n%s</string>
     <string name="preference_show_geo_direction">Prikaži smer neba</string>
     <string name="preference_show_geo_direction_summary">Na zaslonu prikaži smer neba naprave</string>
     <string name="preference_show_time">Prikaži čas</string>
@@ -176,9 +174,9 @@
     <string name="preference_quality_summary">Nastavite kakovost shranjenih slik JPEG ali WebP (privzeta vrednost je 90 %%).  Nima učinka na obliko PNG.\n%s</string> <!-- '%' is encoded as '%%' - a single % can crash devices, and this isn't picked up by Android Lint! -->
 	<string name="preference_raw">RAW</string>
     <string name="preference_location">Shrani podatke o lokaciji (označevanje z zemljepisno lego)</string>
-    <string name="preference_location_summary">Shrani podatke o lokaciji GPS v fotografijah/videoposnetkih (v fotografijah se podatki o lokaciji lahko shranijo samo pri oblikah JPEG in DNG)</string>
+    <string name="preference_location_summary">Shrani podatke o lokaciji GPS v fotografijah/videoposnetkih</string>
     <string name="preference_gps_direction">Shrani smer neba</string>
-    <string name="preference_gps_direction_summary">Shrani smer neba GPS v fotografijah (samo oblika JPEG)</string>
+    <string name="preference_gps_direction_summary">Shrani smer neba GPS v fotografijah (samo oblika JPEG/itd)</string>
     <string name="preference_require_location">Zahtevaj podatke o lokaciji</string>
     <string name="preference_require_location_summary">Če so podatki o lokaciji omogočeni, snemaj fotografije/videoposnetke samo, če so ti podatki na voljo</string>
     <string name="preference_stamp">Časovni žig fotografij</string>
@@ -225,8 +223,6 @@
     <string name="preference_category_online">Razno</string>
     <string name="preference_online_help">Spletna pomoč</string>
     <string name="preference_online_help_summary">Zaženi spletno stran Open Camera v brskalniku</string>
-    <string name="preference_donate">Daruj za podporo razvoju</string>
-    <string name="preference_donate_summary">Če vam je ta program všeč, razmislite o darovanju, da podprete razvoj.  To lahko naredite z nakupom mojega "programa za darovanje" - kliknite na to možnost za odpiranje strani z mojim programom. Hvala!</string>
     <string name="preference_use_camera2">Uporabi API Camera2</string>
     <string name="preference_use_camera2_summary">Omogoči dodatne značilnosti, kot so ročni načini za osvetlitev, ostrino, ravnovesje beline, kot tudi obliko RAW (če jo naprava podpira), vendar morda ne bo pravilno delovala na vseh napravah (lahko povzročijo ponovni zagon)</string>
     <string name="preference_about">O programu</string>
@@ -281,7 +277,7 @@
     <string name="audio_listener_started">Naredite glasen zvok.</string>
 	
 	<string name="auto_stabilise_info">Samodejna poravnava bo zavrtela fotografije, da bodo videti poravnane.\n\nUpoštevajte, da se bo ločljivost slik rahlo zmanjšala (zaradi zahtevanega vrtenja in obrezovanja).</string>
-    <string name="raw_info">Datoteke DNG vsebujejo nestisnjene in neobdelane podatke iz fotoaparata.\n\nVečina programov za galerijo ne prepozna oblike DNG, zato jo uporabljajte s posebnimi programi.\n\nUpoštevajte, da se bodo razne možnosti obdelave, kot sta "Dodaj žig" in "Samodejno izravnaj", uporabile samo za slike, ki niso v obliki DNG (JPEG itd.).</string>
+    <string name="raw_info">Datoteke DNG vsebujejo nestisnjene in neobdelane podatke iz fotoaparata.\n\nVečina programov za galerijo ne prepozna oblike DNG, zato jo uporabljajte s posebnimi programi.\n\nUpoštevajte, da se bodo razne možnosti obdelave, kot sta \"Dodaj žig\" in \"Samodejno izravnaj\", uporabile samo za slike, ki niso v obliki DNG (JPEG itd.).</string>
     <string name="hdr_info">Način HDR je uporaben za posnetke z velikimi odstopanji v svetlosti.  Deluje tako, da zajame več posnetkov z različnimi osvetlitvami in jih potem združi v končno sliko.\n\nUpoštevajte, da HDR ni primeren za hitro gibajoče prizore in lahko povzroči barvna odstopanja.\n\nSlikanje fotografij v načinu HDR je počasnejše.</string>
 
     <string name="dont_show_again">Ne prikazuj več</string>
@@ -303,11 +299,9 @@
     <string name="permission_rationale_title">Zahtevano je dovoljenje.</string>
     <string name="permission_rationale_camera">Za omogočanje fotoaparata je zahtevano dovoljenje za fotoaparat.</string>
     <string name="permission_rationale_record_audio">Za snemanje videoposnetkov z zvokom in uporabo možnosti \"Nadzor zvoka\" je zahtevano dovoljenje za mikrofon.</string>
-    <string name="permission_rationale_location">Za označevanje z zemljepisno lego (shranjevanje podatkov o zemljepisni legi
-		v fotografijah in videoposnetkih) je zahtevano dovoljenje za lokacijo.  To dovoljenje je zahtevano tudi za povezavo z napravami za oddaljeni nador Bluetooth LE  (Android 11 or earlier).</string>
+    <string name="permission_rationale_location">Za označevanje z zemljepisno lego (shranjevanje podatkov o zemljepisni legi v fotografijah in videoposnetkih) je zahtevano dovoljenje za lokacijo.</string>
 	
-	<string name="preference_category_photo_debugging">Možnosti razhroščevanja</string>
-	<string name="preference_category_video_debugging">Možnosti razhroščevanja</string>
+	<string name="preference_category_debugging">Možnosti razhroščevanja</string>
     <string name="preference_camera2_fake_flash">Uporabi nadomestni način bliskavice</string>
     <string name="preference_camera2_fake_flash_summary">Omogočite, če se vaša naprava neobičajno vede z API-jem Camera2</string>
 
@@ -439,8 +433,7 @@
     <string name="color_effect_whiteboard">Bela tabla</string>
 	
 	<string name="whats_new">Novosti:</string>
-    <string name="donate">Daruj</string>
-	
+
     <!-- for accessibility, these strings for face detection will typically be spoken, e.g., through Google Talkback -->
     <string name="face_detected">obraz</string>
     <string name="faces_detected">obrazi</string>
@@ -454,11 +447,11 @@
 
     <string name="preference_video_fps_default">Privzeta</string>
 	
-	<string name="preference_category_exif_tags">Oznake EXIF po meri</string>
+	<string name="preference_category_exif_tags">Oznake Exif po meri</string>
     <string name="preference_exif_artist">Avtor</string>
-    <string name="preference_exif_artist_summary">Besedilo, ki se shrani med metapodatke slike v oznako "Avtor" (samo oblika JPEG)</string>
+    <string name="preference_exif_artist_summary">Besedilo, ki se shrani med metapodatke slike v oznako \"Avtor\" (samo oblika JPEG/itd)</string>
     <string name="preference_exif_copyright">Avtorske pravice</string>
-    <string name="preference_exif_copyright_summary">Besedilo, ki se shrani med metapodatke slike v oznako "Avtorske pravice" (samo oblika JPEG)</string>
+    <string name="preference_exif_copyright_summary">Besedilo, ki se shrani med metapodatke slike v oznako \"Avtorske pravice\" (samo oblika JPEG/itd)</string>
 
     <string name="processing">Obdelovanje …</string>
 
@@ -703,7 +696,7 @@
     <string name="preference_audio_noise_control_sensitivity_m3">-3 (nizka občutljivost)</string>
 	
 	<string name="preference_hdr_contrast_enhancement">Izboljšava kontrasta HDR</string>
-    <string name="preference_hdr_contrast_enhancement_summary">Kdaj naj se uporabi algoritem za izboljšavo kontrasta v načinu HDR.  To lahko izboljša videz v primerih zelo visokega dinamičnega razpona prizora in rezultatom doda "HDR-videz".\n%s</string>
+    <string name="preference_hdr_contrast_enhancement_summary">Kdaj naj se uporabi algoritem za izboljšavo kontrasta v načinu HDR.  To lahko izboljša videz v primerih zelo visokega dinamičnega razpona prizora in rezultatom doda \"HDR-videz\".\n%s</string>
     <string name="preference_hdr_contrast_enhancement_off">Izk.</string>
     <string name="preference_hdr_contrast_enhancement_smart">Pametno</string>
     <string name="preference_hdr_contrast_enhancement_always">Vedno</string>
@@ -887,7 +880,7 @@
 
     <string name="exposure_compensation_seekbar">Iskalna vrstica za spremembo izravnave osvetlitve</string>
 
-    <string name="preference_image_format_summary">Izberite obliko datototek za shranjevanje fotografij.  To vpliva na fotografije v \"običajni\" obliki (ne v obliki RAW).  Samo oblika JPEG podpira shranjevanje metapodatkov Exif.  Upoštevajte, da oblika PNG ni popolnoma brezizgubna in se zaradi tega pretvori iz oblike JPEG pri 100 %% kakovosti.\n%s</string>
+    <string name="preference_image_format_summary">Izberite obliko datototek za shranjevanje fotografij.  To vpliva na fotografije v \"običajni\" obliki (ne v obliki RAW). Upoštevajte, da oblika PNG ni popolnoma brezizgubna in se zaradi tega pretvori iz oblike JPEG pri 100 %% kakovosti.\n%s</string>
 
     <string name="preference_camera_api">API fotoaparata</string>
     <string name="preference_camera_api_summary">Izberite API Camera2, da omogočite dodatne značilnosti, kot so ročni načini za osvetlitev, ostrino, ravnovesje beline, kot tudi obliko RAW (če jo naprava podpira).  Sprememba API-ja po ponovno zagnala program.\n%s</string>
@@ -898,16 +891,8 @@
         Ko je omogočeno, uporabite zaslonski gumb za mikrofon, da vklopite/izklopite zaznavo zvoka.
         \n%s</string>
 
-    <!-- beware of string being too long to display! -->
-    <string name="preference_stamp_geo_address_summary">Če je možno, pridobi naslov iz lokacij GPS (za žig na fotografijah ali podnapise v videoposnetkih).
-        Upoštevajte, da če je omogočena, bo naprava preko interneta tretjim osebam poslala podatke o lokaciji, da koordinate
-        GPS pretvori v naslov. Glejte https://developer.android.com/reference/android/location/Geocoder .
-        Ta funkcija ne zagotavlja nobenih zagotovil glede razpoložljivosti ali točnosti. Ni zagotovljeno, da bodo rezultati smiselni ali pravilni.
-        \n%s</string>
-
     <string name="intro_text">Dotaknite se za izostritev in pritisnite moder gumb za fotoaparat, da posnamete fotografijo.
-        \n\nZa onemogočanje največje svetlosti zaslona glejte Nastavitve/Gr. up. vmesnik na zaslonu/\"Vsili največjo svetlost\".
-        Za shranjevanje na kartico SD na Androidih 5+ glejte Nastavitve/Več nastavitev fotoaparata/\"Storage Access Framework\".
+        \n\nZa shranjevanje na kartico SD na Androidih 5+ glejte Nastavitve/Več nastavitev fotoaparata/\"Storage Access Framework\".
         Za pomoč kliknite \"Spletna pomoč\" v nastavitvah.
     </string>
 
@@ -930,7 +915,6 @@
     <string name="preference_video_profile_gamma_2_8">2,8</string>
 
     <string name="preference_immersive_mode_off">Izk.</string>
-	<string name="preference_immersive_mode_low_profile">Zatemni samo zaslonnske navidezne gumbe za krmarjenje</string>
     <string name="preference_immersive_mode_navigation">Skrij samo zaslonske navidezne gumbe za krmarjenje</string>
     <string name="preference_immersive_mode_gui">Skrij gr. up. vmsnik</string>
     <string name="preference_immersive_mode_everything">Skrij vse</string>
@@ -972,7 +956,7 @@
     <string name="error_features_slow_motion">Počasni posnetek</string>
 
     <string name="preference_comment_ypr">Shrani odklon, naklon in nagib</string>
-    <string name="preference_comment_ypr_summary">V uporabniško opombo Exif v fotografiji shrani odklon, naklon in nagib naprave (samo oblika JPEG)</string>
+    <string name="preference_comment_ypr_summary">V uporabniško opombo Exif v fotografiji shrani odklon, naklon in nagib naprave (samo oblika JPEG/itd)</string>
 
     <string name="array_seekbar_preference_seekbar">Iskalna vrstica za spremembo trenutne vrednosti nastavitve</string>
 

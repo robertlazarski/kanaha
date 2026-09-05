@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string-array name="focus_mode_icons">
-        <item>drawable/focus_mode_auto</item>
-        <item>drawable/focus_mode_infinity</item>
-        <item>drawable/baseline_filter_vintage_white_48</item>
-        <item>drawable/focus_mode_locked</item>
-        <item>drawable/focus_mode_manual</item>
-        <item>drawable/focus_mode_fixed</item>
-        <item>drawable/focus_mode_edof</item>
-        <item>drawable/focus_mode_continuous_picture</item>
-        <item>drawable/focus_mode_continuous_video</item>
-    </string-array>
+    <array name="focus_mode_icons">
+        <item>@drawable/focus_mode_auto</item>
+        <item>@drawable/focus_mode_infinity</item>
+        <item>@drawable/baseline_filter_vintage_white_48</item>
+        <item>@drawable/focus_mode_locked</item>
+        <item>@drawable/focus_mode_manual</item>
+        <item>@drawable/focus_mode_fixed</item>
+        <item>@drawable/focus_mode_edof</item>
+        <item>@drawable/focus_mode_continuous_picture</item>
+        <item>@drawable/focus_mode_continuous_video</item>
+    </array>
     <string-array name="focus_mode_entries">
         <item>Focus Auto</item>
         <item>Focus Infinity</item>
@@ -499,16 +499,16 @@
         <item>150</item>
         <item>200</item>
     </string-array>
-    <string-array name="flash_icons">
-        <item>drawable/flash_off</item>
-        <item>drawable/flash_auto</item>
-        <item>drawable/flash_on</item>
-        <item>drawable/baseline_highlight_white_48</item>
-        <item>drawable/baseline_remove_red_eye_white_48</item>
-        <item>drawable/flash_auto</item>
-        <item>drawable/flash_on</item>
-        <item>drawable/baseline_highlight_white_48</item>
-    </string-array>
+    <array name="flash_icons">
+        <item>@drawable/flash_off</item>
+        <item>@drawable/flash_auto</item>
+        <item>@drawable/flash_on</item>
+        <item>@drawable/baseline_highlight_white_48</item>
+        <item>@drawable/baseline_remove_red_eye_white_48</item>
+        <item>@drawable/flash_auto</item>
+        <item>@drawable/flash_on</item>
+        <item>@drawable/baseline_highlight_white_48</item>
+    </array>
     <string-array name="flash_entries">
         <item>@string/flash_off</item>
         <item>@string/flash_auto</item>
@@ -538,14 +538,6 @@
         <item>preference_ghost_image_off</item>
         <item>preference_ghost_image_last</item>
         <item>preference_ghost_image_selected</item>
-    </string-array>
-    <string-array name="preference_ghost_image_entries_preandroid5">
-        <item>@string/preference_ghost_image_off</item>
-        <item>@string/preference_ghost_image_last</item>
-    </string-array>
-    <string-array name="preference_ghost_image_values_preandroid5">
-        <item>preference_ghost_image_off</item>
-        <item>preference_ghost_image_last</item>
     </string-array>
     <string-array name="preference_video_log_entries">
         <item>@string/preference_video_log_off</item>
@@ -812,6 +804,8 @@
         <item>@string/preference_crop_guide_2_33</item>
         <item>@string/preference_crop_guide_2_35</item>
         <item>@string/preference_crop_guide_2_4</item>
+        <item>@string/preference_crop_guide_2_71</item>
+        <item>@string/preference_crop_guide_3</item>
     </string-array>
     <string-array name="preference_crop_guide_values">
         <item>crop_guide_none</item>
@@ -826,6 +820,8 @@
         <item>crop_guide_2.33</item>
         <item>crop_guide_2.35</item>
         <item>crop_guide_2.4</item>
+        <item>crop_guide_2.71</item>
+        <item>crop_guide_3</item>
     </string-array>
     <string-array name="preference_audio_noise_control_sensitivity_entries">
         <item>@string/preference_audio_noise_control_sensitivity_m3</item>
@@ -861,10 +857,22 @@
     </string-array>
     <string-array name="preference_image_format_entries">
         <item>@string/preference_image_format_jpeg</item>
+        <item>@string/preference_image_format_jpeg_r</item>
         <item>@string/preference_image_format_webp</item>
         <item>@string/preference_image_format_png</item>
     </string-array>
     <string-array name="preference_image_format_values">
+        <item>preference_image_format_jpeg</item>
+        <item>preference_image_format_jpeg_r</item>
+        <item>preference_image_format_webp</item>
+        <item>preference_image_format_png</item>
+    </string-array>
+    <string-array name="preference_image_format_entries_nojpegr">
+        <item>@string/preference_image_format_jpeg</item>
+        <item>@string/preference_image_format_webp</item>
+        <item>@string/preference_image_format_png</item>
+    </string-array>
+    <string-array name="preference_image_format_values_nojpegr">
         <item>preference_image_format_jpeg</item>
         <item>preference_image_format_webp</item>
         <item>preference_image_format_png</item>
@@ -892,6 +900,14 @@
     </string-array>
     <string-array name="preference_remote_type_values">
         <item>preference_remote_type_kraken</item>
+    </string-array>
+    <string-array name="preference_remote_video_mode_entries">
+        <item>@string/preference_remote_video_mode_standard</item>
+        <item>@string/preference_remote_video_mode_pause</item>
+    </string-array>
+    <string-array name="preference_remote_video_mode_values">
+        <item>preference_remote_video_mode_standard</item>
+        <item>preference_remote_video_mode_pause</item>
     </string-array>
     <string-array name="preference_stamp_geo_address_entries">
         <item>@string/preference_stamp_geo_address_both</item>
@@ -972,14 +988,12 @@
     </string-array>
     <string-array name="preference_immersive_mode_entries">
         <item>@string/preference_immersive_mode_off</item>
-        <item>@string/preference_immersive_mode_low_profile</item>
         <item>@string/preference_immersive_mode_navigation</item>
         <item>@string/preference_immersive_mode_gui</item>
         <item>@string/preference_immersive_mode_everything</item>
     </string-array>
     <string-array name="preference_immersive_mode_values">
         <item>immersive_mode_off</item>
-        <item>immersive_mode_low_profile</item>
         <item>immersive_mode_navigation</item>
         <item>immersive_mode_gui</item>
         <item>immersive_mode_everything</item>
@@ -1019,5 +1033,31 @@
         <item>preference_remove_device_exif_off</item>
         <item>preference_remove_device_exif_on</item>
         <item>preference_remove_device_exif_keep_datetime</item>
+    </string-array>
+    <string-array name="preference_photo_optimise_focus_entries">
+        <item>@string/preference_photo_optimise_focus_latency</item>
+        <item>@string/preference_photo_optimise_focus_quality</item>
+    </string-array>
+    <string-array name="preference_photo_optimise_focus_values">
+        <item>preference_photo_optimise_focus_latency</item>
+        <item>preference_photo_optimise_focus_quality</item>
+    </string-array>
+    <string-array name="preference_save_preshots_entries">
+        <item>@string/off</item>
+        <item>@string/on</item>
+    </string-array>
+    <string-array name="preference_save_preshots_values">
+        <item>preference_save_preshots_off</item>
+        <item>preference_save_preshots_on</item>
+    </string-array>
+    <string-array name="preference_gallery_entries">
+        <item>@string/preference_gallery_include_legacy</item>
+        <item>@string/preference_gallery_exclude_legacy</item>
+        <item>@string/preference_gallery_all_editors</item>
+    </string-array>
+    <string-array name="preference_gallery_values">
+        <item>preference_gallery_include_legacy</item>
+        <item>preference_gallery_exclude_legacy</item>
+        <item>preference_gallery_all_editors</item>
     </string-array>
 </resources>

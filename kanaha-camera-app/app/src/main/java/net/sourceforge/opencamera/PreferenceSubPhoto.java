@@ -31,6 +31,9 @@ public class PreferenceSubPhoto extends PreferenceSubScreen {
         final int cameraId = bundle.getInt("cameraId");
         if( MyDebug.LOG )
             Log.d(TAG, "cameraId: " + cameraId);
+        final String cameraIdSPhysical = bundle.getString("cameraIdSPhysical");
+        if( MyDebug.LOG )
+            Log.d(TAG, "cameraIdSPhysical: " + cameraIdSPhysical);
 
         final boolean using_android_l = bundle.getBoolean("using_android_l");
         if( MyDebug.LOG )
@@ -40,12 +43,24 @@ public class PreferenceSubPhoto extends PreferenceSubScreen {
         final int [] heights = bundle.getIntArray("resolution_heights");
         final boolean [] supports_burst = bundle.getBooleanArray("resolution_supports_burst");
 
+        final boolean supports_jpeg_r = bundle.getBoolean("supports_jpeg_r");
+        if( MyDebug.LOG )
+            Log.d(TAG, "supports_jpeg_r: " + supports_jpeg_r);
+
         final boolean supports_raw = bundle.getBoolean("supports_raw");
         if( MyDebug.LOG )
             Log.d(TAG, "supports_raw: " + supports_raw);
         final boolean supports_burst_raw = bundle.getBoolean("supports_burst_raw");
         if( MyDebug.LOG )
             Log.d(TAG, "supports_burst_raw: " + supports_burst_raw);
+
+        final boolean supports_optimise_focus_latency = bundle.getBoolean("supports_optimise_focus_latency");
+        if( MyDebug.LOG )
+            Log.d(TAG, "supports_optimise_focus_latency: " + supports_optimise_focus_latency);
+
+        final boolean supports_preshots = bundle.getBoolean("supports_preshots");
+        if( MyDebug.LOG )
+            Log.d(TAG, "supports_preshots: " + supports_preshots);
 
         final boolean supports_nr = bundle.getBoolean("supports_nr");
         if( MyDebug.LOG )
@@ -81,7 +96,7 @@ public class PreferenceSubPhoto extends PreferenceSubScreen {
             ListPreference lp = (ListPreference)findPreference("preference_resolution");
             lp.setEntries(entries);
             lp.setEntryValues(values);
-            String resolution_preference_key = PreferenceKeys.getResolutionPreferenceKey(cameraId);
+            String resolution_preference_key = PreferenceKeys.getResolutionPreferenceKey(cameraId, cameraIdSPhysical);
             String resolution_value = sharedPreferences.getString(resolution_preference_key, "");
             if( MyDebug.LOG )
                 Log.d(TAG, "resolution_value: " + resolution_value);
@@ -101,12 +116,18 @@ public class PreferenceSubPhoto extends PreferenceSubScreen {
             CharSequence [] entries = new CharSequence[n_quality];
             CharSequence [] values = new CharSequence[n_quality];
             for(int i=0;i<n_quality;i++) {
-                entries[i] = "" + (i+1) + "%";
-                values[i] = "" + (i+1);
+                entries[i] = (i+1) + "%";
+                values[i] = String.valueOf(i + 1);
             }
             ArraySeekBarPreference sp = (ArraySeekBarPreference)findPreference("preference_quality");
             sp.setEntries(entries);
             sp.setEntryValues(values);
+        }
+
+        if( !supports_jpeg_r ) {
+            ListPreference pref = (ListPreference)findPreference("preference_image_format");
+            pref.setEntries(R.array.preference_image_format_entries_nojpegr);
+            pref.setEntryValues(R.array.preference_image_format_values_nojpegr);
         }
 
         if( !supports_raw ) {
@@ -172,6 +193,18 @@ public class PreferenceSubPhoto extends PreferenceSubScreen {
             Preference pref = findPreference("preference_raw_expo_bracketing");
             pg.removePreference(pref);
             pref = findPreference("preference_raw_focus_bracketing");
+            pg.removePreference(pref);
+        }
+
+        if( !supports_optimise_focus_latency ) {
+            PreferenceGroup pg = (PreferenceGroup)this.findPreference("preferences_root");
+            Preference pref = findPreference("preference_photo_optimise_focus");
+            pg.removePreference(pref);
+        }
+
+        if( !supports_preshots ) {
+            PreferenceGroup pg = (PreferenceGroup)this.findPreference("preferences_root");
+            Preference pref = findPreference("preference_save_preshots");
             pg.removePreference(pref);
         }
 

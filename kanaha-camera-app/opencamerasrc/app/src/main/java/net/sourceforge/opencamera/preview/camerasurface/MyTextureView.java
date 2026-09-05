@@ -47,9 +47,7 @@ public class MyTextureView extends TextureView implements CameraSurface {
             camera_controller.setPreviewTexture(this);
         }
         catch(CameraControllerException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "Failed to set preview display: " + e.getMessage());
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to set preview display", e);
         }
     }
 

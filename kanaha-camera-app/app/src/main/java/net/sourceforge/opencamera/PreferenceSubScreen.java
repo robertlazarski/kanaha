@@ -7,6 +7,7 @@ import android.preference.Preference;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceManager;
 import android.util.Log;
+import android.view.View;
 
 import java.util.HashSet;
 
@@ -14,6 +15,8 @@ import java.util.HashSet;
  */
 public class PreferenceSubScreen extends PreferenceFragment implements SharedPreferences.OnSharedPreferenceChangeListener {
     private static final String TAG = "PreferenceSubScreen";
+
+    private boolean edge_to_edge_mode = false;
 
     // see note for dialogs in MyPreferenceFragment
     protected final HashSet<AlertDialog> dialogs = new HashSet<>();
@@ -24,8 +27,20 @@ public class PreferenceSubScreen extends PreferenceFragment implements SharedPre
             Log.d(TAG, "onCreate");
         super.onCreate(savedInstanceState);
 
+        final Bundle bundle = getArguments();
+        this.edge_to_edge_mode = bundle.getBoolean("edge_to_edge_mode");
+
         if( MyDebug.LOG )
             Log.d(TAG, "onCreate done");
+    }
+
+    @Override
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+
+        if( edge_to_edge_mode ) {
+            MyPreferenceFragment.handleEdgeToEdge(view);
+        }
     }
 
     @Override

@@ -40,6 +40,15 @@ public class PreferenceKeys {
     public static final String CameraAPIPreferenceDefault = "preference_camera_api_old";
     public static final String CameraAPIPreferenceKey = "preference_camera_api";
 
+    private static String getCameraIDKey(int cameraId, String cameraIdSPhysical) {
+        if( cameraIdSPhysical != null )
+            return cameraId + "_" + cameraIdSPhysical;
+        else
+            return String.valueOf(cameraId);
+    }
+
+    // don't set to be specific for physical cameras, as too confusing to have lots of different flash preferences
+    // also in Preview, we don't save the flash back if not supported
     public static String getFlashPreferenceKey(int cameraId) {
         return "flash_value_" + cameraId;
     }
@@ -50,13 +59,15 @@ public class PreferenceKeys {
 
     public static final String FocusAssistPreferenceKey = "preference_focus_assist";
 
-    public static String getResolutionPreferenceKey(int cameraId) {
-        return "camera_resolution_" + cameraId;
+    public static String getResolutionPreferenceKey(int cameraId, String cameraIdSPhysical) {
+        return "camera_resolution_" + getCameraIDKey(cameraId, cameraIdSPhysical);
     }
 
-    public static String getVideoQualityPreferenceKey(int cameraId, boolean high_speed) {
-        return "video_quality_" + cameraId + (high_speed ? "_highspeed" : "");
+    public static String getVideoQualityPreferenceKey(int cameraId, String cameraIdSPhysical, boolean high_speed) {
+        return "video_quality_" + getCameraIDKey(cameraId, cameraIdSPhysical) + (high_speed ? "_highspeed" : "");
     }
+
+    public static final String OptimiseFocusPreferenceKey = "preference_photo_optimise_focus";
 
     public static final String ImageFormatPreferenceKey = "preference_image_format";
 
@@ -99,6 +110,8 @@ public class PreferenceKeys {
     public static final String FocusDistancePreferenceKey = "preference_focus_distance";
 
     public static final String FocusBracketingTargetDistancePreferenceKey = "preference_focus_bracketing_target_distance";
+
+    public static final String FocusBracketingAutoSourceDistancePreferenceKey = "preference_focus_bracketing_auto_source_distance";
 
     public static final String FocusBracketingNImagesPreferenceKey = "preference_focus_bracketing_n_images";
 
@@ -168,6 +181,8 @@ public class PreferenceKeys {
 
     public static final String RemoteType = "preference_remote_type";
 
+    public static final String RemoteVideoMode = "preference_remote_video_mode";
+
     public static final String WaterType = "preference_water_type";
 
     //public static final String BackgroundPhotoSavingPreferenceKey = "preference_background_photo_saving";
@@ -193,6 +208,8 @@ public class PreferenceKeys {
     public static final String TakePhotoBorderPreferenceKey = "preference_take_photo_border";
 
     public static final String DimWhenDisconnectedPreferenceKey = "preference_remote_disconnect_screen_dim";
+
+    public static final String AllowHapticFeedbackPreferenceKey = "preference_allow_haptic_feedback";
 
     public static final String ShowWhenLockedPreferenceKey = "preference_show_when_locked";
 
@@ -222,13 +239,17 @@ public class PreferenceKeys {
 
     public static final String SaveZuluTimePreferenceKey = "preference_save_zulu_time";
 
-    public static final String ShowZoomControlsPreferenceKey = "preference_show_zoom_controls";
+    public static final String SaveIncludeMillisecondsPreferenceKey = "preference_save_include_milliseconds";
 
     public static final String ShowZoomSliderControlsPreferenceKey = "preference_show_zoom_slider_controls";
 
     public static final String ShowTakePhotoPreferenceKey = "preference_show_take_photo";
 
     public static final String ShowFaceDetectionPreferenceKey = "preference_show_face_detection";
+
+    public static final String ShowCycleLockOrientationPreferenceKey = "preference_show_cycle_lock_orientation";
+
+    public static final String ShowPreviewShotsPreferenceKey = "preference_show_preview_shots";
 
     public static final String ShowCycleFlashPreferenceKey = "preference_show_cycle_flash";
 
@@ -263,6 +284,8 @@ public class PreferenceKeys {
     public static final String FocusPeakingPreferenceKey = "preference_focus_peaking";
 
     public static final String FocusPeakingColorPreferenceKey = "preference_focus_peaking_color";
+
+    public static final String PreShotsPreferenceKey = "preference_save_preshots";
 
     public static final String ShowVideoMaxAmpPreferenceKey = "preference_show_video_max_amp";
 
@@ -308,14 +331,14 @@ public class PreferenceKeys {
 
     public static final String VideoBitratePreferenceKey = "preference_video_bitrate";
 
-    public static String getVideoFPSPreferenceKey(int cameraId) {
-        // for cameraId==0, we return preference_video_fps instead of preference_video_fps_0, for
+    public static String getVideoFPSPreferenceKey(int cameraId, String cameraIdSPhysical) {
+        // for cameraId==0 and cameraIdSPhysical==null, we return preference_video_fps instead of preference_video_fps_0, for
         // backwards compatibility for people upgrading
-        return "preference_video_fps" + ((cameraId==0) ? "" : ("_"+cameraId));
+        return "preference_video_fps" + ((cameraId==0 && cameraIdSPhysical==null) ? "" : ("_"+getCameraIDKey(cameraId, cameraIdSPhysical)));
     }
 
-    public static String getVideoCaptureRatePreferenceKey(int cameraId) {
-        return "preference_capture_rate_" + cameraId;
+    public static String getVideoCaptureRatePreferenceKey(int cameraId, String cameraIdSPhysical) {
+        return "preference_capture_rate_" + getCameraIDKey(cameraId, cameraIdSPhysical);
     }
 
     public static final String VideoLogPreferenceKey = "preference_video_log";
@@ -366,4 +389,6 @@ public class PreferenceKeys {
 
     public static final String ImmersiveModePreferenceKey = "preference_immersive_mode";
     public static final String AddYPRToComments="preference_comment_ypr";
+
+    public static final String GalleryPreferenceKey = "preference_gallery";
 }

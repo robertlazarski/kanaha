@@ -66,9 +66,7 @@ public class MySurfaceView extends SurfaceView implements CameraSurface {
             camera_controller.setPreviewDisplay(this.getHolder());
         }
         catch(CameraControllerException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "Failed to set preview display: " + e.getMessage());
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to set preview display", e);
         }
     }
 

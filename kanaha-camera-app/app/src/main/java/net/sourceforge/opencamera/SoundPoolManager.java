@@ -4,7 +4,6 @@ import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.SoundPool;
-import android.os.Build;
 import android.util.Log;
 import android.util.SparseIntArray;
 
@@ -26,7 +25,7 @@ class SoundPoolManager {
         if( sound_pool == null ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "create new sound_pool");
-            if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
+            {
                 AudioAttributes audio_attributes = new AudioAttributes.Builder()
                     .setLegacyStreamType(AudioManager.STREAM_SYSTEM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -35,9 +34,6 @@ class SoundPoolManager {
                     .setMaxStreams(1)
                     .setAudioAttributes(audio_attributes)
                     .build();
-            }
-            else {
-                sound_pool = new SoundPool(1, AudioManager.STREAM_SYSTEM, 0);
             }
             sound_ids = new SparseIntArray();
         }

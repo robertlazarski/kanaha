@@ -100,7 +100,7 @@
     <string name="preference_burst_interval">Khoảng thời gian chụp liên tục</string>
     <string name="preference_screen_camera_controls_more">Thêm tùy chọn điều khiển máy ảnh</string>
     <string name="preference_touch_capture">Chạm để chụp</string>
-    <string name="preference_touch_capture_summary">Chụp ảnh bằng cách chạm đơn hoặc chạm đúp vào bản xem trước</string>
+    <string name="preference_touch_capture_summary">Chụp ảnh bằng cách chạm đơn hoặc chạm đúp vào bản xem trước\n%s</string>
     <string name="preference_pause_preview">Tạm dừng sau khi chụp</string>
     <string name="preference_pause_preview_summary">Dừng màn hình sau khi chụp, hiện tùy chọn chia sẻ hoặc xóa ảnh</string>
     <string name="preference_shutter_sound">Âm chụp</string>
@@ -108,7 +108,7 @@
     <string name="preference_volume_keys">Phím âm lượng</string>
     <string name="preference_audio_control">Chụp bằng tiếng</string>
     <string name="preference_audio_noise_control_sensitivity">Độ nhạy chụp bằng tiếng</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Độ nhạy cho tùy chọn chụp bằng tiếng động lớn</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Độ nhạy cho tùy chọn chụp bằng tiếng động lớn\n%s</string>
     <string name="preference_save_location">Vị trí lưu</string>
     <string name="preference_save_location_summary">Thư mục lưu tệp tin ảnh/video</string>
     <string name="preference_using_saf_summary">Sử dụng Khung Truy cập Lưu trữ để lưu ảnh và video. Nên kích hoạt để có thể lưu vào thẻ nhớ ngoài.</string>
@@ -131,8 +131,6 @@
     <string name="preference_immersive_mode">Chế độ toàn màn hình</string>
     <string name="preference_show_zoom">Hiển thị mức thu phóng</string>
     <string name="preference_show_zoom_summary">Hiện mức thu phóng hiện tại của máy ảnh trên màn hình (khi phóng to)</string>
-    <string name="preference_show_zoom_controls">Hiển thị nút thu phóng</string>
-    <string name="preference_show_zoom_controls_summary">Hiện nút -/+ để điều khiển thu phóng</string>
     <string name="preference_show_zoom_slider_controls">Hiển thị thanh thu phóng</string>
     <string name="preference_show_zoom_slider_controls_summary">Hiện thanh trượt để điều khiển thu phóng</string>
     <string name="preference_show_iso">Hiển thị ISO</string>
@@ -144,7 +142,7 @@
     <string name="preference_show_angle_line">Hiển thị đường góc</string>
     <string name="preference_show_angle_line_summary">Hiện đường ngang</string>
     <string name="preference_angle_highlight_color">Làm nổi bật góc/độ cao</string>
-    <string name="preference_angle_highlight_color_summary">Tô màu khi máy ảnh ở mức gần</string>
+    <string name="preference_angle_highlight_color_summary">Tô màu khi máy ảnh ở mức gần\n%s</string>
     <string name="preference_show_geo_direction">Hiển thị hướng la bàn</string>
     <string name="preference_show_geo_direction_summary">Hiện hướng la bàn của thiết bị trên màn hình</string>
     <string name="preference_show_time">Hiển thị thời gian</string>
@@ -175,9 +173,9 @@
     <string name="preference_quality_summary">Thiết lập chất lượng hình ảnh khi lưu tệp JPEG hoặc WebP (giá trị mặc định là 90%%). Không áp dụng cho định dạng hình ảnh PNG.\n%s</string> <!-- '%' is encoded as '%%' - a single % can crash devices, and this isn't picked up by Android Lint! -->
     <string name="preference_raw">RAW</string>
     <string name="preference_location">Lưu dữ liệu vị trí (gắn thẻ địa lý)</string>
-    <string name="preference_location_summary">Lưu trữ dữ liệu vị trí GPS trong ảnh và video (đối với ảnh, dữ liệu vị trí chỉ có thể được lưu trữ ở định dạng JPEG và DNG)</string>
+    <string name="preference_location_summary">Lưu trữ dữ liệu vị trí GPS trong ảnh và video</string>
     <string name="preference_gps_direction">Lưu hướng la bàn</string>
-    <string name="preference_gps_direction_summary">Lưu trữ hướng la bàn GPS trong ảnh (chỉ định dạng JPEG)</string>
+    <string name="preference_gps_direction_summary">Lưu trữ hướng la bàn GPS trong ảnh (chỉ định dạng JPEG, v.v.)</string>
     <string name="preference_require_location">Yêu cầu dữ liệu vị trí</string>
     <string name="preference_require_location_summary">Khi dữ liệu vị trí được kích hoạt, chỉ có thể chụp ảnh/quay video nếu dữ liệu vị trí khả dụng</string>
     <string name="preference_stamp">Đóng dấu hình ảnh</string>
@@ -224,8 +222,6 @@
     <string name="preference_category_online">Xem thêm</string>
     <string name="preference_online_help">Trợ giúp trực tuyến</string>
     <string name="preference_online_help_summary">Truy cập trang chủ Open Camera bằng trình duyệt của bạn</string>
-    <string name="preference_donate">Hỗ trợ phát triển</string>
-    <string name="preference_donate_summary">Nếu bạn thích ứng dụng này, vui lòng cân nhắc việc quyên góp để hỗ trợ phát triển. Bạn có thể quyên góp bằng cách mua ứng dụng quyên góp của tôi - nhấn vào đây để mở trang ứng dụng. Xin cảm ơn!</string>
     <string name="preference_use_camera2">Sử dụng Camera2 API</string>
     <string name="preference_use_camera2_summary">Kích hoạt các tính năng bổ sung như chế độ thủ công với các tùy chọn phơi sáng, lấy nét, cân bằng trắng và lưu ảnh RAW (nếu được hỗ trợ), có thể không hoạt động trên một số thiết bị (ứng dụng sẽ khởi động lại)</string>
     <string name="preference_about">Giới thiệu</string>
@@ -304,8 +300,7 @@
     <string name="permission_rationale_camera">Quyền máy ảnh cần được cấp phép để kích hoạt máy ảnh</string>
     <string name="permission_rationale_record_audio">Quyền micrô cần được cấp phép để quay video với âm thanh, cũng như sử dụng các tùy chọn Điều khiển âm thanh</string>
 
-    <string name="preference_category_photo_debugging">Tùy chọn gỡ lỗi</string>
-    <string name="preference_category_video_debugging">Tùy chọn gỡ lỗi</string>
+    <string name="preference_category_debugging">Tùy chọn gỡ lỗi</string>
     <string name="preference_camera2_fake_flash">Sử dụng phương thức thay thế flash</string>
     <string name="preference_camera2_fake_flash_summary">Kích hoạt tính năng này nếu thiết bị của bạn gặp sự cố flash với Camera2 API</string>
 
@@ -437,7 +432,6 @@
     <string name="color_effect_whiteboard">Bảng trắng</string>
 
     <string name="whats_new">Có gì mới:</string>
-    <string name="donate">Quyên góp</string>
 
     <!-- for accessibility, these strings for face detection will typically be spoken, e.g., through Google Talkback -->
     <string name="face_detected">khuôn mặt</string>
@@ -452,11 +446,11 @@
 
     <string name="preference_video_fps_default">Mặc định</string>
 
-    <string name="preference_category_exif_tags">Tùy chỉnh thẻ EXIF</string>
+    <string name="preference_category_exif_tags">Tùy chỉnh thẻ Exif</string>
     <string name="preference_exif_artist">Nghệ sĩ</string>
-    <string name="preference_exif_artist_summary">Văn bản được lưu trữ trong thẻ Nghệ sĩ (chỉ định dạng JPEG, để trống là không ghi)</string>
+    <string name="preference_exif_artist_summary">Văn bản được lưu trữ trong thẻ Nghệ sĩ (chỉ định dạng JPEG, v.v., để trống là không ghi)</string>
     <string name="preference_exif_copyright">Bản quyền</string>
-    <string name="preference_exif_copyright_summary">Văn bản được lưu trữ trong thẻ Bản quyền (chỉ định dạng JPEG, để trống là không ghi)</string>
+    <string name="preference_exif_copyright_summary">Văn bản được lưu trữ trong thẻ Bản quyền (chỉ định dạng JPEG, v.v., để trống là không ghi)</string>
 
     <string name="processing">Đang xử lý…</string>
 

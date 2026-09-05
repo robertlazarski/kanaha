@@ -3,7 +3,7 @@ package net.sourceforge.opencamera;
 import net.sourceforge.opencamera.cameracontroller.CameraController;
 import net.sourceforge.opencamera.cameracontroller.RawImage;
 
-import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
@@ -14,45 +14,31 @@ import java.io.OutputStream;
 import java.io.StringWriter;
 import java.io.Writer;
 import java.nio.charset.Charset;
-import java.text.SimpleDateFormat;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
-import java.util.Locale;
-import java.util.TimeZone;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Matrix;
-import android.graphics.Paint;
-import android.graphics.Paint.Align;
-//import android.location.Address; // don't use until we have info for data privacy!
-//import android.location.Geocoder; // don't use until we have info for data privacy!
 import android.location.Location;
-import androidx.exifinterface.media.ExifInterface;
+
 import android.net.Uri;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.util.Log;
-import android.util.TypedValue;
+import android.util.Range;
 import android.util.Xml;
-import android.view.Gravity;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlSerializer;
@@ -66,11 +52,12 @@ public class ImageSaver extends Thread {
     static final String nr_suffix = "_NR";
     static final String pano_suffix = "_PANO";
 
-    private final Paint p = new Paint();
-
     private final MainActivity main_activity;
+
+    // components
     private final HDRProcessor hdrProcessor;
     private final PanoramaProcessor panoramaProcessor;
+    private final PostProcessing postProcessing;
 
     /* We use a separate count n_images_to_save, rather than just relying on the queue size, so we can take() an image from queue,
      * but only decrement the count when we've finished saving the image.
@@ -133,6 +120,7 @@ public class ImageSaver extends Thread {
          * If process_type==NORMAL, then multiple images are saved sequentially.
          */
         final List<byte []> jpeg_images;
+        final List<Bitmap> preshot_bitmaps; // if non-null, bitmaps for preshots; bitmaps will be recycled once processed
         final RawImage raw_image; // for raw
         final boolean image_capture_intent;
         final Uri image_capture_intent_uri;
@@ -194,6 +182,7 @@ public class ImageSaver extends Thread {
                 int suffix_offset,
                 SaveBase save_base,
                 List<byte []> jpeg_images,
+                List<Bitmap> preshot_bitmaps,
                 RawImage raw_image,
                 boolean image_capture_intent, Uri image_capture_intent_uri,
                 boolean using_camera2, boolean using_camera_extensions,
@@ -223,6 +212,7 @@ public class ImageSaver extends Thread {
             this.suffix_offset = suffix_offset;
             this.save_base = save_base;
             this.jpeg_images = jpeg_images;
+            this.preshot_bitmaps = preshot_bitmaps;
             this.raw_image = raw_image;
             this.image_capture_intent = image_capture_intent;
             this.image_capture_intent_uri = image_capture_intent_uri;
@@ -274,6 +264,7 @@ public class ImageSaver extends Thread {
                     this.suffix_offset,
                     this.save_base,
                     this.jpeg_images,
+                    this.preshot_bitmaps,
                     this.raw_image,
                     this.image_capture_intent, this.image_capture_intent_uri,
                     this.using_camera2, this.using_camera_extensions,
@@ -310,8 +301,7 @@ public class ImageSaver extends Thread {
 
         this.hdrProcessor = new HDRProcessor(main_activity, main_activity.is_test);
         this.panoramaProcessor = new PanoramaProcessor(main_activity, hdrProcessor);
-
-        p.setAntiAlias(true);
+        this.postProcessing = new PostProcessing(main_activity);
     }
 
     /** Returns the length of the image saver queue. In practice, the number of images that can be taken at once before the UI
@@ -499,6 +489,7 @@ public class ImageSaver extends Thread {
                     Request.SaveBase.SAVEBASE_NONE,
                     null,
                     null,
+                    null,
                     false, null,
                     false, false,
                     Request.ImageFormat.STD, 0,
@@ -611,9 +602,7 @@ public class ImageSaver extends Thread {
                 }
             }
             catch(InterruptedException e) {
-                e.printStackTrace();
-                if( MyDebug.LOG )
-                    Log.e(TAG, "interrupted while trying to read from ImageSaver queue");
+                MyDebug.logStackTrace(TAG, "interrupted while trying to read from ImageSaver queue", e);
             }
         }
         if( MyDebug.LOG )
@@ -632,6 +621,7 @@ public class ImageSaver extends Thread {
                           int suffix_offset,
                           boolean save_expo,
                           List<byte []> images,
+                          List<Bitmap> preshot_bitmaps,
                           boolean image_capture_intent, Uri image_capture_intent_uri,
                           boolean using_camera2, boolean using_camera_extensions,
                           Request.ImageFormat image_format, int image_quality,
@@ -666,6 +656,7 @@ public class ImageSaver extends Thread {
                 suffix_offset,
                 save_expo,
                 images,
+                preshot_bitmaps,
                 null,
                 image_capture_intent, image_capture_intent_uri,
                 using_camera2, using_camera_extensions,
@@ -711,6 +702,7 @@ public class ImageSaver extends Thread {
                 suffix_offset,
                 false,
                 null,
+                null,
                 raw_image,
                 false, null,
                 false, false,
@@ -740,6 +732,7 @@ public class ImageSaver extends Thread {
      */
     void startImageBatch(boolean do_in_background,
                            Request.ProcessType processType,
+                           List<Bitmap> preshot_bitmaps,
                            Request.SaveBase save_base,
                            boolean image_capture_intent, Uri image_capture_intent_uri,
                            boolean using_camera2, boolean using_camera_extensions,
@@ -771,6 +764,7 @@ public class ImageSaver extends Thread {
                 0,
                 save_base,
                 new ArrayList<>(),
+                preshot_bitmaps,
                 null,
                 image_capture_intent, image_capture_intent_uri,
                 using_camera2, using_camera_extensions,
@@ -853,6 +847,7 @@ public class ImageSaver extends Thread {
                               int suffix_offset,
                               boolean save_expo,
                               List<byte []> jpeg_images,
+                              List<Bitmap> preshot_bitmaps,
                               RawImage raw_image,
                               boolean image_capture_intent, Uri image_capture_intent_uri,
                               boolean using_camera2, boolean using_camera_extensions,
@@ -890,6 +885,7 @@ public class ImageSaver extends Thread {
                 suffix_offset,
                 save_expo ? Request.SaveBase.SAVEBASE_ALL : Request.SaveBase.SAVEBASE_NONE,
                 jpeg_images,
+                preshot_bitmaps,
                 raw_image,
                 image_capture_intent, image_capture_intent_uri,
                 using_camera2, using_camera_extensions,
@@ -940,9 +936,9 @@ public class ImageSaver extends Thread {
     private void addRequest(Request request, int cost) {
         if( MyDebug.LOG )
             Log.d(TAG, "addRequest, cost: " + cost);
-        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && main_activity.isDestroyed() ) {
-            // If the application is being destroyed as a new photo is being taken, it's not safe to continue, e.g., we'll
-            // crash if needing to use RenderScript.
+        if( main_activity.isDestroyed() && request.type != Request.Type.ON_DESTROY ) {
+            // If the application is being destroyed as a new photo is being taken, it's not safe to continue, unless this request
+            // is for the ON_DESTROY
             // MainDestroy.onDestroy() does call waitUntilDone(), but this is extra protection in case an image comes in after that.
             Log.e(TAG, "application is destroyed, image lost!");
             return;
@@ -984,9 +980,7 @@ public class ImageSaver extends Thread {
                 done = true;
             }
             catch(InterruptedException e) {
-                e.printStackTrace();
-                if( MyDebug.LOG )
-                    Log.e(TAG, "interrupted while trying to add to ImageSaver queue");
+                MyDebug.logStackTrace(TAG, "interrupted while trying to add to ImageSaver queue", e);
             }
         }
         if( cost > 0 ) {
@@ -1003,6 +997,7 @@ public class ImageSaver extends Thread {
                 false,
                 0,
                 Request.SaveBase.SAVEBASE_NONE,
+                null,
                 null,
                 null,
                 false, null,
@@ -1046,9 +1041,7 @@ public class ImageSaver extends Thread {
                     wait();
                 }
                 catch(InterruptedException e) {
-                    e.printStackTrace();
-                    if( MyDebug.LOG )
-                        Log.e(TAG, "interrupted while waiting for ImageSaver queue to be empty");
+                    MyDebug.logStackTrace(TAG, "interrupted while waiting for ImageSaver queue to be empty", e);
                 }
                 if( MyDebug.LOG ) {
                     Log.d(TAG, "waitUntilDone: queue is size " + queue.size());
@@ -1058,137 +1051,6 @@ public class ImageSaver extends Thread {
         }
         if( MyDebug.LOG )
             Log.d(TAG, "waitUntilDone: images all saved");
-    }
-
-    private void setBitmapOptionsSampleSize(BitmapFactory.Options options, int inSampleSize) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "setBitmapOptionsSampleSize: " + inSampleSize);
-        //options.inSampleSize = inSampleSize;
-        if( inSampleSize > 1 ) {
-            // use inDensity for better quality, as inSampleSize uses nearest neighbour
-            options.inDensity = inSampleSize;
-            options.inTargetDensity = 1;
-        }
-    }
-
-    /** Loads a single jpeg as a Bitmaps.
-     * @param mutable Whether the bitmap should be mutable. Note that when converting to bitmaps
-     *                for the image post-processing (auto-stabilise etc), in general we need the
-     *                bitmap to be mutable (for photostamp to work).
-     */
-    private Bitmap loadBitmap(byte [] jpeg_image, boolean mutable, int inSampleSize) {
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "loadBitmap");
-            Log.d(TAG, "mutable?: " + mutable);
-        }
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        if( MyDebug.LOG )
-            Log.d(TAG, "options.inMutable is: " + options.inMutable);
-        options.inMutable = mutable;
-        setBitmapOptionsSampleSize(options, inSampleSize);
-        if( Build.VERSION.SDK_INT <= Build.VERSION_CODES.KITKAT ) {
-            // setting is ignored in Android 5 onwards
-            options.inPurgeable = true;
-        }
-        Bitmap bitmap = BitmapFactory.decodeByteArray(jpeg_image, 0, jpeg_image.length, options);
-        if( bitmap == null ) {
-            Log.e(TAG, "failed to decode bitmap");
-        }
-        return bitmap;
-    }
-
-    /** Helper class for loadBitmaps().
-     */
-    private static class LoadBitmapThread extends Thread {
-        Bitmap bitmap;
-        final BitmapFactory.Options options;
-        final byte [] jpeg;
-        LoadBitmapThread(BitmapFactory.Options options, byte [] jpeg) {
-            super("LoadBitmapThread");
-            this.options = options;
-            this.jpeg = jpeg;
-        }
-
-        public void run() {
-            this.bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, options);
-        }
-    }
-
-    /** Converts the array of jpegs to Bitmaps. The bitmap with index mutable_id will be marked as mutable (or set to -1 to have no mutable bitmaps).
-     */
-    private List<Bitmap> loadBitmaps(List<byte []> jpeg_images, int mutable_id, int inSampleSize) {
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "loadBitmaps");
-            Log.d(TAG, "mutable_id: " + mutable_id);
-        }
-        BitmapFactory.Options mutable_options = new BitmapFactory.Options();
-        mutable_options.inMutable = true; // bitmap that needs to be writable
-        setBitmapOptionsSampleSize(mutable_options, inSampleSize);
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inMutable = false; // later bitmaps don't need to be writable
-        setBitmapOptionsSampleSize(options, inSampleSize);
-        if( Build.VERSION.SDK_INT <= Build.VERSION_CODES.KITKAT ) {
-            // setting is ignored in Android 5 onwards
-            mutable_options.inPurgeable = true;
-            options.inPurgeable = true;
-        }
-        LoadBitmapThread [] threads = new LoadBitmapThread[jpeg_images.size()];
-        for(int i=0;i<jpeg_images.size();i++) {
-            threads[i] = new LoadBitmapThread( i==mutable_id ? mutable_options : options, jpeg_images.get(i) );
-        }
-        // start threads
-        if( MyDebug.LOG )
-            Log.d(TAG, "start threads");
-        for(int i=0;i<jpeg_images.size();i++) {
-            threads[i].start();
-        }
-        // wait for threads to complete
-        boolean ok = true;
-        if( MyDebug.LOG )
-            Log.d(TAG, "wait for threads to complete");
-        try {
-            for(int i=0;i<jpeg_images.size();i++) {
-                threads[i].join();
-            }
-        }
-        catch(InterruptedException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "threads interrupted");
-            e.printStackTrace();
-            ok = false;
-        }
-        if( MyDebug.LOG )
-            Log.d(TAG, "threads completed");
-
-        List<Bitmap> bitmaps = new ArrayList<>();
-        for(int i=0;i<jpeg_images.size() && ok;i++) {
-            Bitmap bitmap = threads[i].bitmap;
-            if( bitmap == null ) {
-                Log.e(TAG, "failed to decode bitmap in thread: " + i);
-                ok = false;
-            }
-            else {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "bitmap " + i + ": " + bitmap + " is mutable? " + bitmap.isMutable());
-            }
-            bitmaps.add(bitmap);
-        }
-
-        if( !ok ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "cleanup from failure");
-            for(int i=0;i<jpeg_images.size();i++) {
-                if( threads[i].bitmap != null ) {
-                    threads[i].bitmap.recycle();
-                    threads[i].bitmap = null;
-                }
-            }
-            bitmaps.clear();
-            System.gc();
-            return null;
-        }
-
-        return bitmaps;
     }
 
     /** Chooses the hdr_alpha to use for contrast enhancement in the HDR algorithm, based on the user
@@ -1206,6 +1068,9 @@ public class ImageSaver extends Thread {
                 case "preference_hdr_contrast_enhancement_off":
                     use_hdr_alpha = false;
                     break;
+                case "preference_hdr_contrast_enhancement_always":
+                    use_hdr_alpha = true;
+                    break;
                 case "preference_hdr_contrast_enhancement_smart":
                 default:
                     // Using local contrast enhancement helps scenes where the dynamic range is very large, which tends to be when we choose
@@ -1215,9 +1080,6 @@ public class ImageSaver extends Thread {
                     // (if we used local contrast enhancement) is: testHDR2, testHDR12, testHDR17, testHDR43, testHDR50, testHDR51,
                     // testHDR54, testHDR55, testHDR56.
                     use_hdr_alpha = (exposure_time < 1000000000L/59);
-                    break;
-                case "preference_hdr_contrast_enhancement_always":
-                    use_hdr_alpha = true;
                     break;
             }
         }
@@ -1247,41 +1109,41 @@ public class ImageSaver extends Thread {
         xmlSerializer.setOutput(writer);
         xmlSerializer.startDocument("UTF-8", true);
         xmlSerializer.startTag(null, gyro_info_doc_tag);
-        xmlSerializer.attribute(null, gyro_info_panorama_pics_per_screen_tag, "" + MyApplicationInterface.getPanoramaPicsPerScreen());
-        xmlSerializer.attribute(null, gyro_info_camera_view_angle_x_tag, "" + request.camera_view_angle_x);
-        xmlSerializer.attribute(null, gyro_info_camera_view_angle_y_tag, "" + request.camera_view_angle_y);
+        xmlSerializer.attribute(null, gyro_info_panorama_pics_per_screen_tag, String.valueOf(MyApplicationInterface.getPanoramaPicsPerScreen()));
+        xmlSerializer.attribute(null, gyro_info_camera_view_angle_x_tag, String.valueOf(request.camera_view_angle_x));
+        xmlSerializer.attribute(null, gyro_info_camera_view_angle_y_tag, String.valueOf(request.camera_view_angle_y));
 
         float [] inVector = new float[3];
         float [] outVector = new float[3];
         for(int i=0;i<request.gyro_rotation_matrix.size();i++) {
             xmlSerializer.startTag(null, gyro_info_image_tag);
-            xmlSerializer.attribute(null, "index", "" + i);
+            xmlSerializer.attribute(null, "index", String.valueOf(i));
 
             GyroSensor.setVector(inVector, 1.0f, 0.0f, 0.0f); // vector pointing in "right" direction
             GyroSensor.transformVector(outVector, request.gyro_rotation_matrix.get(i), inVector);
             xmlSerializer.startTag(null, gyro_info_vector_tag);
             xmlSerializer.attribute(null, "type", gyro_info_vector_right_type);
-            xmlSerializer.attribute(null, "x", "" + outVector[0]);
-            xmlSerializer.attribute(null, "y", "" + outVector[1]);
-            xmlSerializer.attribute(null, "z", "" + outVector[2]);
+            xmlSerializer.attribute(null, "x", String.valueOf(outVector[0]));
+            xmlSerializer.attribute(null, "y", String.valueOf(outVector[1]));
+            xmlSerializer.attribute(null, "z", String.valueOf(outVector[2]));
             xmlSerializer.endTag(null, gyro_info_vector_tag);
 
             GyroSensor.setVector(inVector, 0.0f, 1.0f, 0.0f); // vector pointing in "up" direction
             GyroSensor.transformVector(outVector, request.gyro_rotation_matrix.get(i), inVector);
             xmlSerializer.startTag(null, gyro_info_vector_tag);
             xmlSerializer.attribute(null, "type", gyro_info_vector_up_type);
-            xmlSerializer.attribute(null, "x", "" + outVector[0]);
-            xmlSerializer.attribute(null, "y", "" + outVector[1]);
-            xmlSerializer.attribute(null, "z", "" + outVector[2]);
+            xmlSerializer.attribute(null, "x", String.valueOf(outVector[0]));
+            xmlSerializer.attribute(null, "y", String.valueOf(outVector[1]));
+            xmlSerializer.attribute(null, "z", String.valueOf(outVector[2]));
             xmlSerializer.endTag(null, gyro_info_vector_tag);
 
             GyroSensor.setVector(inVector, 0.0f, 0.0f, -1.0f); // vector pointing behind the device's screen
             GyroSensor.transformVector(outVector, request.gyro_rotation_matrix.get(i), inVector);
             xmlSerializer.startTag(null, gyro_info_vector_tag);
             xmlSerializer.attribute(null, "type", gyro_info_vector_screen_type);
-            xmlSerializer.attribute(null, "x", "" + outVector[0]);
-            xmlSerializer.attribute(null, "y", "" + outVector[1]);
-            xmlSerializer.attribute(null, "z", "" + outVector[2]);
+            xmlSerializer.attribute(null, "x", String.valueOf(outVector[0]));
+            xmlSerializer.attribute(null, "y", String.valueOf(outVector[1]));
+            xmlSerializer.attribute(null, "z", String.valueOf(outVector[2]));
             xmlSerializer.endTag(null, gyro_info_vector_tag);
 
             xmlSerializer.endTag(null, gyro_info_image_tag);
@@ -1378,7 +1240,7 @@ public class ImageSaver extends Thread {
             }
         }
         catch(Exception e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse xml", e);
             return false;
         }
         finally {
@@ -1386,9 +1248,38 @@ public class ImageSaver extends Thread {
                 inputStream.close();
             }
             catch(IOException e) {
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "failed to close inputStream", e);
             }
         }
+        return true;
+    }
+
+    private boolean processHDR(List<Bitmap> bitmaps, final Request request, long time_s) {
+        float hdr_alpha = getHDRAlpha(request.preference_hdr_contrast_enhancement, request.exposure_time, bitmaps.size());
+        if( MyDebug.LOG )
+            Log.d(TAG, "before HDR first bitmap: " + bitmaps.get(0) + " is mutable? " + bitmaps.get(0).isMutable());
+        try {
+            hdrProcessor.processHDR(bitmaps, true, null, true, null, hdr_alpha, 4, true, request.preference_hdr_tonemapping_algorithm, HDRProcessor.DROTonemappingAlgorithm.DROALGORITHM_GAINGAMMA); // this will recycle all the bitmaps except bitmaps.get(0), which will contain the hdr image
+        }
+        catch(HDRProcessorException e) {
+            MyDebug.logStackTrace(TAG, "HDRProcessorException from processHDR", e);
+            if( e.getCode() == HDRProcessorException.UNEQUAL_SIZES ) {
+                // this can happen on OnePlus 3T with old camera API with front camera, seems to be a bug that resolution changes when exposure compensation is set!
+                Log.e(TAG, "UNEQUAL_SIZES");
+                bitmaps.clear();
+                System.gc();
+                return false;
+            }
+            else {
+                // throw RuntimeException, as we shouldn't ever get the error INVALID_N_IMAGES, if we do it's a programming error
+                throw new RuntimeException();
+            }
+        }
+        if( MyDebug.LOG ) {
+            Log.d(TAG, "HDR performance: time after creating HDR image: " + (System.currentTimeMillis() - time_s));
+        }
+        if( MyDebug.LOG )
+            Log.d(TAG, "after HDR first bitmap: " + bitmaps.get(0) + " is mutable? " + bitmaps.get(0).isMutable());
         return true;
     }
 
@@ -1404,11 +1295,15 @@ public class ImageSaver extends Thread {
             // throw runtime exception, as this is a programming error
             throw new RuntimeException();
         }
-        else if( request.jpeg_images.size() == 0 ) {
+        else if( request.jpeg_images.isEmpty() ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "saveImageNow called with zero images");
             // throw runtime exception, as this is a programming error
             throw new RuntimeException();
+        }
+
+        if( request.preshot_bitmaps != null && !request.preshot_bitmaps.isEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ) {
+            Preshots.savePreshotBitmaps(main_activity, this, request);
         }
 
         boolean success;
@@ -1441,7 +1336,7 @@ public class ImageSaver extends Thread {
                     //hdrProcessor.avgBrighten(nr_bitmap);
                 }
                 catch(HDRProcessorException e) {
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "HDRProcessorException from processAvg", e);
                     throw new RuntimeException();
                 }
             }
@@ -1450,11 +1345,9 @@ public class ImageSaver extends Thread {
                 throw new RuntimeException();
             }*/
             Bitmap nr_bitmap;
-            if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
+            {
                 try {
                     long time_s = System.currentTimeMillis();
-                    // initialise allocation from first two bitmaps
-                    //int inSampleSize = hdrProcessor.getAvgSampleSize(request.jpeg_images.size());
                     int inSampleSize = hdrProcessor.getAvgSampleSize(request.iso, request.exposure_time);
                     //final boolean use_smp = false;
                     final boolean use_smp = true;
@@ -1483,15 +1376,15 @@ public class ImageSaver extends Thread {
                         for(int j=0;j<n_load;j++) {
                             sub_jpeg_list.add(request.jpeg_images.get(j));
                         }
-                        bitmaps = loadBitmaps(sub_jpeg_list, -1, inSampleSize);
+                        bitmaps = ImageUtils.loadBitmaps(sub_jpeg_list, -1, inSampleSize);
                         if( MyDebug.LOG )
                             Log.d(TAG, "length of bitmaps list is now: " + bitmaps.size());
                         bitmap0 = bitmaps.get(0);
                         bitmap1 = bitmaps.get(1);
                     }
                     else {
-                        bitmap0 = loadBitmap(request.jpeg_images.get(0), false, inSampleSize);
-                        bitmap1 = loadBitmap(request.jpeg_images.get(1), false, inSampleSize);
+                        bitmap0 = ImageUtils.loadBitmap(request.jpeg_images.get(0), false, inSampleSize);
+                        bitmap1 = ImageUtils.loadBitmap(request.jpeg_images.get(1), false, inSampleSize);
                     }
                     if( MyDebug.LOG ) {
                         Log.d(TAG, "*** time for loading first bitmaps: " + (System.currentTimeMillis() - this_time_s));
@@ -1536,7 +1429,7 @@ public class ImageSaver extends Thread {
                                 for(int j=i;j<i+n_load;j++) {
                                     sub_jpeg_list.add(request.jpeg_images.get(j));
                                 }
-                                List<Bitmap> new_bitmaps = loadBitmaps(sub_jpeg_list, -1, inSampleSize);
+                                List<Bitmap> new_bitmaps = ImageUtils.loadBitmaps(sub_jpeg_list, -1, inSampleSize);
                                 bitmaps.addAll(new_bitmaps);
                                 if( MyDebug.LOG )
                                     Log.d(TAG, "length of bitmaps list is now: " + bitmaps.size());
@@ -1544,7 +1437,7 @@ public class ImageSaver extends Thread {
                             }
                         }
                         else {
-                            new_bitmap = loadBitmap(request.jpeg_images.get(i), false, inSampleSize);
+                            new_bitmap = ImageUtils.loadBitmap(request.jpeg_images.get(i), false, inSampleSize);
                         }
                         if( MyDebug.LOG ) {
                             Log.d(TAG, "*** time for loading extra bitmap: " + (System.currentTimeMillis() - this_time_s));
@@ -1574,13 +1467,9 @@ public class ImageSaver extends Thread {
                     }
                 }
                 catch(HDRProcessorException e) {
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "HDRProcessorException", e);
                     throw new RuntimeException();
                 }
-            }
-            else {
-                Log.e(TAG, "shouldn't have offered NoiseReduction as an option if not on Android 5");
-                throw new RuntimeException();
             }
 
             if( MyDebug.LOG )
@@ -1628,7 +1517,7 @@ public class ImageSaver extends Thread {
             int base_bitmap = (request.jpeg_images.size()-1)/2;
             if( MyDebug.LOG )
                 Log.d(TAG, "base_bitmap: " + base_bitmap);
-            List<Bitmap> bitmaps = loadBitmaps(request.jpeg_images, base_bitmap, 1);
+            List<Bitmap> bitmaps = ImageUtils.loadBitmaps(request.jpeg_images, base_bitmap, 1);
             if( bitmaps == null ) {
                 if( MyDebug.LOG )
                     Log.e(TAG, "failed to load bitmaps");
@@ -1638,40 +1527,13 @@ public class ImageSaver extends Thread {
             if( MyDebug.LOG ) {
                 Log.d(TAG, "HDR performance: time after decompressing base exposures: " + (System.currentTimeMillis() - time_s));
             }
-            float hdr_alpha = getHDRAlpha(request.preference_hdr_contrast_enhancement, request.exposure_time, bitmaps.size());
-            if( MyDebug.LOG )
-                Log.d(TAG, "before HDR first bitmap: " + bitmaps.get(0) + " is mutable? " + bitmaps.get(0).isMutable());
-            try {
-                if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
-                    hdrProcessor.processHDR(bitmaps, true, null, true, null, hdr_alpha, 4, true, request.preference_hdr_tonemapping_algorithm, HDRProcessor.DROTonemappingAlgorithm.DROALGORITHM_GAINGAMMA); // this will recycle all the bitmaps except bitmaps.get(0), which will contain the hdr image
-                }
-                else {
-                    Log.e(TAG, "shouldn't have offered HDR as an option if not on Android 5");
-                    throw new RuntimeException();
-                }
+
+            if( !processHDR(bitmaps, request, time_s) ) {
+                main_activity.getPreview().showToast(null, R.string.failed_to_process_hdr);
+                main_activity.savingImage(false);
+                return false;
             }
-            catch(HDRProcessorException e) {
-                Log.e(TAG, "HDRProcessorException from processHDR: " + e.getCode());
-                e.printStackTrace();
-                if( e.getCode() == HDRProcessorException.UNEQUAL_SIZES ) {
-                    // this can happen on OnePlus 3T with old camera API with front camera, seems to be a bug that resolution changes when exposure compensation is set!
-                    main_activity.getPreview().showToast(null, R.string.failed_to_process_hdr);
-                    Log.e(TAG, "UNEQUAL_SIZES");
-                    bitmaps.clear();
-                    System.gc();
-                    main_activity.savingImage(false);
-                    return false;
-                }
-                else {
-                    // throw RuntimeException, as we shouldn't ever get the error INVALID_N_IMAGES, if we do it's a programming error
-                    throw new RuntimeException();
-                }
-            }
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "HDR performance: time after creating HDR image: " + (System.currentTimeMillis() - time_s));
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "after HDR first bitmap: " + bitmaps.get(0) + " is mutable? " + bitmaps.get(0).isMutable());
+
             Bitmap hdr_bitmap = bitmaps.get(0);
             if( MyDebug.LOG )
                 Log.d(TAG, "hdr_bitmap: " + hdr_bitmap + " is mutable? " + hdr_bitmap.isMutable());
@@ -1771,8 +1633,7 @@ public class ImageSaver extends Thread {
                     }
                 }
                 catch(IOException e) {
-                    Log.e(TAG, "failed to write gyro text file");
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "failed to write gyro text file", e);
                 }
             }
 
@@ -1794,7 +1655,10 @@ public class ImageSaver extends Thread {
                 Collections.reverse(request.gyro_rotation_matrix);
             }
 
-            List<Bitmap> bitmaps = loadBitmaps(request.jpeg_images, -1, 1);
+            // need all to be mutable - n.b., in practice setting to -1
+            // doesn't cause a problem on some devices e.g. Galaxy S24+ because the bitmaps may be made
+            // mutable in rotateForExif, but this can be reproduced on on emulator at least
+            List<Bitmap> bitmaps = ImageUtils.loadBitmaps(request.jpeg_images, -2, 1);
             if( bitmaps == null ) {
                 if( MyDebug.LOG )
                     Log.e(TAG, "failed to load bitmaps");
@@ -1808,7 +1672,7 @@ public class ImageSaver extends Thread {
             // rotate the bitmaps if necessary for exif tags
             for(int i=0;i<bitmaps.size();i++) {
                 Bitmap bitmap = bitmaps.get(i);
-                bitmap = rotateForExif(bitmap, request.jpeg_images.get(0));
+                bitmap = ImageUtils.rotateForExif(bitmap, request.jpeg_images.get(0));
                 bitmaps.set(i, bitmap);
             }
             if( MyDebug.LOG ) {
@@ -1817,17 +1681,10 @@ public class ImageSaver extends Thread {
 
             Bitmap panorama;
             try {
-                if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
-                    panorama = panoramaProcessor.panorama(bitmaps, MyApplicationInterface.getPanoramaPicsPerScreen(), request.camera_view_angle_y, request.panorama_crop);
-                }
-                else {
-                    Log.e(TAG, "shouldn't have offered panorama as an option if not on Android 5");
-                    throw new RuntimeException();
-                }
+                panorama = panoramaProcessor.panorama(bitmaps, MyApplicationInterface.getPanoramaPicsPerScreen(), request.camera_view_angle_y, request.panorama_crop);
             }
             catch(PanoramaProcessorException e) {
-                Log.e(TAG, "PanoramaProcessorException from panorama: " + e.getCode());
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "PanoramaProcessorException from panorama", e);
                 if( e.getCode() == PanoramaProcessorException.UNEQUAL_SIZES || e.getCode() == PanoramaProcessorException.FAILED_TO_CROP ) {
                     main_activity.getPreview().showToast(null, R.string.failed_to_process_panorama);
                     Log.e(TAG, "panorama failed: " + e.getCode());
@@ -1867,6 +1724,39 @@ public class ImageSaver extends Thread {
         }
 
         return success;
+    }
+
+    /** Alternative to android.util.Range&lt;Integer&gt;, since that is not mocked so can't be used
+     *  in unit testing.
+     */
+    public static class IntRange {
+        private final int lower;
+        private final int upper;
+
+        public IntRange(int lower, int upper) {
+            this.lower = lower;
+            this.upper = upper;
+
+            if( lower > upper ) {
+                throw new IllegalArgumentException("lower must be <= upper");
+            }
+        }
+
+        IntRange(Range<Integer> range) {
+            this(range.getLower(), range.getUpper());
+        }
+
+        boolean contains(int value) {
+            return value >= lower && value <= upper;
+        }
+
+        int clamp(int value) {
+            if( value <= lower )
+                return lower;
+            else if( value >= upper )
+                return upper;
+            return value;
+        }
     }
 
     /** Saves all the JPEG images in request.jpeg_images.
@@ -1935,532 +1825,22 @@ public class ImageSaver extends Thread {
         }
     }
 
-    /** Computes the width and height of a centred crop region after having rotated an image.
-     * @param result - Array of length 2 which will be filled with the returned width and height.
-     * @param level_angle_rad_abs - Absolute value of angle of rotation, in radians.
-     * @param w0 - Rotated width.
-     * @param h0 - Rotated height.
-     * @param w1 - Original width.
-     * @param h1 - Original height.
-     * @param max_width - Maximum width to return.
-     * @param max_height - Maximum height to return.
-     * @return - Whether a crop region could be successfully calculated.
+    /** Converts from Request.ImageFormat to Bitmap.CompressFormat.
      */
-    public static boolean autoStabiliseCrop(int [] result, double level_angle_rad_abs, double w0, double h0, int w1, int h1, int max_width, int max_height) {
-        boolean ok = false;
-        result[0] = 0;
-        result[1] = 0;
-
-        double tan_theta = Math.tan(level_angle_rad_abs);
-        double sin_theta = Math.sin(level_angle_rad_abs);
-        double denom = ( h0/w0 + tan_theta );
-        double alt_denom = ( w0/h0 + tan_theta );
-        if( denom < 1.0e-14 ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "zero denominator?!");
+    private static Bitmap.CompressFormat getBitmapCompressFormat(Request.ImageFormat image_format) {
+        Bitmap.CompressFormat compress_format;
+        switch( image_format ) {
+            case WEBP:
+                compress_format = Bitmap.CompressFormat.WEBP;
+                break;
+            case PNG:
+                compress_format = Bitmap.CompressFormat.PNG;
+                break;
+            default:
+                compress_format = Bitmap.CompressFormat.JPEG;
+                break;
         }
-        else if( alt_denom < 1.0e-14 ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "zero alt denominator?!");
-        }
-        else {
-            int w2 = (int)(( h0 + 2.0*h1*sin_theta*tan_theta - w0*tan_theta ) / denom);
-            int h2 = (int)(w2*h0/w0);
-            int alt_h2 = (int)(( w0 + 2.0*w1*sin_theta*tan_theta - h0*tan_theta ) / alt_denom);
-            int alt_w2 = (int)(alt_h2*w0/h0);
-            if( MyDebug.LOG ) {
-                //Log.d(TAG, "h0 " + h0 + " 2.0*h1*sin_theta*tan_theta " + 2.0*h1*sin_theta*tan_theta + " w0*tan_theta " + w0*tan_theta + " / h0/w0 " + h0/w0 + " tan_theta " + tan_theta);
-                Log.d(TAG, "w2 = " + w2 + " , h2 = " + h2);
-                Log.d(TAG, "alt_w2 = " + alt_w2 + " , alt_h2 = " + alt_h2);
-            }
-            if( alt_w2 < w2 ) {
-                if( MyDebug.LOG ) {
-                    Log.d(TAG, "chose alt!");
-                }
-                w2 = alt_w2;
-                h2 = alt_h2;
-            }
-            if( w2 <= 0 )
-                w2 = 1;
-            else if( w2 > max_width )
-                w2 = max_width;
-            if( h2 <= 0 )
-                h2 = 1;
-            else if( h2 > max_height )
-                h2 = max_height;
-
-            ok = true;
-            result[0] = w2;
-            result[1] = h2;
-        }
-        return ok;
-    }
-
-    /** Performs the auto-stabilise algorithm on the image.
-     * @param data The jpeg data.
-     * @param bitmap Optional argument - the bitmap if already unpacked from the jpeg data.
-     * @param level_angle The angle in degrees to rotate the image.
-     * @param is_front_facing Whether the camera is front-facing.
-     * @return A bitmap representing the auto-stabilised jpeg.
-     */
-    private Bitmap autoStabilise(byte [] data, Bitmap bitmap, double level_angle, boolean is_front_facing) {
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "autoStabilise");
-            Log.d(TAG, "level_angle: " + level_angle);
-            Log.d(TAG, "is_front_facing: " + is_front_facing);
-        }
-        while( level_angle < -90 )
-            level_angle += 180;
-        while( level_angle > 90 )
-            level_angle -= 180;
-        if( MyDebug.LOG )
-            Log.d(TAG, "auto stabilising... angle: " + level_angle);
-        if( bitmap == null ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "need to decode bitmap to auto-stabilise");
-            // bitmap doesn't need to be mutable here, as this won't be the final bitmap returned from the auto-stabilise code
-            bitmap = loadBitmapWithRotation(data, false);
-            if( bitmap == null ) {
-                main_activity.getPreview().showToast(null, R.string.failed_to_auto_stabilise);
-                System.gc();
-            }
-        }
-        if( bitmap != null ) {
-            int width = bitmap.getWidth();
-            int height = bitmap.getHeight();
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "level_angle: " + level_angle);
-                Log.d(TAG, "decoded bitmap size " + width + ", " + height);
-                Log.d(TAG, "bitmap size: " + width*height*4);
-            }
-                /*for(int y=0;y<height;y++) {
-                    for(int x=0;x<width;x++) {
-                        int col = bitmap.getPixel(x, y);
-                        col = col & 0xffff0000; // mask out red component
-                        bitmap.setPixel(x, y, col);
-                    }
-                }*/
-            Matrix matrix = new Matrix();
-            double level_angle_rad_abs = Math.abs( Math.toRadians(level_angle) );
-            int w1 = width, h1 = height;
-            double w0 = (w1 * Math.cos(level_angle_rad_abs) + h1 * Math.sin(level_angle_rad_abs));
-            double h0 = (w1 * Math.sin(level_angle_rad_abs) + h1 * Math.cos(level_angle_rad_abs));
-            // apply a scale so that the overall image size isn't increased
-            float orig_size = w1*h1;
-            float rotated_size = (float)(w0*h0);
-            float scale = (float)Math.sqrt(orig_size/rotated_size);
-            if( main_activity.test_low_memory ) {
-                if( MyDebug.LOG ) {
-                    Log.d(TAG, "TESTING LOW MEMORY");
-                    Log.d(TAG, "scale was: " + scale);
-                }
-                // test 20MP on Galaxy Nexus or Nexus 7; 29MP on Nexus 6 and 36MP OnePlus 3T
-                if( width*height >= 7500 )
-                    scale *= 1.5f;
-                else
-                    scale *= 2.0f;
-            }
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "w0 = " + w0 + " , h0 = " + h0);
-                Log.d(TAG, "w1 = " + w1 + " , h1 = " + h1);
-                Log.d(TAG, "scale = sqrt " + orig_size + " / " + rotated_size + " = " + scale);
-            }
-            matrix.postScale(scale, scale);
-            w0 *= scale;
-            h0 *= scale;
-            w1 *= scale;
-            h1 *= scale;
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "after scaling: w0 = " + w0 + " , h0 = " + h0);
-                Log.d(TAG, "after scaling: w1 = " + w1 + " , h1 = " + h1);
-            }
-            if( is_front_facing ) {
-                matrix.postRotate((float)-level_angle);
-            }
-            else {
-                matrix.postRotate((float)level_angle);
-            }
-            Bitmap new_bitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true);
-            // careful, as new_bitmap is sometimes not a copy!
-            if( new_bitmap != bitmap ) {
-                bitmap.recycle();
-                bitmap = new_bitmap;
-            }
-            System.gc();
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "rotated and scaled bitmap size " + bitmap.getWidth() + ", " + bitmap.getHeight());
-                Log.d(TAG, "rotated and scaled bitmap size: " + bitmap.getWidth()*bitmap.getHeight()*4);
-            }
-
-            int [] crop = new int [2];
-            if( autoStabiliseCrop(crop, level_angle_rad_abs, w0, h0, w1, h1, bitmap.getWidth(), bitmap.getHeight()) ) {
-                int w2 = crop[0];
-                int h2 = crop[1];
-                int x0 = (bitmap.getWidth()-w2)/2;
-                int y0 = (bitmap.getHeight()-h2)/2;
-                if( MyDebug.LOG ) {
-                    Log.d(TAG, "x0 = " + x0 + " , y0 = " + y0);
-                }
-                new_bitmap = Bitmap.createBitmap(bitmap, x0, y0, w2, h2);
-                if( new_bitmap != bitmap ) {
-                    bitmap.recycle();
-                    bitmap = new_bitmap;
-                }
-                System.gc();
-            }
-
-            if( MyDebug.LOG )
-                Log.d(TAG, "bitmap is mutable?: " + bitmap.isMutable());
-            // Usually createBitmap will return a mutable bitmap, but not if the source bitmap (which we set as immutable)
-            // is returned (if the level angle is (tolerantly) 0.
-            // see testPhotoStamp() for testing this.
-            if( !bitmap.isMutable() ) {
-                new_bitmap = bitmap.copy(bitmap.getConfig(), true);
-                bitmap.recycle();
-                bitmap = new_bitmap;
-            }
-        }
-        return bitmap;
-    }
-
-    /** Mirrors the image.
-     * @param data The jpeg data.
-     * @param bitmap Optional argument - the bitmap if already unpacked from the jpeg data.
-     * @return A bitmap representing the mirrored jpeg.
-     */
-    private Bitmap mirrorImage(byte [] data, Bitmap bitmap) {
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "mirrorImage");
-        }
-        if( bitmap == null ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "need to decode bitmap to mirror");
-            // bitmap doesn't need to be mutable here, as this won't be the final bitmap returned from the mirroring code
-            bitmap = loadBitmapWithRotation(data, false);
-            if( bitmap == null ) {
-                // don't bother warning to the user - we simply won't mirror the image
-                System.gc();
-            }
-        }
-        if( bitmap != null ) {
-            Matrix matrix = new Matrix();
-            matrix.preScale(-1.0f, 1.0f);
-            int width = bitmap.getWidth();
-            int height = bitmap.getHeight();
-            Bitmap new_bitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true);
-            // careful, as new_bitmap is sometimes not a copy!
-            if( new_bitmap != bitmap ) {
-                bitmap.recycle();
-                bitmap = new_bitmap;
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "bitmap is mutable?: " + bitmap.isMutable());
-        }
-        return bitmap;
-    }
-
-    /** Applies any photo stamp options (if they exist).
-     * @param data The jpeg data.
-     * @param bitmap Optional argument - the bitmap if already unpacked from the jpeg data.
-     * @return A bitmap representing the stamped jpeg. Will be null if the input bitmap is null and
-     *         no photo stamp is applied.
-     */
-    private Bitmap stampImage(final Request request, byte [] data, Bitmap bitmap) {
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "stampImage");
-        }
-        //final MyApplicationInterface applicationInterface = main_activity.getApplicationInterface();
-        boolean dategeo_stamp = request.preference_stamp.equals("preference_stamp_yes");
-        boolean text_stamp = request.preference_textstamp.length() > 0;
-        if( dategeo_stamp || text_stamp ) {
-            if( bitmap == null ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "decode bitmap in order to stamp info");
-                bitmap = loadBitmapWithRotation(data, true);
-                if( bitmap == null ) {
-                    main_activity.getPreview().showToast(null, R.string.failed_to_stamp);
-                    System.gc();
-                }
-            }
-            if( bitmap != null ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "stamp info to bitmap: " + bitmap);
-                if( MyDebug.LOG )
-                    Log.d(TAG, "bitmap is mutable?: " + bitmap.isMutable());
-
-                String stamp_string = "";
-                /* We now stamp via a TextView instead of using MyApplicationInterface.drawTextWithBackground().
-                 * This is important in order to satisfy the Google emoji policy...
-                 */
-
-                int font_size = request.font_size;
-                int color = request.color;
-                String pref_style = request.pref_style;
-                if( MyDebug.LOG )
-                    Log.d(TAG, "pref_style: " + pref_style);
-                String preference_stamp_dateformat = request.preference_stamp_dateformat;
-                String preference_stamp_timeformat = request.preference_stamp_timeformat;
-                String preference_stamp_gpsformat = request.preference_stamp_gpsformat;
-                int width = bitmap.getWidth();
-                int height = bitmap.getHeight();
-                if( MyDebug.LOG ) {
-                    Log.d(TAG, "decoded bitmap size " + width + ", " + height);
-                    Log.d(TAG, "bitmap size: " + width*height*4);
-                }
-                Canvas canvas = new Canvas(bitmap);
-                p.setColor(Color.WHITE);
-                // we don't use the density of the screen, because we're stamping to the image, not drawing on the screen (we don't want the font height to depend on the device's resolution)
-                // instead we go by 1 pt == 1/72 inch height, and scale for an image height (or width if in portrait) of 4" (this means the font height is also independent of the photo resolution)
-                int smallest_size = Math.min(width, height);
-                float scale = ((float)smallest_size) / (72.0f*4.0f);
-                int font_size_pixel = (int)(font_size * scale + 0.5f); // convert pt to pixels
-                if( MyDebug.LOG ) {
-                    Log.d(TAG, "scale: " + scale);
-                    Log.d(TAG, "font_size: " + font_size);
-                    Log.d(TAG, "font_size_pixel: " + font_size_pixel);
-                }
-                p.setTextSize(font_size_pixel);
-                int offset_x = (int)(8 * scale + 0.5f); // convert pt to pixels
-                int offset_y = (int)(8 * scale + 0.5f); // convert pt to pixels
-                int diff_y = (int)((font_size+4) * scale + 0.5f); // convert pt to pixels
-                int ypos = height - offset_y;
-                p.setTextAlign(Align.RIGHT);
-                MyApplicationInterface.Shadow draw_shadowed = MyApplicationInterface.Shadow.SHADOW_NONE;
-                switch( pref_style ) {
-                    case "preference_stamp_style_shadowed":
-                        draw_shadowed = MyApplicationInterface.Shadow.SHADOW_OUTLINE;
-                        break;
-                    case "preference_stamp_style_plain":
-                        draw_shadowed = MyApplicationInterface.Shadow.SHADOW_NONE;
-                        break;
-                    case "preference_stamp_style_background":
-                        draw_shadowed = MyApplicationInterface.Shadow.SHADOW_BACKGROUND;
-                        break;
-                }
-                if( MyDebug.LOG )
-                    Log.d(TAG, "draw_shadowed: " + draw_shadowed);
-                if( dategeo_stamp ) {
-                    if( MyDebug.LOG )
-                        Log.d(TAG, "stamp date");
-                    // doesn't respect user preferences such as 12/24 hour - see note about in draw() about DateFormat.getTimeInstance()
-                    String date_stamp = TextFormatter.getDateString(preference_stamp_dateformat, request.current_date);
-                    String time_stamp = TextFormatter.getTimeString(preference_stamp_timeformat, request.current_date);
-                    if( MyDebug.LOG ) {
-                        Log.d(TAG, "date_stamp: " + date_stamp);
-                        Log.d(TAG, "time_stamp: " + time_stamp);
-                    }
-                    if( date_stamp.length() > 0 || time_stamp.length() > 0 ) {
-                        String datetime_stamp = "";
-                        if( date_stamp.length() > 0 )
-                            datetime_stamp += date_stamp;
-                        if( time_stamp.length() > 0 ) {
-                            if( datetime_stamp.length() > 0 )
-                                datetime_stamp += " ";
-                            datetime_stamp += time_stamp;
-                        }
-                        //applicationInterface.drawTextWithBackground(canvas, p, datetime_stamp, color, Color.BLACK, width - offset_x, ypos, MyApplicationInterface.Alignment.ALIGNMENT_BOTTOM, null, draw_shadowed);
-                        if( stamp_string.length() == 0 )
-                            stamp_string = datetime_stamp;
-                        else
-                            stamp_string = datetime_stamp + "\n" + stamp_string;
-                    }
-                    ypos -= diff_y;
-                    String gps_stamp = main_activity.getTextFormatter().getGPSString(preference_stamp_gpsformat, request.preference_units_distance, request.store_location, request.location, request.store_geo_direction, request.geo_direction);
-                    if( gps_stamp.length() > 0 ) {
-                        // don't log gps_stamp, in case of privacy!
-
-                        /*Address address = null;
-                        if( request.store_location && !request.preference_stamp_geo_address.equals("preference_stamp_geo_address_no") ) {
-                            boolean block_geocoder;
-                            synchronized(this) {
-                                block_geocoder = app_is_paused;
-                            }
-                            // try to find an address
-                            // n.b., if we update the class being used, consider whether the info on Geocoder in preference_stamp_geo_address_summary needs updating
-                            if( block_geocoder ) {
-                                // seems safer to not try to initiate potential network connections (via geocoder) if Open Camera
-                                // has paused and we're still saving images
-                                if( MyDebug.LOG )
-                                    Log.d(TAG, "don't call geocoder for photostamp as app is paused");
-                            }
-                            else if( Geocoder.isPresent() ) {
-                                if( MyDebug.LOG )
-                                    Log.d(TAG, "geocoder is present");
-                                Geocoder geocoder = new Geocoder(main_activity, Locale.getDefault());
-                                try {
-                                    List<Address> addresses = geocoder.getFromLocation(request.location.getLatitude(), request.location.getLongitude(), 1);
-                                    if( addresses != null && addresses.size() > 0 ) {
-                                        address = addresses.get(0);
-                                        // don't log address, in case of privacy!
-                                        if( MyDebug.LOG ) {
-                                            Log.d(TAG, "max line index: " + address.getMaxAddressLineIndex());
-                                        }
-                                    }
-                                }
-                                catch(Exception e) {
-                                    Log.e(TAG, "failed to read from geocoder");
-                                    e.printStackTrace();
-                                }
-                            }
-                            else {
-                                if( MyDebug.LOG )
-                                    Log.d(TAG, "geocoder not present");
-                            }
-                        }*/
-
-                        //if( address == null || request.preference_stamp_geo_address.equals("preference_stamp_geo_address_both") )
-                        {
-                            if( MyDebug.LOG )
-                                Log.d(TAG, "display gps coords");
-                            // want GPS coords (either in addition to the address, or we don't have an address)
-                            // we'll also enter here if store_location is false, but we have geo direction to display
-                            //applicationInterface.drawTextWithBackground(canvas, p, gps_stamp, color, Color.BLACK, width - offset_x, ypos, MyApplicationInterface.Alignment.ALIGNMENT_BOTTOM, null, draw_shadowed);
-                            if( stamp_string.length() == 0 )
-                                stamp_string = gps_stamp;
-                            else
-                                stamp_string = gps_stamp + "\n" + stamp_string;
-                            ypos -= diff_y;
-                        }
-                        /*else if( request.store_geo_direction ) {
-                            if( MyDebug.LOG )
-                                Log.d(TAG, "not displaying gps coords, but need to display geo direction");
-                            // we are displaying an address instead of GPS coords, but we still need to display the geo direction
-                            gps_stamp = main_activity.getTextFormatter().getGPSString(preference_stamp_gpsformat, request.preference_units_distance, false, null, request.store_geo_direction, request.geo_direction);
-                            if( gps_stamp.length() > 0 ) {
-                                // don't log gps_stamp, in case of privacy!
-                                //applicationInterface.drawTextWithBackground(canvas, p, gps_stamp, color, Color.BLACK, width - offset_x, ypos, MyApplicationInterface.Alignment.ALIGNMENT_BOTTOM, null, draw_shadowed);
-                                if( stamp_string.length() == 0 )
-                                    stamp_string = gps_stamp;
-                                else
-                                    stamp_string = gps_stamp + "\n" + stamp_string;
-                                ypos -= diff_y;
-                            }
-                        }*/
-
-                        /*if( address != null ) {
-                            for(int i=0;i<=address.getMaxAddressLineIndex();i++) {
-                                // write in reverse order
-                                String addressLine = address.getAddressLine(address.getMaxAddressLineIndex()-i);
-                                //applicationInterface.drawTextWithBackground(canvas, p, addressLine, color, Color.BLACK, width - offset_x, ypos, MyApplicationInterface.Alignment.ALIGNMENT_BOTTOM, null, draw_shadowed);
-                                if( stamp_string.length() == 0 )
-                                    stamp_string = addressLine;
-                                else
-                                    stamp_string = addressLine + "\n" + stamp_string;
-                                ypos -= diff_y;
-                            }
-                        }*/
-                    }
-                }
-                if( text_stamp ) {
-                    if( MyDebug.LOG )
-                        Log.d(TAG, "stamp text");
-
-                    //applicationInterface.drawTextWithBackground(canvas, p, request.preference_textstamp, color, Color.BLACK, width - offset_x, ypos, MyApplicationInterface.Alignment.ALIGNMENT_BOTTOM, null, draw_shadowed);
-                    if( stamp_string.length() == 0 )
-                        stamp_string = request.preference_textstamp;
-                    else
-                        stamp_string = request.preference_textstamp + "\n" + stamp_string;
-
-                    //noinspection UnusedAssignment
-                    ypos -= diff_y;
-                }
-
-                if( stamp_string.length() > 0 ) {
-                    // don't log stamp_string, in case of privacy!
-
-                    @SuppressLint("InflateParams")
-                    final View stamp_view = LayoutInflater.from(main_activity).inflate(R.layout.stamp_image_text, null);
-                    final LinearLayout layout = stamp_view.findViewById(R.id.layout);
-                    final TextView textview = stamp_view.findViewById(R.id.text_view);
-
-                    textview.setVisibility(View.VISIBLE);
-                    textview.setTextColor(color);
-                    textview.setTextSize(TypedValue.COMPLEX_UNIT_PX, font_size_pixel);
-                    textview.setText(stamp_string);
-                    if( draw_shadowed == MyApplicationInterface.Shadow.SHADOW_OUTLINE ) {
-                        //noinspection PointlessArithmeticExpression
-                        float shadow_radius = (1.0f * scale + 0.5f); // convert pt to pixels
-                        shadow_radius = Math.max(shadow_radius, 1.0f);
-                        if( MyDebug.LOG )
-                            Log.d(TAG, "shadow_radius: " + shadow_radius);
-                        textview.setShadowLayer(shadow_radius, 0.0f, 0.0f, Color.BLACK);
-                    }
-                    else if( draw_shadowed == MyApplicationInterface.Shadow.SHADOW_BACKGROUND ) {
-                        textview.setBackgroundColor(Color.argb(64, 0, 0, 0));
-                    }
-                    //textview.setBackgroundColor(Color.BLACK); // test
-                    textview.setGravity(Gravity.END); // so text is right-aligned - important when there are multiple lines
-
-                    layout.measure(canvas.getWidth(), canvas.getHeight());
-                    layout.layout(0, 0, canvas.getWidth(), canvas.getHeight());
-                    canvas.translate(width - offset_x - textview.getWidth(), height - offset_y - textview.getHeight());
-                    layout.draw(canvas);
-                }
-            }
-        }
-        return bitmap;
-    }
-
-    private static class PostProcessBitmapResult {
-        final Bitmap bitmap;
-
-        PostProcessBitmapResult(Bitmap bitmap) {
-            this.bitmap = bitmap;
-        }
-    }
-
-    /** Performs post-processing on the data, or bitmap if non-null, for saveSingleImageNow.
-     */
-    private PostProcessBitmapResult postProcessBitmap(final Request request, byte [] data, Bitmap bitmap, boolean ignore_exif_orientation) throws IOException {
-        if( MyDebug.LOG )
-            Log.d(TAG, "postProcessBitmap");
-        long time_s = System.currentTimeMillis();
-
-        if( !ignore_exif_orientation ) {
-            if( bitmap != null ) {
-                // rotate the bitmap if necessary for exif tags
-                if( MyDebug.LOG )
-                    Log.d(TAG, "rotate pre-existing bitmap for exif tags?");
-                bitmap = rotateForExif(bitmap, data);
-            }
-        }
-
-        if( request.do_auto_stabilise ) {
-            bitmap = autoStabilise(data, bitmap, request.level_angle, request.is_front_facing);
-        }
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "Save single image performance: time after auto-stabilise: " + (System.currentTimeMillis() - time_s));
-        }
-        if( request.mirror ) {
-            bitmap = mirrorImage(data, bitmap);
-        }
-        if( request.image_format != Request.ImageFormat.STD && bitmap == null ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "need to decode bitmap to convert file format");
-            bitmap = loadBitmapWithRotation(data, true);
-            if( bitmap == null ) {
-                // if we can't load bitmap for converting file formats, don't want to continue
-                System.gc();
-                throw new IOException();
-            }
-        }
-        if( request.remove_device_exif != Request.RemoveDeviceExif.OFF && bitmap == null ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "need to decode bitmap to strip exif tags");
-            // if removing device exif data, it's easier to do this by going through the codepath that
-            // resaves the bitmap, and then we avoid transferring/adding exif tags that we don't want
-            bitmap = loadBitmapWithRotation(data, true);
-            if( bitmap == null ) {
-                // if we can't load bitmap for removing device tags, don't want to continue
-                System.gc();
-                throw new IOException();
-            }
-        }
-        bitmap = stampImage(request, data, bitmap);
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "Save single image performance: time after photostamp: " + (System.currentTimeMillis() - time_s));
-        }
-        return new PostProcessBitmapResult(bitmap);
+        return compress_format;
     }
 
     /** May be run in saver thread or picture callback thread (depending on whether running in background).
@@ -2527,7 +1907,7 @@ public class ImageSaver extends Thread {
         ContentValues contentValues = null; // used if using scoped storage
         try {
             if( !raw_only ) {
-                PostProcessBitmapResult postProcessBitmapResult = postProcessBitmap(request, data, bitmap, ignore_exif_orientation);
+                PostProcessing.PostProcessBitmapResult postProcessBitmapResult = postProcessing.postProcessBitmap(request, data, bitmap, ignore_exif_orientation);
                 bitmap = postProcessBitmapResult.bitmap;
             }
 
@@ -2555,7 +1935,7 @@ public class ImageSaver extends Thread {
                         if( MyDebug.LOG )
                             Log.d(TAG, "create bitmap");
                         // bitmap we return doesn't need to be mutable
-                        bitmap = loadBitmapWithRotation(data, false);
+                        bitmap = ImageUtils.loadBitmapWithRotation(data, false);
                     }
                     if( bitmap != null ) {
                         int width = bitmap.getWidth();
@@ -2630,16 +2010,12 @@ public class ImageSaver extends Thread {
                 }
                 catch(IllegalArgumentException e) {
                     // can happen for mediastore method if invalid ContentResolver.insert() call
-                    if( MyDebug.LOG )
-                        Log.e(TAG, "IllegalArgumentException inserting to mediastore: " + e.getMessage());
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "IllegalArgumentException inserting to mediastore", e);
                     throw new IOException();
                 }
                 catch(IllegalStateException e) {
                     // have received Google Play crashes from ContentResolver.insert() call for mediastore method
-                    if( MyDebug.LOG )
-                        Log.e(TAG, "IllegalStateException inserting to mediastore: " + e.getMessage());
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "IllegalStateException inserting to mediastore", e);
                     throw new IOException();
                 }
                 if( MyDebug.LOG )
@@ -2667,19 +2043,14 @@ public class ImageSaver extends Thread {
                     if( bitmap != null ) {
                         if( MyDebug.LOG )
                             Log.d(TAG, "compress bitmap, quality " + request.image_quality);
-                        Bitmap.CompressFormat compress_format;
-                        switch( request.image_format ) {
-                            case WEBP:
-                                compress_format = Bitmap.CompressFormat.WEBP;
-                                break;
-                            case PNG:
-                                compress_format = Bitmap.CompressFormat.PNG;
-                                break;
-                            default:
-                                compress_format = Bitmap.CompressFormat.JPEG;
-                                break;
+                        Bitmap.CompressFormat compress_format = getBitmapCompressFormat(request.image_format);
+                        if( request.process_type == Request.ProcessType.PANORAMA && compress_format == Bitmap.CompressFormat.JPEG ) {
+                            // panorama xmp only supported for JPEG format
+                            savePanoramaBitmap(bitmap, compress_format, request.image_quality, request.jpeg_images.size(), outputStream);
                         }
-                        bitmap.compress(compress_format, request.image_quality, outputStream);
+                        else {
+                            bitmap.compress(compress_format, request.image_quality, outputStream);
+                        }
                     }
                     else {
                         outputStream.write(data);
@@ -2698,21 +2069,23 @@ public class ImageSaver extends Thread {
                     success = true;
                 }
 
-                if( request.image_format == Request.ImageFormat.STD ) {
-                    // handle transferring/setting Exif tags (JPEG format only)
+                //if( request.image_format == Request.ImageFormat.STD )
+                {
+                    // handle transferring/setting Exif tags
+                    // ExifInterface now supports WebP and PNG
                     if( bitmap != null ) {
                         // need to update EXIF data! (only supported for JPEG image formats)
                         if( MyDebug.LOG )
                             Log.d(TAG, "set Exif tags from data");
                         if( picFile != null ) {
-                            setExifFromData(request, data, picFile);
+                            ExifHandler.setExifFromData(request, data, picFile);
                         }
                         else {
                             ParcelFileDescriptor parcelFileDescriptor = main_activity.getContentResolver().openFileDescriptor(saveUri, "rw");
                             try {
                                 if( parcelFileDescriptor != null ) {
                                     FileDescriptor fileDescriptor = parcelFileDescriptor.getFileDescriptor();
-                                    setExifFromData(request, data, fileDescriptor);
+                                    ExifHandler.setExifFromData(request, data, fileDescriptor);
                                 }
                                 else {
                                     Log.e(TAG, "failed to create ParcelFileDescriptor for saveUri: " + saveUri);
@@ -2724,14 +2097,14 @@ public class ImageSaver extends Thread {
                                         parcelFileDescriptor.close();
                                     }
                                     catch(IOException e) {
-                                        e.printStackTrace();
+                                        MyDebug.logStackTrace(TAG, "fail to close parcelFileDescriptor", e);
                                     }
                                 }
                             }
                         }
                     }
                     else {
-                        updateExif(request, picFile, saveUri);
+                        ExifHandler.updateExif(main_activity, request, picFile, saveUri);
                         if( MyDebug.LOG ) {
                             Log.d(TAG, "Save single image performance: time after updateExif: " + (System.currentTimeMillis() - time_s));
                         }
@@ -2741,6 +2114,24 @@ public class ImageSaver extends Thread {
                 if( update_thumbnail ) {
                     // clear just in case we're unable to update this - don't want an out of date cached uri
                     storageUtils.clearLastMediaScanned();
+                }
+
+                // Must be done before broadcastFile()
+                // see corresponding note in saveImageNowRaw()
+                if( raw_only ) {
+                    // no saved image to record
+                }
+                else if( request.image_capture_intent ) {
+                    // no need to store as last image
+                }
+                else if( saveUri == null ) {
+                    applicationInterface.addLastImage(picFile, share_image);
+                }
+                else if( storageUtils.isUsingSAF() ){
+                    applicationInterface.addLastImageSAF(saveUri, share_image);
+                }
+                else if( use_media_store ){
+                    applicationInterface.addLastImageMediaStore(saveUri, share_image);
                 }
 
                 boolean hasnoexifdatetime = request.remove_device_exif != Request.RemoveDeviceExif.OFF && request.remove_device_exif != Request.RemoveDeviceExif.KEEP_DATETIME;
@@ -2791,37 +2182,18 @@ public class ImageSaver extends Thread {
             }
         }
         catch(FileNotFoundException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "File not found: " + e.getMessage());
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "file not found", e);
             main_activity.getPreview().showToast(null, R.string.failed_to_save_photo);
         }
         catch(IOException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "I/O error writing file: " + e.getMessage());
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "I/O error writing file", e);
             main_activity.getPreview().showToast(null, R.string.failed_to_save_photo);
         }
         catch(SecurityException e) {
             // received security exception from copyFileToUri()->openOutputStream() from Google Play
             // update: no longer have copyFileToUri() (as no longer use temporary files for SAF), but might as well keep this
-            if( MyDebug.LOG )
-                Log.e(TAG, "security exception writing file: " + e.getMessage());
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "security exception writing file", e);
             main_activity.getPreview().showToast(null, R.string.failed_to_save_photo);
-        }
-
-        if( raw_only ) {
-            // no saved image to record
-        }
-        else if( success && saveUri == null ) {
-            applicationInterface.addLastImage(picFile, share_image);
-        }
-        else if( success && storageUtils.isUsingSAF() ){
-            applicationInterface.addLastImageSAF(saveUri, share_image);
-        }
-        else if( success && use_media_store ){
-            applicationInterface.addLastImageMediaStore(saveUri, share_image);
         }
 
         // I have received crashes where camera_controller was null - could perhaps happen if this thread was running just as the camera is closing?
@@ -2841,10 +2213,6 @@ public class ImageSaver extends Thread {
             if( bitmap == null ) {
                 BitmapFactory.Options options = new BitmapFactory.Options();
                 options.inMutable = false;
-                if( Build.VERSION.SDK_INT <= Build.VERSION_CODES.KITKAT ) {
-                    // setting is ignored in Android 5 onwards
-                    options.inPurgeable = true;
-                }
                 options.inSampleSize = sample_size;
                 thumbnail = BitmapFactory.decodeByteArray(data, 0, data.length, options);
                 if( MyDebug.LOG ) {
@@ -2854,7 +2222,7 @@ public class ImageSaver extends Thread {
                 // now get the rotation from the Exif data
                 if( MyDebug.LOG )
                     Log.d(TAG, "rotate thumbnail for exif tags?");
-                thumbnail = rotateForExif(thumbnail, data);
+                thumbnail = ImageUtils.rotateForExif(thumbnail, data);
             }
             else {
                 int width = bitmap.getWidth();
@@ -2879,8 +2247,7 @@ public class ImageSaver extends Thread {
                     // true here
                     // crashes seem to all be Android 7.1 or earlier, so maybe this is a bug that's been fixed - but catch it anyway
                     // as it's grown popular
-                    Log.e(TAG, "can't create thumbnail bitmap due to IllegalArgumentException?!");
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "can't create thumbnail bitmap due to IllegalArgumentException?!", e);
                     thumbnail = null;
                 }
             }
@@ -2916,25 +2283,84 @@ public class ImageSaver extends Thread {
         return success;
     }
 
-    /** As setExifFromFile, but can read the Exif tags directly from the jpeg data rather than a file.
-     */
-    private void setExifFromData(final Request request, byte [] data, File to_file) throws IOException {
+    private void savePanoramaBitmap(Bitmap bitmap, Bitmap.CompressFormat compress_format, int quality, int n_pics, OutputStream outputStream) throws IOException {
+        // need to write to a temporary stream, so we can insert XMP tags
+        ByteArrayOutputStream jpegStream = new ByteArrayOutputStream();
+        bitmap.compress(compress_format, quality, jpegStream);
+        byte [] jpegData = jpegStream.toByteArray();
+
+        if( jpegData[0] != (byte) 0xFF || jpegData[1] != (byte) 0xD8 ) {
+            // invalid jpeg header?! best not to mess with it
+            if( MyDebug.LOG )
+                Log.d(TAG, "invalid jpeg header, skip adding panorama xmp");
+            outputStream.write(jpegData, 0, jpegData.length);
+            return;
+        }
+
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+
+        // see code in MyApplicationInterface.setNextPanoramaPoint()
+        float camera_angle_y = main_activity.getPreview().getViewAngleY(false); // angle spanned by one image
+        float angle_per_pic = camera_angle_y / MyApplicationInterface.getPanoramaPicsPerScreen(); // extra angle per extra pic
+        float total_angle = camera_angle_y + angle_per_pic * (n_pics-1);
+        float n_pics_for_360 = 360.0f/total_angle;
+        int full_width = (int)(width * n_pics_for_360 + 0.5f);
+
+        //int full_height = (int)(height * n_pics_for_360 * 0.5f + 0.5f);
+        //float camera_angle_x = main_activity.getPreview().getViewAngleX(false); // angle spanned by one image
+        //int full_height = (int)(height * (180.0f/camera_angle_x) + 0.5f);
+        int full_height = full_width/2; // full resolution is 360x180 degrees, and don't want to preserve aspect ratio
+        full_height = Math.max(full_height, height); // just in case!
+
+        int cropped_left = (full_width - width)/2;
+        int cropped_top = (full_height - height)/2;
         if( MyDebug.LOG ) {
-            Log.d(TAG, "setExifFromData");
-            Log.d(TAG, "to_file: " + to_file);
+            Log.d(TAG, "camera_angle_y: " + camera_angle_y);
+            Log.d(TAG, "angle_per_pic: " + angle_per_pic);
+            Log.d(TAG, "total_angle: " + total_angle);
+            Log.d(TAG, "n_pics_for_360: " + n_pics_for_360);
+            Log.d(TAG, "width: " + width);
+            Log.d(TAG, "full_width: " + full_width);
+            Log.d(TAG, "height: " + height);
+            Log.d(TAG, "full_height: " + full_height);
+            Log.d(TAG, "cropped_left: " + cropped_left);
+            Log.d(TAG, "cropped_top: " + cropped_top);
         }
-        InputStream inputStream = null;
-        try {
-            inputStream = new ByteArrayInputStream(data);
-            ExifInterface exif = new ExifInterface(inputStream);
-            ExifInterface exif_new = new ExifInterface(to_file.getAbsolutePath());
-            setExif(request, exif, exif_new);
-        }
-        finally {
-            if( inputStream != null ) {
-                inputStream.close();
-            }
-        }
+
+        String xmp =
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">" +
+                        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">" +
+                        "  <rdf:Description xmlns:GPano=\"http://ns.google.com/photos/1.0/panorama/\"" +
+                        "    GPano:ProjectionType=\"equirectangular\"" +
+                        "    GPano:FullPanoWidthPixels=\"" + full_width + "\"" +
+                        "    GPano:FullPanoHeightPixels=\"" + full_height + "\"" +
+                        "    GPano:CroppedAreaImageWidthPixels=\"" + width + "\"" +
+                        "    GPano:CroppedAreaImageHeightPixels=\"" + height + "\"" +
+                        "    GPano:CroppedAreaLeftPixels=\"" + cropped_left + "\"" +
+                        "    GPano:CroppedAreaTopPixels=\"" + cropped_top + "\"" +
+                        "/>" +
+                        " </rdf:RDF>" +
+                        "</x:xmpmeta>";
+
+        String xmpPacket = "http://ns.adobe.com/xap/1.0/\u0000" + xmp;
+
+        byte [] xmpBytes = xmpPacket.getBytes(StandardCharsets.UTF_8);
+        int segmentLength = xmpBytes.length + 2;
+
+        // jpeg header
+        outputStream.write(0xFF);
+        outputStream.write(0xD8);
+
+        // XMP segment
+        outputStream.write(0xFF);
+        outputStream.write(0xE1); // APP1
+        outputStream.write((segmentLength >> 8) & 0xFF);
+        outputStream.write(segmentLength & 0xFF);
+        outputStream.write(xmpBytes);
+
+        // rest of JPEG data (skip original SOI)
+        outputStream.write(jpegData, 2, jpegData.length - 2);
     }
 
     private void broadcastSAFFile(Uri saveUri, boolean set_last_scanned, boolean hasnoexifdatetime, boolean image_capture_intent) {
@@ -2944,603 +2370,12 @@ public class ImageSaver extends Thread {
         storageUtils.broadcastUri(saveUri, true, false, set_last_scanned, hasnoexifdatetime, image_capture_intent);
     }
 
-    /** As setExifFromFile, but can read the Exif tags directly from the jpeg data, and to a file descriptor, rather than a file.
-     */
-    private void setExifFromData(final Request request, byte [] data, FileDescriptor to_file_descriptor) throws IOException {
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "setExifFromData");
-            Log.d(TAG, "to_file_descriptor: " + to_file_descriptor);
-        }
-        InputStream inputStream = null;
-        try {
-            inputStream = new ByteArrayInputStream(data);
-            ExifInterface exif = new ExifInterface(inputStream);
-            ExifInterface exif_new = new ExifInterface(to_file_descriptor);
-            setExif(request, exif, exif_new);
-        }
-        finally {
-            if( inputStream != null ) {
-                inputStream.close();
-            }
-        }
-    }
-
-    /** Transfers device exif info. Should only be called if request.remove_device_exif == Request.RemoveDeviceExif.OFF.
-     */
-    private void transferDeviceExif(ExifInterface exif, ExifInterface exif_new) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "transferDeviceExif");
-
-        if( MyDebug.LOG )
-            Log.d(TAG, "read back EXIF data");
-
-        String exif_aperture = exif.getAttribute(ExifInterface.TAG_F_NUMBER); // previously TAG_APERTURE
-        String exif_exposure_time = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME);
-        String exif_flash = exif.getAttribute(ExifInterface.TAG_FLASH);
-        String exif_focal_length = exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH);
-        // leave TAG_IMAGE_WIDTH/TAG_IMAGE_LENGTH, as this may have changed!
-        //noinspection deprecation
-        String exif_iso = exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS); // previously TAG_ISO
-        String exif_make = exif.getAttribute(ExifInterface.TAG_MAKE);
-        String exif_model = exif.getAttribute(ExifInterface.TAG_MODEL);
-        // leave orientation - since we rotate bitmaps to account for orientation, we don't want to write it to the saved image!
-        String exif_white_balance = exif.getAttribute(ExifInterface.TAG_WHITE_BALANCE);
-
-        String exif_aperture_value;
-        String exif_brightness_value;
-        String exif_cfa_pattern;
-        String exif_color_space;
-        String exif_components_configuration;
-        String exif_compressed_bits_per_pixel;
-        String exif_compression;
-        String exif_contrast;
-        String exif_device_setting_description;
-        String exif_digital_zoom_ratio;
-        String exif_exposure_bias_value;
-        String exif_exposure_index;
-        String exif_exposure_mode;
-        String exif_exposure_program;
-        String exif_flash_energy;
-        String exif_focal_length_in_35mm_film;
-        String exif_focal_plane_resolution_unit;
-        String exif_focal_plane_x_resolution;
-        String exif_focal_plane_y_resolution;
-        String exif_gain_control;
-        String exif_gps_area_information;
-        String exif_gps_differential;
-        String exif_gps_dop;
-        String exif_gps_measure_mode;
-        String exif_image_description;
-        String exif_light_source;
-        String exif_maker_note;
-        String exif_max_aperture_value;
-        String exif_metering_mode;
-        String exif_oecf;
-        String exif_photometric_interpretation;
-        String exif_saturation;
-        String exif_scene_capture_type;
-        String exif_scene_type;
-        String exif_sensing_method;
-        String exif_sharpness;
-        String exif_shutter_speed_value;
-        String exif_software;
-        String exif_user_comment;
-        {
-            // tags that are new in Android N - note we skip tags unlikely to be relevant for camera photos
-            // update, now available in all Android versions thanks to using AndroidX ExifInterface
-            exif_aperture_value = exif.getAttribute(ExifInterface.TAG_APERTURE_VALUE);
-            exif_brightness_value = exif.getAttribute(ExifInterface.TAG_BRIGHTNESS_VALUE);
-            exif_cfa_pattern = exif.getAttribute(ExifInterface.TAG_CFA_PATTERN);
-            exif_color_space = exif.getAttribute(ExifInterface.TAG_COLOR_SPACE);
-            exif_components_configuration = exif.getAttribute(ExifInterface.TAG_COMPONENTS_CONFIGURATION);
-            exif_compressed_bits_per_pixel = exif.getAttribute(ExifInterface.TAG_COMPRESSED_BITS_PER_PIXEL);
-            exif_compression = exif.getAttribute(ExifInterface.TAG_COMPRESSION);
-            exif_contrast = exif.getAttribute(ExifInterface.TAG_CONTRAST);
-            exif_device_setting_description = exif.getAttribute(ExifInterface.TAG_DEVICE_SETTING_DESCRIPTION);
-            exif_digital_zoom_ratio = exif.getAttribute(ExifInterface.TAG_DIGITAL_ZOOM_RATIO);
-            // unclear if we should transfer TAG_EXIF_VERSION - don't want to risk conficting with whatever ExifInterface writes itself
-            exif_exposure_bias_value = exif.getAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE);
-            exif_exposure_index = exif.getAttribute(ExifInterface.TAG_EXPOSURE_INDEX);
-            exif_exposure_mode = exif.getAttribute(ExifInterface.TAG_EXPOSURE_MODE);
-            exif_exposure_program = exif.getAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM);
-            exif_flash_energy = exif.getAttribute(ExifInterface.TAG_FLASH_ENERGY);
-            exif_focal_length_in_35mm_film = exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM);
-            exif_focal_plane_resolution_unit = exif.getAttribute(ExifInterface.TAG_FOCAL_PLANE_RESOLUTION_UNIT);
-            exif_focal_plane_x_resolution = exif.getAttribute(ExifInterface.TAG_FOCAL_PLANE_X_RESOLUTION);
-            exif_focal_plane_y_resolution = exif.getAttribute(ExifInterface.TAG_FOCAL_PLANE_Y_RESOLUTION);
-            // TAG_F_NUMBER same as TAG_APERTURE
-            exif_gain_control = exif.getAttribute(ExifInterface.TAG_GAIN_CONTROL);
-            exif_gps_area_information = exif.getAttribute(ExifInterface.TAG_GPS_AREA_INFORMATION);
-            // don't care about TAG_GPS_DEST_*
-            exif_gps_differential = exif.getAttribute(ExifInterface.TAG_GPS_DIFFERENTIAL);
-            exif_gps_dop = exif.getAttribute(ExifInterface.TAG_GPS_DOP);
-            // TAG_GPS_IMG_DIRECTION, TAG_GPS_IMG_DIRECTION_REF won't have been recorded in the image yet - we add this ourselves in setGPSDirectionExif()
-            // don't care about TAG_GPS_MAP_DATUM?
-            exif_gps_measure_mode = exif.getAttribute(ExifInterface.TAG_GPS_MEASURE_MODE);
-            // don't care about TAG_GPS_SATELLITES?
-            // don't care about TAG_GPS_STATUS, TAG_GPS_TRACK, TAG_GPS_TRACK_REF, TAG_GPS_VERSION_ID
-            exif_image_description = exif.getAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION);
-            // unclear what TAG_IMAGE_UNIQUE_ID, TAG_INTEROPERABILITY_INDEX are
-            // TAG_ISO_SPEED_RATINGS same as TAG_ISO
-            // skip TAG_JPEG_INTERCHANGE_FORMAT, TAG_JPEG_INTERCHANGE_FORMAT_LENGTH
-            exif_light_source = exif.getAttribute(ExifInterface.TAG_LIGHT_SOURCE);
-            exif_maker_note = exif.getAttribute(ExifInterface.TAG_MAKER_NOTE);
-            exif_max_aperture_value = exif.getAttribute(ExifInterface.TAG_MAX_APERTURE_VALUE);
-            exif_metering_mode = exif.getAttribute(ExifInterface.TAG_METERING_MODE);
-            exif_oecf = exif.getAttribute(ExifInterface.TAG_OECF);
-            exif_photometric_interpretation = exif.getAttribute(ExifInterface.TAG_PHOTOMETRIC_INTERPRETATION);
-            // skip PIXEL_X/Y_DIMENSION, as it may have changed
-            // don't care about TAG_PLANAR_CONFIGURATION
-            // don't care about TAG_PRIMARY_CHROMATICITIES, TAG_REFERENCE_BLACK_WHITE?
-            // don't care about TAG_RESOLUTION_UNIT
-            // TAG_ROWS_PER_STRIP may have changed (if it's even relevant)
-            // TAG_SAMPLES_PER_PIXEL may no longer be relevant if we've changed the image dimensions?
-            exif_saturation = exif.getAttribute(ExifInterface.TAG_SATURATION);
-            exif_scene_capture_type = exif.getAttribute(ExifInterface.TAG_SCENE_CAPTURE_TYPE);
-            exif_scene_type = exif.getAttribute(ExifInterface.TAG_SCENE_TYPE);
-            exif_sensing_method = exif.getAttribute(ExifInterface.TAG_SENSING_METHOD);
-            exif_sharpness = exif.getAttribute(ExifInterface.TAG_SHARPNESS);
-            exif_shutter_speed_value = exif.getAttribute(ExifInterface.TAG_SHUTTER_SPEED_VALUE);
-            exif_software = exif.getAttribute(ExifInterface.TAG_SOFTWARE);
-            // don't care about TAG_SPATIAL_FREQUENCY_RESPONSE, TAG_SPECTRAL_SENSITIVITY?
-            // don't care about TAG_STRIP_*
-            // don't care about TAG_SUBJECT_*
-            // TAG_SUBSEC_TIME_DIGITIZED same as TAG_SUBSEC_TIME_DIG
-            // TAG_SUBSEC_TIME_ORIGINAL same as TAG_SUBSEC_TIME_ORIG
-            // TAG_THUMBNAIL_IMAGE_* may have changed
-            // don't care about TAG_TRANSFER_FUNCTION?
-            exif_user_comment = exif.getAttribute(ExifInterface.TAG_USER_COMMENT);
-            // don't care about TAG_WHITE_POINT?
-            // TAG_X_RESOLUTION may have changed?
-            // don't care about TAG_Y_*?
-        }
-
-        String exif_photographic_sensitivity = exif.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY);
-        String exif_sensitivity_type = exif.getAttribute(ExifInterface.TAG_SENSITIVITY_TYPE);
-        String exif_standard_output_sensitivity = exif.getAttribute(ExifInterface.TAG_STANDARD_OUTPUT_SENSITIVITY);
-        String exif_recommended_exposure_index = exif.getAttribute(ExifInterface.TAG_RECOMMENDED_EXPOSURE_INDEX);
-        String exif_iso_speed = exif.getAttribute(ExifInterface.TAG_ISO_SPEED);
-        String exif_custom_rendered = exif.getAttribute(ExifInterface.TAG_CUSTOM_RENDERED);
-        String exif_lens_specification = exif.getAttribute(ExifInterface.TAG_LENS_SPECIFICATION);
-        String exif_lens_name = exif.getAttribute(ExifInterface.TAG_LENS_MAKE);
-        String exif_lens_model = exif.getAttribute(ExifInterface.TAG_LENS_MODEL);
-
-        if( MyDebug.LOG )
-            Log.d(TAG, "now write new EXIF data");
-        if( exif_aperture != null )
-            exif_new.setAttribute(ExifInterface.TAG_F_NUMBER, exif_aperture);
-        if( exif_exposure_time != null )
-            exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, exif_exposure_time);
-        if( exif_flash != null )
-            exif_new.setAttribute(ExifInterface.TAG_FLASH, exif_flash);
-        if( exif_focal_length != null )
-            exif_new.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, exif_focal_length);
-        if( exif_iso != null )
-            //noinspection deprecation
-            exif_new.setAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS, exif_iso);
-        if( exif_make != null )
-            exif_new.setAttribute(ExifInterface.TAG_MAKE, exif_make);
-        if( exif_model != null )
-            exif_new.setAttribute(ExifInterface.TAG_MODEL, exif_model);
-        if( exif_white_balance != null )
-            exif_new.setAttribute(ExifInterface.TAG_WHITE_BALANCE, exif_white_balance);
-
-        {
-            if( exif_aperture_value != null )
-                exif_new.setAttribute(ExifInterface.TAG_APERTURE_VALUE, exif_aperture_value);
-            if( exif_brightness_value != null )
-                exif_new.setAttribute(ExifInterface.TAG_BRIGHTNESS_VALUE, exif_brightness_value);
-            if( exif_cfa_pattern != null )
-                exif_new.setAttribute(ExifInterface.TAG_CFA_PATTERN, exif_cfa_pattern);
-            if( exif_color_space != null )
-                exif_new.setAttribute(ExifInterface.TAG_COLOR_SPACE, exif_color_space);
-            if( exif_components_configuration != null )
-                exif_new.setAttribute(ExifInterface.TAG_COMPONENTS_CONFIGURATION, exif_components_configuration);
-            if( exif_compressed_bits_per_pixel != null )
-                exif_new.setAttribute(ExifInterface.TAG_COMPRESSED_BITS_PER_PIXEL, exif_compressed_bits_per_pixel);
-            if( exif_compression != null )
-                exif_new.setAttribute(ExifInterface.TAG_COMPRESSION, exif_compression);
-            if( exif_contrast != null )
-                exif_new.setAttribute(ExifInterface.TAG_CONTRAST, exif_contrast);
-            if( exif_device_setting_description != null )
-                exif_new.setAttribute(ExifInterface.TAG_DEVICE_SETTING_DESCRIPTION, exif_device_setting_description);
-            if( exif_digital_zoom_ratio != null )
-                exif_new.setAttribute(ExifInterface.TAG_DIGITAL_ZOOM_RATIO, exif_digital_zoom_ratio);
-            if( exif_exposure_bias_value != null )
-                exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, exif_exposure_bias_value);
-            if( exif_exposure_index != null )
-                exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_INDEX, exif_exposure_index);
-            if( exif_exposure_mode != null )
-                exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_MODE, exif_exposure_mode);
-            if( exif_exposure_program != null )
-                exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM, exif_exposure_program);
-            if( exif_flash_energy != null )
-                exif_new.setAttribute(ExifInterface.TAG_FLASH_ENERGY, exif_flash_energy);
-            if( exif_focal_length_in_35mm_film != null )
-                exif_new.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, exif_focal_length_in_35mm_film);
-            if( exif_focal_plane_resolution_unit != null )
-                exif_new.setAttribute(ExifInterface.TAG_FOCAL_PLANE_RESOLUTION_UNIT, exif_focal_plane_resolution_unit);
-            if( exif_focal_plane_x_resolution != null )
-                exif_new.setAttribute(ExifInterface.TAG_FOCAL_PLANE_X_RESOLUTION, exif_focal_plane_x_resolution);
-            if( exif_focal_plane_y_resolution != null )
-                exif_new.setAttribute(ExifInterface.TAG_FOCAL_PLANE_Y_RESOLUTION, exif_focal_plane_y_resolution);
-            if( exif_gain_control != null )
-                exif_new.setAttribute(ExifInterface.TAG_GAIN_CONTROL, exif_gain_control);
-            if( exif_gps_area_information != null )
-                exif_new.setAttribute(ExifInterface.TAG_GPS_AREA_INFORMATION, exif_gps_area_information);
-            if( exif_gps_differential != null )
-                exif_new.setAttribute(ExifInterface.TAG_GPS_DIFFERENTIAL, exif_gps_differential);
-            if( exif_gps_dop != null )
-                exif_new.setAttribute(ExifInterface.TAG_GPS_DOP, exif_gps_dop);
-            if( exif_gps_measure_mode != null )
-                exif_new.setAttribute(ExifInterface.TAG_GPS_MEASURE_MODE, exif_gps_measure_mode);
-            if( exif_image_description != null )
-                exif_new.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, exif_image_description);
-            if( exif_light_source != null )
-                exif_new.setAttribute(ExifInterface.TAG_LIGHT_SOURCE, exif_light_source);
-            if( exif_maker_note != null )
-                exif_new.setAttribute(ExifInterface.TAG_MAKER_NOTE, exif_maker_note);
-            if( exif_max_aperture_value != null )
-                exif_new.setAttribute(ExifInterface.TAG_MAX_APERTURE_VALUE, exif_max_aperture_value);
-            if( exif_metering_mode != null )
-                exif_new.setAttribute(ExifInterface.TAG_METERING_MODE, exif_metering_mode);
-            if( exif_oecf != null )
-                exif_new.setAttribute(ExifInterface.TAG_OECF, exif_oecf);
-            if( exif_photometric_interpretation != null )
-                exif_new.setAttribute(ExifInterface.TAG_PHOTOMETRIC_INTERPRETATION, exif_photometric_interpretation);
-            if( exif_saturation != null )
-                exif_new.setAttribute(ExifInterface.TAG_SATURATION, exif_saturation);
-            if( exif_scene_capture_type != null )
-                exif_new.setAttribute(ExifInterface.TAG_SCENE_CAPTURE_TYPE, exif_scene_capture_type);
-            if( exif_scene_type != null )
-                exif_new.setAttribute(ExifInterface.TAG_SCENE_TYPE, exif_scene_type);
-            if( exif_sensing_method != null )
-                exif_new.setAttribute(ExifInterface.TAG_SENSING_METHOD, exif_sensing_method);
-            if( exif_sharpness != null )
-                exif_new.setAttribute(ExifInterface.TAG_SHARPNESS, exif_sharpness);
-            if( exif_shutter_speed_value != null )
-                exif_new.setAttribute(ExifInterface.TAG_SHUTTER_SPEED_VALUE, exif_shutter_speed_value);
-            if( exif_software != null )
-                exif_new.setAttribute(ExifInterface.TAG_SOFTWARE, exif_software);
-            if( exif_user_comment != null )
-                exif_new.setAttribute(ExifInterface.TAG_USER_COMMENT, exif_user_comment);
-        }
-
-        if( exif_photographic_sensitivity != null )
-            exif_new.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, exif_photographic_sensitivity);
-        if( exif_sensitivity_type != null )
-            exif_new.setAttribute(ExifInterface.TAG_SENSITIVITY_TYPE, exif_sensitivity_type);
-        if( exif_standard_output_sensitivity != null )
-            exif_new.setAttribute(ExifInterface.TAG_STANDARD_OUTPUT_SENSITIVITY, exif_standard_output_sensitivity);
-        if( exif_recommended_exposure_index != null )
-            exif_new.setAttribute(ExifInterface.TAG_RECOMMENDED_EXPOSURE_INDEX, exif_recommended_exposure_index);
-        if( exif_iso_speed != null )
-            exif_new.setAttribute(ExifInterface.TAG_ISO_SPEED, exif_iso_speed);
-        if( exif_custom_rendered != null )
-            exif_new.setAttribute(ExifInterface.TAG_CUSTOM_RENDERED, exif_custom_rendered);
-        if( exif_lens_specification != null )
-            exif_new.setAttribute(ExifInterface.TAG_LENS_SPECIFICATION, exif_lens_specification);
-        if( exif_lens_name != null )
-            exif_new.setAttribute(ExifInterface.TAG_LENS_MAKE, exif_lens_name);
-        if( exif_lens_model != null )
-            exif_new.setAttribute(ExifInterface.TAG_LENS_MODEL, exif_lens_model);
-
-    }
-
-    /** Transfers device exif info related to date and time.
-     */
-    private void transferDeviceExifDateTime(ExifInterface exif, ExifInterface exif_new) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "transferDeviceExifDateTime");
-
-        // tags related to date and time
-
-        String exif_datetime = exif.getAttribute(ExifInterface.TAG_DATETIME);
-        String exif_datetime_original = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL);
-        String exif_datetime_digitized = exif.getAttribute(ExifInterface.TAG_DATETIME_DIGITIZED);
-        String exif_subsec_time = exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME);
-        String exif_subsec_time_orig = exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL); // previously TAG_SUBSEC_TIME_ORIG
-        String exif_subsec_time_dig = exif.getAttribute(ExifInterface.TAG_SUBSEC_TIME_DIGITIZED); // previously TAG_SUBSEC_TIME_DIG
-        String exif_offset_time = exif.getAttribute(ExifInterface.TAG_OFFSET_TIME);
-        String exif_offset_time_orig = exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL);
-        String exif_offset_time_dig = exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_DIGITIZED);
-
-        if( exif_datetime != null )
-            exif_new.setAttribute(ExifInterface.TAG_DATETIME, exif_datetime);
-        if( exif_datetime_original != null )
-            exif_new.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, exif_datetime_original);
-        if( exif_datetime_digitized != null )
-            exif_new.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, exif_datetime_digitized);
-        if( exif_subsec_time != null )
-            exif_new.setAttribute(ExifInterface.TAG_SUBSEC_TIME, exif_subsec_time);
-        if( exif_subsec_time_orig != null )
-            exif_new.setAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, exif_subsec_time_orig);
-        if( exif_subsec_time_dig != null )
-            exif_new.setAttribute(ExifInterface.TAG_SUBSEC_TIME_DIGITIZED, exif_subsec_time_dig);
-        if( exif_offset_time != null )
-            exif_new.setAttribute(ExifInterface.TAG_OFFSET_TIME, exif_offset_time);
-        if( exif_offset_time_orig != null )
-            exif_new.setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, exif_offset_time_orig);
-        if( exif_offset_time_dig != null )
-            exif_new.setAttribute(ExifInterface.TAG_OFFSET_TIME_DIGITIZED, exif_offset_time_dig);
-
-    }
-
-    /** Transfers device exif info related to gps location.
-     */
-    private void transferDeviceExifGPS(ExifInterface exif, ExifInterface exif_new) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "transferDeviceExifGPS");
-
-        // tags for gps info
-
-        String exif_gps_processing_method = exif.getAttribute(ExifInterface.TAG_GPS_PROCESSING_METHOD);
-        String exif_gps_latitude = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE);
-        String exif_gps_latitude_ref = exif.getAttribute(ExifInterface.TAG_GPS_LATITUDE_REF);
-        String exif_gps_longitude = exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE);
-        String exif_gps_longitude_ref = exif.getAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF);
-        String exif_gps_altitude = exif.getAttribute(ExifInterface.TAG_GPS_ALTITUDE);
-        String exif_gps_altitude_ref = exif.getAttribute(ExifInterface.TAG_GPS_ALTITUDE_REF);
-        String exif_gps_datestamp = exif.getAttribute(ExifInterface.TAG_GPS_DATESTAMP);
-        String exif_gps_timestamp = exif.getAttribute(ExifInterface.TAG_GPS_TIMESTAMP);
-        String exif_gps_speed = exif.getAttribute(ExifInterface.TAG_GPS_SPEED);
-        String exif_gps_speed_ref = exif.getAttribute(ExifInterface.TAG_GPS_SPEED_REF);
-
-        if( exif_gps_processing_method != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_PROCESSING_METHOD, exif_gps_processing_method);
-        if( exif_gps_latitude != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_LATITUDE, exif_gps_latitude);
-        if( exif_gps_latitude_ref != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, exif_gps_latitude_ref);
-        if( exif_gps_longitude != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, exif_gps_longitude);
-        if( exif_gps_longitude_ref != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, exif_gps_longitude_ref);
-        if( exif_gps_altitude != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_ALTITUDE, exif_gps_altitude);
-        if( exif_gps_altitude_ref != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_ALTITUDE_REF, exif_gps_altitude_ref);
-        if( exif_gps_datestamp != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DATESTAMP, exif_gps_datestamp);
-        if( exif_gps_timestamp != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_TIMESTAMP, exif_gps_timestamp);
-        if( exif_gps_speed != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_SPEED, exif_gps_speed);
-        if( exif_gps_speed_ref != null )
-            exif_new.setAttribute(ExifInterface.TAG_GPS_SPEED_REF, exif_gps_speed_ref);
-    }
-
-    /** Explicitly removes tags based on the RemoveDeviceExif option.
-     *  Note that in theory this method is unnecessary: we implement the RemoveDeviceExif options
-     *  (if not OFF) by resaving the JPEG via a bitmap, and then limiting what Exif tags are
-     *  transferred across. This method is for extra paranoia: first to reduce the risk of future
-     *  bugs, secondly just in case saving via a bitmap does ever add exif tags.
-     */
-    private void removeExifTags(ExifInterface exif_new, final Request request) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "removeExifTags");
-
-        if( request.remove_device_exif != Request.RemoveDeviceExif.OFF ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "remove exif tags");
-            exif_new.setAttribute(ExifInterface.TAG_F_NUMBER, null);
-            exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, null);
-            exif_new.setAttribute(ExifInterface.TAG_FLASH, null);
-            exif_new.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, null);
-            exif_new.setAttribute(ExifInterface.TAG_IMAGE_WIDTH, null);
-            exif_new.setAttribute(ExifInterface.TAG_IMAGE_LENGTH, null);
-            //noinspection deprecation
-            exif_new.setAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS, null);
-            exif_new.setAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, null);
-            exif_new.setAttribute(ExifInterface.TAG_MAKE, null);
-            exif_new.setAttribute(ExifInterface.TAG_MODEL, null);
-            exif_new.setAttribute(ExifInterface.TAG_WHITE_BALANCE, null);
-            exif_new.setAttribute(ExifInterface.TAG_APERTURE_VALUE, null);
-            exif_new.setAttribute(ExifInterface.TAG_BRIGHTNESS_VALUE, null);
-            exif_new.setAttribute(ExifInterface.TAG_CFA_PATTERN, null);
-            exif_new.setAttribute(ExifInterface.TAG_COLOR_SPACE, null);
-            exif_new.setAttribute(ExifInterface.TAG_COMPONENTS_CONFIGURATION, null);
-            exif_new.setAttribute(ExifInterface.TAG_COMPRESSED_BITS_PER_PIXEL, null);
-            exif_new.setAttribute(ExifInterface.TAG_COMPRESSION, null);
-            exif_new.setAttribute(ExifInterface.TAG_CONTRAST, null);
-            exif_new.setAttribute(ExifInterface.TAG_DEVICE_SETTING_DESCRIPTION, null);
-            exif_new.setAttribute(ExifInterface.TAG_DIGITAL_ZOOM_RATIO, null);
-            exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_BIAS_VALUE, null);
-            exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_INDEX, null);
-            exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_MODE, null);
-            exif_new.setAttribute(ExifInterface.TAG_EXPOSURE_PROGRAM, null);
-            exif_new.setAttribute(ExifInterface.TAG_FLASH_ENERGY, null);
-            exif_new.setAttribute(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, null);
-            exif_new.setAttribute(ExifInterface.TAG_FOCAL_PLANE_RESOLUTION_UNIT, null);
-            exif_new.setAttribute(ExifInterface.TAG_FOCAL_PLANE_X_RESOLUTION, null);
-            exif_new.setAttribute(ExifInterface.TAG_FOCAL_PLANE_Y_RESOLUTION, null);
-            exif_new.setAttribute(ExifInterface.TAG_GAIN_CONTROL, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_AREA_INFORMATION, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DEST_BEARING, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DEST_BEARING_REF, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DEST_DISTANCE, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DEST_DISTANCE_REF, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DEST_LATITUDE, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DEST_LATITUDE_REF, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DEST_LONGITUDE, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DEST_LONGITUDE_REF, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DIFFERENTIAL, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_DOP, null);
-            if( !request.store_geo_direction ) {
-                exif_new.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, null);
-            }
-            exif_new.setAttribute(ExifInterface.TAG_GPS_MAP_DATUM, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_MEASURE_MODE, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_SATELLITES, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_STATUS, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_TRACK, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_TRACK_REF, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_VERSION_ID, null);
-            exif_new.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, null);
-            exif_new.setAttribute(ExifInterface.TAG_IMAGE_UNIQUE_ID, null);
-            exif_new.setAttribute(ExifInterface.TAG_INTEROPERABILITY_INDEX, null);
-            exif_new.setAttribute(ExifInterface.TAG_JPEG_INTERCHANGE_FORMAT, null);
-            exif_new.setAttribute(ExifInterface.TAG_JPEG_INTERCHANGE_FORMAT_LENGTH, null);
-            exif_new.setAttribute(ExifInterface.TAG_LIGHT_SOURCE, null);
-            exif_new.setAttribute(ExifInterface.TAG_MAKER_NOTE, null);
-            exif_new.setAttribute(ExifInterface.TAG_MAX_APERTURE_VALUE, null);
-            exif_new.setAttribute(ExifInterface.TAG_METERING_MODE, null);
-            exif_new.setAttribute(ExifInterface.TAG_OECF, null);
-            exif_new.setAttribute(ExifInterface.TAG_PHOTOMETRIC_INTERPRETATION, null);
-            exif_new.setAttribute(ExifInterface.TAG_PIXEL_X_DIMENSION, null);
-            exif_new.setAttribute(ExifInterface.TAG_PIXEL_Y_DIMENSION, null);
-            exif_new.setAttribute(ExifInterface.TAG_PLANAR_CONFIGURATION, null);
-            exif_new.setAttribute(ExifInterface.TAG_PRIMARY_CHROMATICITIES, null);
-            exif_new.setAttribute(ExifInterface.TAG_REFERENCE_BLACK_WHITE, null);
-            exif_new.setAttribute(ExifInterface.TAG_RESOLUTION_UNIT, null);
-            exif_new.setAttribute(ExifInterface.TAG_ROWS_PER_STRIP, null);
-            exif_new.setAttribute(ExifInterface.TAG_SAMPLES_PER_PIXEL, null);
-            exif_new.setAttribute(ExifInterface.TAG_SATURATION, null);
-            exif_new.setAttribute(ExifInterface.TAG_SCENE_CAPTURE_TYPE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SCENE_TYPE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SENSING_METHOD, null);
-            exif_new.setAttribute(ExifInterface.TAG_SHARPNESS, null);
-            exif_new.setAttribute(ExifInterface.TAG_SHUTTER_SPEED_VALUE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SOFTWARE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SPATIAL_FREQUENCY_RESPONSE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SPECTRAL_SENSITIVITY, null);
-            exif_new.setAttribute(ExifInterface.TAG_STRIP_BYTE_COUNTS, null);
-            exif_new.setAttribute(ExifInterface.TAG_STRIP_OFFSETS, null);
-            exif_new.setAttribute(ExifInterface.TAG_SUBJECT_AREA, null);
-            exif_new.setAttribute(ExifInterface.TAG_SUBJECT_DISTANCE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SUBJECT_DISTANCE_RANGE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SUBJECT_LOCATION, null);
-            exif_new.setAttribute(ExifInterface.TAG_THUMBNAIL_IMAGE_WIDTH, null);
-            exif_new.setAttribute(ExifInterface.TAG_THUMBNAIL_IMAGE_LENGTH, null);
-            exif_new.setAttribute(ExifInterface.TAG_TRANSFER_FUNCTION, null);
-            if( !request.store_ypr ) {
-                exif_new.setAttribute(ExifInterface.TAG_USER_COMMENT, null);
-            }
-            exif_new.setAttribute(ExifInterface.TAG_WHITE_POINT, null);
-            exif_new.setAttribute(ExifInterface.TAG_X_RESOLUTION, null);
-            exif_new.setAttribute(ExifInterface.TAG_Y_CB_CR_COEFFICIENTS, null);
-            exif_new.setAttribute(ExifInterface.TAG_Y_CB_CR_POSITIONING, null);
-            exif_new.setAttribute(ExifInterface.TAG_Y_CB_CR_SUB_SAMPLING, null);
-            exif_new.setAttribute(ExifInterface.TAG_Y_RESOLUTION, null);
-            if( !(request.custom_tag_artist != null && request.custom_tag_artist.length() > 0) ) {
-                exif_new.setAttribute(ExifInterface.TAG_ARTIST, null);
-            }
-            if( !(request.custom_tag_copyright != null && request.custom_tag_copyright.length() > 0) ) {
-                exif_new.setAttribute(ExifInterface.TAG_COPYRIGHT, null);
-            }
-
-            exif_new.setAttribute(ExifInterface.TAG_BITS_PER_SAMPLE, null);
-            exif_new.setAttribute(ExifInterface.TAG_EXIF_VERSION, null);
-            exif_new.setAttribute(ExifInterface.TAG_FLASHPIX_VERSION, null);
-            exif_new.setAttribute(ExifInterface.TAG_GAMMA, null);
-            exif_new.setAttribute(ExifInterface.TAG_RELATED_SOUND_FILE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SENSITIVITY_TYPE, null);
-            exif_new.setAttribute(ExifInterface.TAG_STANDARD_OUTPUT_SENSITIVITY, null);
-            exif_new.setAttribute(ExifInterface.TAG_RECOMMENDED_EXPOSURE_INDEX, null);
-            exif_new.setAttribute(ExifInterface.TAG_ISO_SPEED, null);
-            exif_new.setAttribute(ExifInterface.TAG_ISO_SPEED_LATITUDE_YYY, null);
-            exif_new.setAttribute(ExifInterface.TAG_ISO_SPEED_LATITUDE_ZZZ, null);
-            exif_new.setAttribute(ExifInterface.TAG_FILE_SOURCE, null);
-            exif_new.setAttribute(ExifInterface.TAG_CUSTOM_RENDERED, null);
-            exif_new.setAttribute(ExifInterface.TAG_CAMERA_OWNER_NAME, null);
-            exif_new.setAttribute(ExifInterface.TAG_BODY_SERIAL_NUMBER, null);
-            exif_new.setAttribute(ExifInterface.TAG_LENS_SPECIFICATION, null);
-            exif_new.setAttribute(ExifInterface.TAG_LENS_MAKE, null);
-            exif_new.setAttribute(ExifInterface.TAG_LENS_MODEL, null);
-            exif_new.setAttribute(ExifInterface.TAG_LENS_SERIAL_NUMBER, null);
-            exif_new.setAttribute(ExifInterface.TAG_GPS_H_POSITIONING_ERROR, null);
-            exif_new.setAttribute(ExifInterface.TAG_DNG_VERSION, null);
-            exif_new.setAttribute(ExifInterface.TAG_DEFAULT_CROP_SIZE, null);
-            exif_new.setAttribute(ExifInterface.TAG_ORF_THUMBNAIL_IMAGE, null);
-            exif_new.setAttribute(ExifInterface.TAG_ORF_PREVIEW_IMAGE_START, null);
-            exif_new.setAttribute(ExifInterface.TAG_ORF_PREVIEW_IMAGE_LENGTH, null);
-            exif_new.setAttribute(ExifInterface.TAG_ORF_ASPECT_FRAME, null);
-            exif_new.setAttribute(ExifInterface.TAG_RW2_SENSOR_BOTTOM_BORDER, null);
-            exif_new.setAttribute(ExifInterface.TAG_RW2_SENSOR_LEFT_BORDER, null);
-            exif_new.setAttribute(ExifInterface.TAG_RW2_SENSOR_RIGHT_BORDER, null);
-            exif_new.setAttribute(ExifInterface.TAG_RW2_SENSOR_TOP_BORDER, null);
-            exif_new.setAttribute(ExifInterface.TAG_RW2_ISO, null);
-            exif_new.setAttribute(ExifInterface.TAG_RW2_JPG_FROM_RAW, null);
-            exif_new.setAttribute(ExifInterface.TAG_XMP, null);
-            exif_new.setAttribute(ExifInterface.TAG_NEW_SUBFILE_TYPE, null);
-            exif_new.setAttribute(ExifInterface.TAG_SUBFILE_TYPE, null);
-
-            if( request.remove_device_exif != Request.RemoveDeviceExif.KEEP_DATETIME ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "remove datetime tags");
-                exif_new.setAttribute(ExifInterface.TAG_DATETIME, null);
-                exif_new.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, null);
-                exif_new.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, null);
-                exif_new.setAttribute(ExifInterface.TAG_SUBSEC_TIME, null);
-                exif_new.setAttribute(ExifInterface.TAG_SUBSEC_TIME_ORIGINAL, null);
-                exif_new.setAttribute(ExifInterface.TAG_SUBSEC_TIME_DIGITIZED, null);
-                exif_new.setAttribute(ExifInterface.TAG_OFFSET_TIME, null);
-                exif_new.setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, null);
-                exif_new.setAttribute(ExifInterface.TAG_OFFSET_TIME_DIGITIZED, null);
-            }
-
-            if( !request.store_location ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "remove gps tags");
-                exif_new.setAttribute(ExifInterface.TAG_GPS_PROCESSING_METHOD, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_LATITUDE, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_ALTITUDE, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_ALTITUDE_REF, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_DATESTAMP, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_TIMESTAMP, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_SPEED, null);
-                exif_new.setAttribute(ExifInterface.TAG_GPS_SPEED_REF, null);
-            }
-        }
-    }
-
-    /** Transfers exif tags from exif to exif_new, and then applies any extra Exif tags according to the preferences in the request.
-     *  Note that we use several ExifInterface tags that are now deprecated in API level 23 and 24. These are replaced with new tags that have
-     *  the same string value (e.g., TAG_APERTURE replaced with TAG_F_NUMBER, but both have value "FNumber"). We use the deprecated versions
-     *  to avoid complicating the code (we'd still have to read the deprecated values for older devices).
-     */
-    private void setExif(final Request request, ExifInterface exif, ExifInterface exif_new) throws IOException {
-        if( MyDebug.LOG )
-            Log.d(TAG, "setExif");
-
-        if( request.remove_device_exif == Request.RemoveDeviceExif.OFF ) {
-            transferDeviceExif(exif, exif_new);
-        }
-
-        if( request.remove_device_exif == Request.RemoveDeviceExif.OFF || request.remove_device_exif == Request.RemoveDeviceExif.KEEP_DATETIME ) {
-            transferDeviceExifDateTime(exif, exif_new);
-        }
-
-        if( request.remove_device_exif == Request.RemoveDeviceExif.OFF || request.store_location ) {
-            // If geotagging is enabled, we explicitly override the remove_device_exif setting.
-            // Arguably we don't need an if statement here at all - but if there was some device strangely
-            // setting GPS tags even when we haven't set them, it's better to remove them if the user has
-            // requested RemoveDeviceExif.OFF.
-            transferDeviceExifGPS(exif, exif_new);
-        }
-
-        modifyExif(exif_new, request.remove_device_exif, request.type == Request.Type.JPEG, request.using_camera2, request.using_camera_extensions, request.current_date, request.store_location, request.location, request.store_geo_direction, request.geo_direction, request.custom_tag_artist, request.custom_tag_copyright, request.level_angle, request.pitch_angle, request.store_ypr);
-
-        removeExifTags(exif_new, request); // must be last, before saving attributes
-        exif_new.saveAttributes();
-    }
-
     /** May be run in saver thread or picture callback thread (depending on whether running in background).
      */
-    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private boolean saveImageNowRaw(Request request) {
         if( MyDebug.LOG )
             Log.d(TAG, "saveImageNowRaw");
 
-        if( Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP ) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "RAW requires LOLLIPOP or higher");
-            return false;
-        }
         StorageUtils storageUtils = main_activity.getStorageUtils();
         boolean success = false;
 
@@ -3585,15 +2420,11 @@ public class ImageSaver extends Thread {
                 }
                 catch(IllegalArgumentException e) {
                     // can happen for mediastore method if invalid ContentResolver.insert() call
-                    if( MyDebug.LOG )
-                        Log.e(TAG, "IllegalArgumentException inserting to mediastore: " + e.getMessage());
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "IllegalArgumentException inserting to mediastore", e);
                     throw new IOException();
                 }
                 catch(IllegalStateException e) {
-                    if( MyDebug.LOG )
-                        Log.e(TAG, "IllegalStateException inserting to mediastore: " + e.getMessage());
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "IllegalStateException inserting to mediastore", e);
                     throw new IOException();
                 }
                 if( MyDebug.LOG )
@@ -3674,15 +2505,11 @@ public class ImageSaver extends Thread {
             }
         }
         catch(FileNotFoundException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "File not found: " + e.getMessage());
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "file not found", e);
             main_activity.getPreview().showToast(null, R.string.failed_to_save_photo_raw);
         }
         catch(IOException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "ioexception writing raw image file");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "ioexception writing raw image file", e);
             main_activity.getPreview().showToast(null, R.string.failed_to_save_photo_raw);
         }
         finally {
@@ -3691,9 +2518,7 @@ public class ImageSaver extends Thread {
                     output.close();
                 }
                 catch(IOException e) {
-                    if( MyDebug.LOG )
-                        Log.e(TAG, "ioexception closing raw output");
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "ioexception closing raw output", e);
                 }
             }
             if( raw_image != null ) {
@@ -3708,400 +2533,8 @@ public class ImageSaver extends Thread {
         return success;
     }
 
-    /** Rotates the supplied bitmap according to the orientation tag stored in the exif data. If no
-     *  rotation is required, the input bitmap is returned. If rotation is required, the input
-     *  bitmap is recycled.
-     * @param data Jpeg data containing the Exif information to use.
-     */
-    private Bitmap rotateForExif(Bitmap bitmap, byte [] data) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "rotateForExif");
-        if( bitmap == null ) {
-            // support thumbnail being null - as this can happen according to Google Play crashes, see comment in saveSingleImageNow()
-            return null;
-        }
-        InputStream inputStream = null;
-        try {
-            ExifInterface exif;
-
-            if( MyDebug.LOG )
-                Log.d(TAG, "use data stream to read exif tags");
-            inputStream = new ByteArrayInputStream(data);
-            exif = new ExifInterface(inputStream);
-
-            int exif_orientation_s = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
-            if( MyDebug.LOG )
-                Log.d(TAG, "    exif orientation string: " + exif_orientation_s);
-            boolean needs_tf = false;
-            int exif_orientation = 0;
-            // see http://jpegclub.org/exif_orientation.html
-            // and http://stackoverflow.com/questions/20478765/how-to-get-the-correct-orientation-of-the-image-selected-from-the-default-image
-            switch (exif_orientation_s) {
-                case ExifInterface.ORIENTATION_UNDEFINED:
-                case ExifInterface.ORIENTATION_NORMAL:
-                    // leave unchanged
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_180:
-                    needs_tf = true;
-                    exif_orientation = 180;
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_90:
-                    needs_tf = true;
-                    exif_orientation = 90;
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_270:
-                    needs_tf = true;
-                    exif_orientation = 270;
-                    break;
-                default:
-                    // just leave unchanged for now
-                    if (MyDebug.LOG)
-                        Log.e(TAG, "    unsupported exif orientation: " + exif_orientation_s);
-                    break;
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "    exif orientation: " + exif_orientation);
-
-            if( needs_tf ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "    need to rotate bitmap due to exif orientation tag");
-                Matrix m = new Matrix();
-                m.setRotate(exif_orientation, bitmap.getWidth() * 0.5f, bitmap.getHeight() * 0.5f);
-                Bitmap rotated_bitmap = Bitmap.createBitmap(bitmap, 0, 0,bitmap.getWidth(), bitmap.getHeight(), m, true);
-                if( rotated_bitmap != bitmap ) {
-                    bitmap.recycle();
-                    bitmap = rotated_bitmap;
-                }
-            }
-        }
-        catch(IOException exception) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "exif orientation ioexception");
-            exception.printStackTrace();
-        }
-        catch(NoClassDefFoundError exception) {
-            // have had Google Play crashes from new ExifInterface() for Galaxy Ace4 (vivalto3g), Galaxy S Duos3 (vivalto3gvn)
-            if( MyDebug.LOG )
-                Log.e(TAG, "exif orientation NoClassDefFoundError");
-            exception.printStackTrace();
-        }
-        finally {
-            if( inputStream != null ) {
-                try {
-                    inputStream.close();
-                }
-                catch(IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-        return bitmap;
-    }
-
-    /** Loads the bitmap from the supplied jpeg data, rotating if necessary according to the
-     *  supplied EXIF orientation tag.
-     * @param data The jpeg data.
-     * @param mutable Whether to create a mutable bitmap.
-     * @return A bitmap representing the correctly rotated jpeg.
-     */
-    private Bitmap loadBitmapWithRotation(byte [] data, boolean mutable) {
-        Bitmap bitmap = loadBitmap(data, mutable, 1);
-        if( bitmap != null ) {
-            // rotate the bitmap if necessary for exif tags
-            if( MyDebug.LOG )
-                Log.d(TAG, "rotate bitmap for exif tags?");
-            bitmap = rotateForExif(bitmap, data);
-        }
-        return bitmap;
-    }
-
-    /* In some cases we may create an ExifInterface with a FileDescriptor obtained from a
-     * ParcelFileDescriptor (via getFileDescriptor()). It's important to keep a reference to the
-     * ParcelFileDescriptor object for as long as the exif interface, otherwise there's a risk of
-     * the ParcelFileDescriptor being garbage collected, invalidating the file descriptor still
-     * being used by the ExifInterface!
-     * This didn't cause any known bugs, but good practice to fix, similar to the issue reported in
-     * https://sourceforge.net/p/opencamera/tickets/417/ .
-     * Also important to call the close() method when done with it, to close the
-     * ParcelFileDescriptor (if one was created).
-     */
-    private static class ExifInterfaceHolder {
-        // see documentation above about keeping hold of pdf due to the garbage collector!
-        private final ParcelFileDescriptor pfd;
-        private final ExifInterface exif;
-
-        ExifInterfaceHolder(ParcelFileDescriptor pfd, ExifInterface exif) {
-            this.pfd = pfd;
-            this.exif = exif;
-        }
-
-        ExifInterface getExif() {
-            return this.exif;
-        }
-
-        void close()  {
-            if( this.pfd != null ) {
-                try {
-                    this.pfd.close();
-                }
-                catch(IOException e) {
-                    Log.e(TAG, "failed to close parcelfiledescriptor");
-                    e.printStackTrace();
-                }
-            }
-        }
-    }
-
-    /** Creates a new exif interface for reading and writing.
-     *  If picFile==null, then saveUri must be non-null, and will be used instead to write the exif
-     *  tags too.
-     *  The returned ExifInterfaceHolder will always be non-null, but the contained getExif() may
-     *  return null if this method was unable to create the exif interface.
-     *  The caller should call close() on the returned ExifInterfaceHolder when no longer required.
-     */
-    private ExifInterfaceHolder createExifInterface(File picFile, Uri saveUri) throws IOException {
-        ParcelFileDescriptor parcelFileDescriptor = null;
-        ExifInterface exif = null;
-        if( picFile != null ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "write to picFile: " + picFile);
-            exif = new ExifInterface(picFile.getAbsolutePath());
-        }
-        else {
-            if( MyDebug.LOG )
-                Log.d(TAG, "write direct to saveUri: " + saveUri);
-            parcelFileDescriptor = main_activity.getContentResolver().openFileDescriptor(saveUri, "rw");
-            if( parcelFileDescriptor != null ) {
-                FileDescriptor fileDescriptor = parcelFileDescriptor.getFileDescriptor();
-                exif = new ExifInterface(fileDescriptor);
-            }
-            else {
-                Log.e(TAG, "failed to create ParcelFileDescriptor for saveUri: " + saveUri);
-            }
-        }
-        return new ExifInterfaceHolder(parcelFileDescriptor, exif);
-    }
-
-    /** Makes various modifications to the saved image file, according to the preferences in request.
-     *  This method is used when saving directly from the JPEG data rather than a bitmap.
-     *  If picFile==null, then saveUri must be non-null, and will be used instead to write the exif
-     *  tags too.
-     */
-    private void updateExif(Request request, File picFile, Uri saveUri) throws IOException {
-        if( MyDebug.LOG )
-            Log.d(TAG, "updateExif: " + picFile);
-        if( request.store_geo_direction || request.store_ypr || hasCustomExif(request.custom_tag_artist, request.custom_tag_copyright) ||
-                request.using_camera_extensions || // when using camera extensions, we need to call modifyExif() to fix up various missing tags
-                needGPSExifFix(request.type == Request.Type.JPEG, request.using_camera2, request.store_location) ) {
-            long time_s = System.currentTimeMillis();
-            if( MyDebug.LOG )
-                Log.d(TAG, "add additional exif info");
-            try {
-                ExifInterfaceHolder exif_holder = createExifInterface(picFile, saveUri);
-                if( MyDebug.LOG )
-                    Log.d(TAG, "*** time after create exif: " + (System.currentTimeMillis() - time_s));
-                try {
-                    ExifInterface exif = exif_holder.getExif();
-                    if( exif != null ) {
-                        modifyExif(exif, request.remove_device_exif, request.type == Request.Type.JPEG, request.using_camera2, request.using_camera_extensions, request.current_date, request.store_location, request.location, request.store_geo_direction, request.geo_direction, request.custom_tag_artist, request.custom_tag_copyright, request.level_angle, request.pitch_angle, request.store_ypr);
-
-                        if( MyDebug.LOG )
-                            Log.d(TAG, "*** time after modifyExif: " + (System.currentTimeMillis() - time_s));
-                        exif.saveAttributes();
-                        if( MyDebug.LOG )
-                            Log.d(TAG, "*** time after saveAttributes: " + (System.currentTimeMillis() - time_s));
-                    }
-                }
-                finally {
-                    exif_holder.close();
-                }
-            }
-            catch(NoClassDefFoundError exception) {
-                // have had Google Play crashes from new ExifInterface() elsewhere for Galaxy Ace4 (vivalto3g), Galaxy S Duos3 (vivalto3gvn), so also catch here just in case
-                if( MyDebug.LOG )
-                    Log.e(TAG, "exif orientation NoClassDefFoundError");
-                exception.printStackTrace();
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "*** time to add additional exif info: " + (System.currentTimeMillis() - time_s));
-        }
-        else {
-            if( MyDebug.LOG )
-                Log.d(TAG, "no exif data to update for: " + picFile);
-        }
-    }
-
-    /** Makes various modifications to the exif data, if necessary.
-     *  Any fix-ups should respect the setting of RemoveDeviceExif!
-     */
-    private void modifyExif(ExifInterface exif, Request.RemoveDeviceExif remove_device_exif, boolean is_jpeg, boolean using_camera2, boolean using_camera_extensions, Date current_date, boolean store_location, Location location, boolean store_geo_direction, double geo_direction, String custom_tag_artist, String custom_tag_copyright, double level_angle, double pitch_angle, boolean store_ypr) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "modifyExif");
-        setGPSDirectionExif(exif, store_geo_direction, geo_direction);
-        if( store_ypr ) {
-            float geo_angle = (float)Math.toDegrees(geo_direction);
-            if( geo_angle < 0.0f ) {
-                geo_angle += 360.0f;
-            }
-            String encoding = "ASCII\0\0\0";
-            // fine to ignore request.remove_device_exif, as this is a separate user option
-            //exif.setAttribute(ExifInterface.TAG_USER_COMMENT,"Yaw:" + geo_angle + ",Pitch:" + pitch_angle + ",Roll:" + level_angle);
-            exif.setAttribute(ExifInterface.TAG_USER_COMMENT,encoding + "Yaw:" + geo_angle + ",Pitch:" + pitch_angle + ",Roll:" + level_angle);
-            if( MyDebug.LOG )
-                Log.d(TAG, "UserComment: " + exif.getAttribute(ExifInterface.TAG_USER_COMMENT));
-        }
-        setCustomExif(exif, custom_tag_artist, custom_tag_copyright);
-
-        if( store_location && ( !exif.hasAttribute(ExifInterface.TAG_GPS_LATITUDE) || !exif.hasAttribute(ExifInterface.TAG_GPS_LATITUDE) ) ) {
-            // We need this when using camera extensions (since Camera API doesn't support location for camera extensions).
-            // But some devices (e.g., Pixel 6 Pro with Camera2 API) seem to not store location data, so we always check if we need to add it.
-            // fine to ignore request.remove_device_exif, as this is a separate user option
-            if( MyDebug.LOG )
-                Log.d(TAG, "store location"); // don't log location for privacy reasons!
-            exif.setGpsInfo(location);
-        }
-
-        if( using_camera_extensions ) {
-            if( remove_device_exif == Request.RemoveDeviceExif.OFF || remove_device_exif == Request.RemoveDeviceExif.KEEP_DATETIME ) {
-                addDateTimeExif(exif, current_date);
-            }
-        }
-        else if( needGPSExifFix(is_jpeg, using_camera2, store_location) ) {
-            // fine to ignore request.remove_device_exif, as this is a separate user option
-            fixGPSTimestamp(exif, current_date);
-        }
-    }
-
-    private void setGPSDirectionExif(ExifInterface exif, boolean store_geo_direction, double geo_direction) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "setGPSDirectionExif");
-        if( store_geo_direction ) {
-            float geo_angle = (float)Math.toDegrees(geo_direction);
-            if( geo_angle < 0.0f ) {
-                geo_angle += 360.0f;
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "save geo_angle: " + geo_angle);
-            // see http://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/GPS.html
-            String GPSImgDirection_string = Math.round(geo_angle*100) + "/100";
-            if( MyDebug.LOG )
-                Log.d(TAG, "GPSImgDirection_string: " + GPSImgDirection_string);
-            // fine to ignore request.remove_device_exif, as this is a separate user option
-            exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION, GPSImgDirection_string);
-            exif.setAttribute(ExifInterface.TAG_GPS_IMG_DIRECTION_REF, "M");
-        }
-    }
-
-    /** Whether custom exif tags need to be applied to the image file.
-     */
-    private boolean hasCustomExif(String custom_tag_artist, String custom_tag_copyright) {
-        if( custom_tag_artist != null && custom_tag_artist.length() > 0 )
-            return true;
-        if( custom_tag_copyright != null && custom_tag_copyright.length() > 0 )
-            return true;
-        return false;
-    }
-
-    /** Applies the custom exif tags to the ExifInterface.
-     */
-    private void setCustomExif(ExifInterface exif, String custom_tag_artist, String custom_tag_copyright) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "setCustomExif");
-        if( custom_tag_artist != null && custom_tag_artist.length() > 0 ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "apply TAG_ARTIST: " + custom_tag_artist);
-            // fine to ignore request.remove_device_exif, as this is a separate user option
-            exif.setAttribute(ExifInterface.TAG_ARTIST, custom_tag_artist);
-        }
-        if( custom_tag_copyright != null && custom_tag_copyright.length() > 0 ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "apply TAG_COPYRIGHT: " + custom_tag_copyright);
-            // fine to ignore request.remove_device_exif, as this is a separate user option
-            exif.setAttribute(ExifInterface.TAG_COPYRIGHT, custom_tag_copyright);
-        }
-    }
-
-    /** Adds exif tags for datetime from the supplied date, if not present. Needed for camera vendor
-     *  extensions which (at least on Galaxy S10e) don't seem to have these tags set at all!
-     */
-    private void addDateTimeExif(ExifInterface exif, Date current_date) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "addDateTimeExif");
-        String exif_datetime = exif.getAttribute(ExifInterface.TAG_DATETIME);
-        if( MyDebug.LOG )
-            Log.d(TAG, "existing exif TAG_DATETIME: " + exif_datetime);
-        if( exif_datetime == null ) {
-            SimpleDateFormat date_fmt = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US);
-            date_fmt.setTimeZone(TimeZone.getDefault()); // need local timezone for TAG_DATETIME
-            exif_datetime = date_fmt.format(current_date);
-            if( MyDebug.LOG )
-                Log.d(TAG, "new TAG_DATETIME: " + exif_datetime);
-
-            exif.setAttribute(ExifInterface.TAG_DATETIME, exif_datetime);
-            // set these tags too (even if already present, overwrite to be consistent)
-            exif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, exif_datetime);
-            exif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, exif_datetime);
-
-            if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.N ) {
-                // XXX requires Android 7
-                // needs to be -/+HH:mm format, which is given by XXX
-                date_fmt = new SimpleDateFormat("XXX", Locale.US);
-                date_fmt.setTimeZone(TimeZone.getDefault());
-                String timezone = date_fmt.format(current_date);
-                if( MyDebug.LOG )
-                    Log.d(TAG, "timezone: " + timezone);
-                exif.setAttribute(ExifInterface.TAG_OFFSET_TIME, timezone);
-                exif.setAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL, timezone);
-                exif.setAttribute(ExifInterface.TAG_OFFSET_TIME_DIGITIZED, timezone);
-            }
-        }
-    }
-
-    private void fixGPSTimestamp(ExifInterface exif, Date current_date) {
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "fixGPSTimestamp");
-            Log.d(TAG, "current datestamp: " + exif.getAttribute(ExifInterface.TAG_GPS_DATESTAMP));
-            Log.d(TAG, "current timestamp: " + exif.getAttribute(ExifInterface.TAG_GPS_TIMESTAMP));
-            Log.d(TAG, "current datetime: " + exif.getAttribute(ExifInterface.TAG_DATETIME));
-        }
-        // Hack: Problem on Camera2 API (at least on Nexus 6) that if geotagging is enabled, then the resultant image has incorrect Exif TAG_GPS_DATESTAMP and TAG_GPS_TIMESTAMP (GPSDateStamp) set (date tends to be around 2038 - possibly a driver bug of casting long to int?).
-        // This causes problems when viewing with Gallery apps (e.g., Gallery ICS; Google Photos seems fine however), as they show this incorrect date.
-        // Update: Before v1.34 this was "fixed" by calling: exif.setAttribute(ExifInterface.TAG_GPS_TIMESTAMP, Long.toString(System.currentTimeMillis()));
-        // However this stopped working on or before 20161006. This wasn't a change in Open Camera (whilst this was working fine in
-        // 1.33 when I released it, the bug had come back when I retested that version) and I'm not sure how this ever worked, since
-        // TAG_GPS_TIMESTAMP is meant to be a string such "21:45:23", and not the number of ms since 1970 - possibly it wasn't really
-        // working , and was simply invalidating it such that Gallery then fell back to looking elsewhere for the datetime?
-        // So now hopefully fixed properly...
-        // Note, this problem also occurs on OnePlus 3T and Gallery ICS, if we don't have this function called
-        SimpleDateFormat date_fmt = new SimpleDateFormat("yyyy:MM:dd", Locale.US);
-        date_fmt.setTimeZone(TimeZone.getTimeZone("UTC")); // needs to be UTC time for the GPS datetime tags
-        String datestamp = date_fmt.format(current_date);
-
-        SimpleDateFormat time_fmt = new SimpleDateFormat("HH:mm:ss", Locale.US);
-        time_fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
-        String timestamp = time_fmt.format(current_date);
-
-        if( MyDebug.LOG ) {
-            Log.d(TAG, "datestamp: " + datestamp);
-            Log.d(TAG, "timestamp: " + timestamp);
-        }
-        exif.setAttribute(ExifInterface.TAG_GPS_DATESTAMP, datestamp);
-        exif.setAttribute(ExifInterface.TAG_GPS_TIMESTAMP, timestamp);
-
-        if( MyDebug.LOG )
-            Log.d(TAG, "fixGPSTimestamp exit");
-    }
-
-    /** Whether we need to fix up issues with location.
-     *  See comments in fixGPSTimestamp(), where some devices with Camera2 need fixes for TAG_GPS_DATESTAMP and TAG_GPS_TIMESTAMP.
-     *  Also some devices (e.g. Pixel 6 Pro) have problem that location is not stored in images with Camera2 API, so we need to
-     *  enter modifyExif() to add it if not present.
-     */
-    private boolean needGPSExifFix(boolean is_jpeg, boolean using_camera2, boolean store_location) {
-        if( is_jpeg && using_camera2 ) {
-            return store_location;
-        }
-        return false;
+    PostProcessing getPostProcessing() {
+        return this.postProcessing;
     }
 
     // for testing:

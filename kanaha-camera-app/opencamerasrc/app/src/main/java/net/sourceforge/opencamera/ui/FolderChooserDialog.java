@@ -243,9 +243,7 @@ public class FolderChooserDialog extends DialogFragment {
             files = new_folder.listFiles();
         }
         catch(Exception e) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "exception reading folder");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "exception reading folder", e);
         }
         // n.b., files may be null if no files could be found in the folder (or we can't read) - but should still allow the user
         // to view this folder (so the user can go to parent folders which might be readable again)
@@ -389,6 +387,7 @@ public class FolderChooserDialog extends DialogFragment {
                     .setPositiveButton(android.R.string.ok, new Dialog.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
+                            // Android warning that we should replace with isEmpty(), but that requires Android 15 for CharSequence.isEmpty()
                             if( edit_text.getText().length() == 0 ) {
                                 // do nothing
                             }
@@ -415,9 +414,7 @@ public class FolderChooserDialog extends DialogFragment {
                                     }
                                 }
                                 catch(Exception e) {
-                                    if( MyDebug.LOG )
-                                        Log.d(TAG, "exception trying to create new folder");
-                                    e.printStackTrace();
+                                    MyDebug.logStackTrace(TAG, "exception trying to create new folder", e);
                                     Toast.makeText(getActivity(), R.string.failed_create_folder, Toast.LENGTH_SHORT).show();
                                 }
                             }

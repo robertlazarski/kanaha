@@ -100,7 +100,7 @@
     <string name="preference_burst_interval">Intervallo foto a raffica</string>
     <string name="preference_screen_camera_controls_more">Più controlli fotocamera…</string>
     <string name="preference_touch_capture">Tocca per acquisire</string>
-    <string name="preference_touch_capture_summary">Scatta le foto semplicemente toccando l\'anteprima oppure toccando due volte</string>
+    <string name="preference_touch_capture_summary">Scatta le foto semplicemente toccando l\'anteprima oppure toccando due volte\n%s</string>
     <string name="preference_pause_preview">Pausa dopo aver scattato la foto</string>
     <string name="preference_pause_preview_summary">Mette in pausa lo schermo dopo aver scattato la foto, permettendo inoltre di condividere o cancellare la foto</string>
     <string name="preference_shutter_sound">Suono otturatore</string>
@@ -109,7 +109,7 @@
     <string name="preference_audio_control">Opzioni controllo audio</string>
     <!-- preference_audio_control_summary defined below -->
     <string name="preference_audio_noise_control_sensitivity">Sensibilità controllo audio</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Opzione per sensibilità del livello di rumore per il controllo audio (forte rumore)</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Opzione per sensibilità del livello di rumore per il controllo audio (forte rumore)\n%s</string>
     <string name="preference_save_location">Posizione di salvataggio</string>
     <string name="preference_save_location_summary">Cartella in cui salvare foto e video</string>
     <string name="preference_using_saf_summary">Utilizza Storage Access Framework per il salvataggio di foto e video</string>
@@ -132,8 +132,6 @@
     <string name="preference_immersive_mode">Modalità immersiva</string>
     <string name="preference_show_zoom">Mostra zoom</string>
     <string name="preference_show_zoom_summary">Mostra il livello attuale di zoom sullo schermo (quando si zoomma)</string>
-    <string name="preference_show_zoom_controls">Mostra i controlli zoom -/+</string>
-    <string name="preference_show_zoom_controls_summary">Mostra i bottoni -/+ per il controllo dello zoom</string>
     <string name="preference_show_zoom_slider_controls">Mostra slider per lo zoom</string>
     <string name="preference_show_zoom_slider_controls_summary">Mostra slider per il controllo dello zoom</string>
     <string name="preference_show_iso">Mostra ISO</string>
@@ -145,7 +143,7 @@
     <string name="preference_show_angle_line">Mostra orizzonte</string>
     <string name="preference_show_angle_line_summary">Mostra la linea dell\'orizzonte sullo schermo</string>
     <string name="preference_angle_highlight_color">Colore per evidenziare angolo/altitudine</string>
-    <string name="preference_angle_highlight_color_summary">Colore per evidenziare quando la camera raggiunge il livello</string>
+    <string name="preference_angle_highlight_color_summary">Colore per evidenziare quando la camera raggiunge il livello\n%s</string>
     <string name="preference_show_geo_direction">Mostra direzione bussola</string>
     <string name="preference_show_geo_direction_summary">Mostra la direzione della bussola sullo schermo</string>
     <string name="preference_show_time">Mostra data/ora</string>
@@ -225,8 +223,6 @@
     <string name="preference_category_online">Varie</string>
     <string name="preference_online_help">Aiuto online</string>
     <string name="preference_online_help_summary">Apre il sito web di Open Camera nel browser</string>
-    <string name="preference_donate">Dona per supportare lo sviluppo</string>
-    <string name="preference_donate_summary">Se questa applicazione ti piace, considera la possibilità di fare una donazione. Puoi farlo comprando la mia \"app donazione\" - cliccando su questa opzione aprirai la pagina per la donazione. Grazie!</string>
     <string name="preference_use_camera2">Usa le API Camera2</string>
     <string name="preference_use_camera2_summary">Abilita caratteristiche extra come la modalità manuale per esposizione, messa a fuoco, bilanciamento del bianco, e RAW (se supportato), ma potrebbe non funzionare correttamente su tutti i modelli (potrebbe causare un riavvio)</string>
     <string name="preference_about">Informazioni</string>
@@ -302,10 +298,9 @@
     <string name="no_permission">PERMESSO NON DISPONIBILE</string>
     <string name="permission_rationale_title">Richiesto permesso</string>
     <string name="permission_rationale_camera">Il permesso di utilizzo della fotocamera è necessario per abilitare la fotocamera</string>
-    <string name="permission_rationale_location">Per utilizzare il geotagging è richiesto il permesso di rilevamento della posizione (Android 11 or earlier: necessario anche per collegarsi a dispositivi di controllo Bluetooth LE)</string>
+    <string name="permission_rationale_location">Per utilizzare il geotagging è richiesto il permesso di rilevamento della posizione.</string>
 
-    <string name="preference_category_photo_debugging">Opzioni di debugging</string>
-    <string name="preference_category_video_debugging">Opzioni di debugging</string>
+    <string name="preference_category_debugging">Opzioni di debugging</string>
     <string name="preference_camera2_fake_flash">Usa metodo flash alternativo</string>
     <string name="preference_camera2_fake_flash_summary">Abilita questa opzione se il tuo dispositivo mostra un comportamento anomalo del flash con le API Camera2</string>
 
@@ -437,7 +432,6 @@
     <string name="color_effect_whiteboard">Lavagna bianca</string>
 
     <string name="whats_new">Novità:</string>
-    <string name="donate">Donazioni</string>
 
     <!-- for accessibility, these strings for face detection will typically be spoken, e.g., through Google Talkback -->
     <string name="face_detected">volto</string>
@@ -452,11 +446,11 @@
 
     <string name="preference_video_fps_default">Default</string>
 
-    <string name="preference_category_exif_tags">Tag EXIF personalizzati</string>
+    <string name="preference_category_exif_tags">Tag Exif personalizzati</string>
     <string name="preference_exif_artist">Artista</string>
-    <string name="preference_exif_artist_summary">Testo da inserire nei metadati della foto per il tag \"artista\" (solo JPEG). (Lasciare vuoto per eliminarlo.)</string>
+    <string name="preference_exif_artist_summary">Testo da inserire nei metadati della foto per il tag \"artista\" (solo JPEG/ecc). (Lasciare vuoto per eliminarlo.)</string>
     <string name="preference_exif_copyright">Copyright</string>
-    <string name="preference_exif_copyright_summary">Testo da inserire nei metadati della foto per il tag \"copyright\" (solo JPEG). (Lasciare vuoto per eliminarlo.)</string>
+    <string name="preference_exif_copyright_summary">Testo da inserire nei metadati della foto per il tag \"copyright\" (solo JPEG/ecc). (Lasciare vuoto per eliminarlo.)</string>
 
     <string name="processing">Elaborazione…</string>
 
@@ -885,7 +879,7 @@
 
     <string name="exposure_compensation_seekbar">Barra per cambiare la compensazione dell\'esposizione</string>
 
-    <string name="preference_image_format_summary">Scegli il formato file da usare per salvare le foto. Questo verrà usato per la scelta \"standard\" (non RAW). Solo JPEG supporta il salvataggio dei metadati Exif. Nota che il formato PNG non è realmente lossless, ma viene convertito da una JPEG al 100%% di qualità.\n%s</string>
+    <string name="preference_image_format_summary">Scegli il formato file da usare per salvare le foto. Questo verrà usato per la scelta \"standard\" (non RAW). Nota che il formato PNG non è realmente lossless, ma viene convertito da una JPEG al 100%% di qualità.\n%s</string>
 
     <string name="preference_camera_api">API fotocamera</string>
     <string name="preference_camera_api_summary">Scegli l\'API Camera2 per abilitare funzioni extra come la modalità manuale per esposizione, messa a fuoco, bilanciamento del bianco, e RAW (se supportato dal dispositivo). Cambiare l\'API provocherà un riavvio.\n%s</string>
@@ -896,16 +890,8 @@
         Quando è abilitato, usa il pulsante del microfono sullo schermo per avviare/interrompere l\'ascolto.
         \n%s</string>
 
-    <!-- beware of string being too long to display! -->
-    <string name="preference_stamp_geo_address_summary">Se possibile, ottieni indirizzi dalle posizioni GPS (per timbro foto e sottotitoli video).
-        Se abilitata, ciò richiede che il tuo dispositivo trasmetta i dati di posizione attraverso Internet a terze parti
-        per convertire le coordinate GPS in indirizzi. Vedi https://developer.android.com/reference/android/location/Geocoder .
-        Ciò non fornisce garanzie sulla disponibilità o sull\'accuratezza. Non è garantito che i risultati siano significativi o corretti.
-        \n%s</string>
-
     <string name="intro_text">Tocca per mettere a fuoco e premi il pulsante blu della fotocamera per scattare foto.
-        \n\nPer disabilitare la massima luminosità dello schermo, vedi Impostazioni/Interfaccia schermo/\"Forza la massima luminosità\".
-        Per salvare su schede SD su Android 5+, vedi Impostazioni/Altri controlli fotocamera/\"Storage Access Framework\".
+        \n\nPer salvare su schede SD su Android 5+, vedi Impostazioni/Altri controlli fotocamera/\"Storage Access Framework\".
         Per ulteriore aiuto, clicca su \"Aiuto online\" da Impostazioni.
     </string>
 
@@ -928,7 +914,6 @@
     <string name="preference_video_profile_gamma_2_8">2.8</string>
 
     <string name="preference_immersive_mode_off">Spento</string>
-    <string name="preference_immersive_mode_low_profile">Riduci solo la luminosità dei bottoni di navigazione</string>
     <string name="preference_immersive_mode_navigation">Nascondi i bottoni di navigazione</string>
     <string name="preference_immersive_mode_gui">Nascondi l\'interfaccia</string>
     <string name="preference_immersive_mode_everything">Nascondi tutto</string>
@@ -970,7 +955,7 @@
     <string name="error_features_slow_motion">Slow motion</string>
 
     <string name="preference_comment_ypr">Salva imbardata, beccheggio e rollio</string>
-    <string name="preference_comment_ypr_summary">Salva imbardata, beccheggio e rollio del dispositivo nei commenti utente dei metadati Exif delle foto (solo formato JPEG)</string>
+    <string name="preference_comment_ypr_summary">Salva imbardata, beccheggio e rollio del dispositivo nei commenti utente dei metadati Exif delle foto (solo formato JPEG/ecc)</string>
 
     <string name="array_seekbar_preference_seekbar">Barra per cambiare il valore attuale di preferenza</string>
 

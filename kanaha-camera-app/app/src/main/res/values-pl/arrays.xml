@@ -33,7 +33,7 @@
         <item>portrait</item>
     </string-array>
     <string-array name="preference_timer_entries">
-        <item>Off</item>
+        <item>Wyłączono</item>
         <item>1s</item>
         <item>2s</item>
         <item>3s</item>
@@ -271,7 +271,7 @@
         <item>3</item>
     </string-array>
     <string-array name="preference_front_camera_mirror_entries">
-        <item>Bez lustra</item>
+        <item>Bez odbicia</item>
         <item>Odbicie lustrzane</item>
     </string-array>
     <string-array name="preference_front_camera_mirror_values">

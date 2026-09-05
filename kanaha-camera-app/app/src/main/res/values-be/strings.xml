@@ -99,7 +99,7 @@
     <string name="preference_burst_interval">Інтэрвал пры пакетнай здымцы</string>
     <string name="preference_screen_camera_controls_more">Больш налад камеры…</string>
     <string name="preference_touch_capture">Націсніце, каб захапіць</string>
-    <string name="preference_touch_capture_summary">Фатаграфаваць дакранаючыся або двойчы націснуўшы прагляд</string>
+    <string name="preference_touch_capture_summary">Фатаграфаваць дакранаючыся або двойчы націснуўшы прагляд\n%s</string>
     <string name="preference_pause_preview">Паўза пасля фатаграфавання</string>
     <string name="preference_pause_preview_summary">Паўза  пасля фатаграфавання, падчас якой магчыма падзяліцца або выдаліць фота</string>
     <string name="preference_shutter_sound">Гук засаўкі</string>
@@ -124,8 +124,6 @@
     <string name="preference_immersive_mode">Рэжым захаплення</string>
     <string name="preference_show_zoom">Паказваць маштаб</string>
     <string name="preference_show_zoom_summary">Адлюстроўваць маштаб камеры на экране </string>
-    <string name="preference_show_zoom_controls">Паказваць  - / + кнопкі кіравання павелічэннем</string>
-    <string name="preference_show_zoom_controls_summary">Паказваць - / + кнопкі кіравання павелічэннем</string>
     <string name="preference_show_zoom_slider_controls">Паказваць паўзунок павелічэння</string>
     <string name="preference_show_zoom_slider_controls_summary">Паказваць паўзунок павелічэння</string>
     <string name="preference_show_iso">Паказваць ISO</string>
@@ -137,7 +135,7 @@
     <string name="preference_show_angle_line">Паказваць лінію нахілу</string>
     <string name="preference_show_angle_line_summary">Адлюстроўваць лінію нахілу камеры</string>
     <string name="preference_angle_highlight_color">Колер падсвятлення</string>
-    <string name="preference_angle_highlight_color_summary">Абярыце колер падсвятлення </string>
+    <string name="preference_angle_highlight_color_summary">Абярыце колер падсвятлення\n%s</string>
     <string name="preference_show_geo_direction">Паказваць кірунак компаса</string>
     <string name="preference_show_geo_direction_summary">Адлюстроўваць напрамак компаса на экране прылады</string>
     <string name="preference_show_time">Паказваць час</string>
@@ -206,8 +204,6 @@
 
     <string name="preference_category_online">Рознае</string>
     <string name="preference_online_help"> Дапамога ў інтэрнэце</string>
-    <string name="preference_donate">Ахвяруйце на распрацоўку </string>
-    <string name="preference_donate_summary">Калі вам падабаецца гэты дадатак, калі ласка, падтрымайце распрацоўку . Вы можаце зрабіць гэта, купіўшы мой дадатак .Абярыце гэты параметр і адкрыецца старонка для ахвяравання . Дзякую!</string>
     <string name="preference_use_camera2">Выкарыстоўваць Camera2 API</string>
     <string name="preference_use_camera2_summary">Дазваляе выкарыстоўваць Camera2 API</string>
     <string name="preference_about">Інфармацыя</string>

@@ -100,7 +100,7 @@
     <string name="preference_burst_interval">Serienbild-Intervall</string>
     <string name="preference_screen_camera_controls_more">Mehr Kamera-Einstellungen…</string>
     <string name="preference_touch_capture">Aufnahme bei Berührung</string>
-    <string name="preference_touch_capture_summary">Fotoaufnahme durch Berührung oder Doppelklick der Vorschau starten</string>
+    <string name="preference_touch_capture_summary">Fotoaufnahme durch Berührung oder Doppelklick der Vorschau starten\n%s</string>
     <string name="preference_pause_preview">Pause nach der Fotoaufnahme</string>
     <string name="preference_pause_preview_summary">Nach der Aufnahme pausieren mit der Möglichkeit, das Foto zu teilen oder zu löschen</string>
     <string name="preference_shutter_sound">Auslöseton</string>
@@ -108,7 +108,7 @@
     <string name="preference_volume_keys">Lautstärketasten</string>
     <string name="preference_audio_control">Audio Steuerungsoptionen</string>
     <string name="preference_audio_noise_control_sensitivity">Audio Steuerung Empfindlichkeit</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Mikroempfindlichkeit für lautes Geräusch</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Mikroempfindlichkeit für lautes Geräusch\n%s</string>
     <string name="preference_save_location">Speicherort</string>
     <string name="preference_save_location_summary">Ordner, wo die Fotos/Videos gespeichert werden</string>
     <string name="preference_using_saf_summary">Für das Speichern der Fotos/Videos Storage Access Framework verwenden</string>
@@ -131,8 +131,6 @@
     <string name="preference_immersive_mode">Automatisches Ausblenden</string>
     <string name="preference_show_zoom">Zoomfaktor anzeigen</string>
     <string name="preference_show_zoom_summary">Zeigt beim Zoomen den aktuellen Zoomfaktor auf dem Bildschirm an</string>
-    <string name="preference_show_zoom_controls">Zoom-Tasten anzeigen</string>
-    <string name="preference_show_zoom_controls_summary">Zeigt +/- Tasten zur Zoomsteuerung an</string>
     <string name="preference_show_zoom_slider_controls">Zoom-Schieberegler anzeigen</string>
     <string name="preference_show_zoom_slider_controls_summary">Zeigt einen Schieberegler zur Zoomsteuerung an</string>
     <string name="preference_show_iso">ISO-Wert anzeigen</string>
@@ -144,7 +142,7 @@
     <string name="preference_show_angle_line">Horizontale Linie anzeigen</string>
     <string name="preference_show_angle_line_summary">Zeigt eine waagerechte Linie auf dem Bildschirm an</string>
     <string name="preference_angle_highlight_color">Farbe zum Hervorheben des Lagewinkels</string>
-    <string name="preference_angle_highlight_color_summary">Farbe zum Hervorheben des Lagewinkels, wenn die Kamera nahezu waagerecht gehalten wird</string>
+    <string name="preference_angle_highlight_color_summary">Farbe zum Hervorheben des Lagewinkels, wenn die Kamera nahezu waagerecht gehalten wird\n%s</string>
     <string name="preference_show_geo_direction">Kompassrichtung anzeigen</string>
     <string name="preference_show_geo_direction_summary">Zeigt die Kompassrichtung des Gerätes auf dem Bildschirm an</string>
     <string name="preference_show_time">Zeit anzeigen</string>
@@ -177,7 +175,7 @@
     <string name="preference_location">Geotagging</string>
     <string name="preference_location_summary">Wenn aktiviert, werden die GPS-Standortdaten in den Aufnahmen gespeichert.</string>
     <string name="preference_gps_direction">Himmelsrichtung</string>
-    <string name="preference_gps_direction_summary">Speichere die GPS-Kompassrichtung in den Fotos (nur JPEG-Format)</string>
+    <string name="preference_gps_direction_summary">Speichere die GPS-Kompassrichtung in den Fotos (nur JPEG-Format usw)</string>
     <string name="preference_require_location">Standortdaten erforderlich</string>
     <string name="preference_require_location_summary">Wenn aktiviert, werden die Aufnahmen nur bei Verfügbarkeit der Standortdaten ausgelöst.</string>
     <string name="preference_stamp">Fotos stempeln</string>
@@ -225,8 +223,6 @@
     <string name="preference_category_online">Verschiedenes</string>
     <string name="preference_online_help">Online-Hilfe</string>
     <string name="preference_online_help_summary">Öffne die Open Camera Website in deinem Browser</string>
-    <string name="preference_donate">Spende</string>
-    <string name="preference_donate_summary">Wenn Ihnen diese App gefällt, würde ich mich über eine Spende freuen, indem Sie meine Spenden-App kaufen. Dazu brauchen Sie nur diese Option anzuklicken. Danke!</string>
     <string name="preference_use_camera2">Camera2-API verwenden</string>
     <string name="preference_use_camera2_summary">Aktiviert die Camera2-API mit Zusatzfunktionen (experimentell, Neustart erforderlich)</string>
     <string name="preference_about">Über</string>
@@ -302,11 +298,9 @@
     <string name="no_permission">BERECHTIGUNGEN NICHT VERFÜGBAR</string>
     <string name="permission_rationale_title">Berechtigung benötigt</string>
     <string name="permission_rationale_camera">Kamera Berechtigung wird benötigt um die Kamera zu aktivieren</string>
-    <string name="permission_rationale_location">Location-Berechtigung für das Geotagging benötigt (Speicherung der Standortdaten in
-        Fotos und Videos). Location-Berechtigung wird auch benötigt, um eine Verbindung zu Bluetooth LE Fernbedienungen herzustellen (Android 11 or earlier).</string>
+    <string name="permission_rationale_location">Location-Berechtigung für das Geotagging benötigt (Speicherung der Standortdaten in Fotos und Videos).</string>
 
-    <string name="preference_category_photo_debugging">Debug-Optionen</string>
-    <string name="preference_category_video_debugging">Debug-Optionen</string>
+    <string name="preference_category_debugging">Debug-Optionen</string>
     <string name="preference_camera2_fake_flash">Benutze alternative Blitz Methode</string>
     <string name="preference_camera2_fake_flash_summary">Aktiviere dies, wenn dein Gerät Probleme mit der Camera2-API hat</string>
 
@@ -438,7 +432,6 @@
     <string name="color_effect_whiteboard">Weiße Tafel</string>
 
     <string name="whats_new">Was ist neu?</string>
-    <string name="donate">Spenden</string>
 
     <!-- for accessibility, these strings for face detection will typically be spoken, e.g., through Google Talkback -->
     <string name="face_detected">Gesicht</string>
@@ -453,11 +446,11 @@
 
     <string name="preference_video_fps_default">Standard</string>
 
-    <string name="preference_category_exif_tags">Spezifische EXIF-Kennungen</string>
+    <string name="preference_category_exif_tags">Spezifische Exif-Kennungen</string>
     <string name="preference_exif_artist">Ersteller</string>
-    <string name="preference_exif_artist_summary">Text für den "Ersteller"-Eintrag in den Foto-Metadaten (nur JPEG-Format, freilassen, falls nicht verwendet.)</string>
+    <string name="preference_exif_artist_summary">Text für den \"Ersteller\"-Eintrag in den Foto-Metadaten (nur JPEG-Format usw, freilassen, falls nicht verwendet.)</string>
     <string name="preference_exif_copyright">Copyright</string>
-    <string name="preference_exif_copyright_summary">Text für den "Copyright"-Eintrag in den Foto-Metadaten (nur JPEG-Format, freilassen, falls nicht verwendet.)</string>
+    <string name="preference_exif_copyright_summary">Text für den \"Copyright\"-Eintrag in den Foto-Metadaten (nur JPEG-Format usw, freilassen, falls nicht verwendet.)</string>
 
     <string name="processing">Bearbeitung…</string>
 
@@ -699,7 +692,7 @@
     <string name="preference_audio_noise_control_sensitivity_m3">-3 (Niedrige Empfindlichkeit)</string>
 
     <string name="preference_hdr_contrast_enhancement">HDR-Kontrastverstärkung</string>
-    <string name="preference_hdr_contrast_enhancement_summary">Verwendet einen Algorithmus zur Verstärkung des HDR-Kontrasts. Das kann die Aufnahme verbessern, wenn eine Szene einen sehr hohen Dynamikumfang hat aber einen "HDR-Look" bekommen soll.\n%s</string>
+    <string name="preference_hdr_contrast_enhancement_summary">Verwendet einen Algorithmus zur Verstärkung des HDR-Kontrasts. Das kann die Aufnahme verbessern, wenn eine Szene einen sehr hohen Dynamikumfang hat aber einen \"HDR-Look\" bekommen soll.\n%s</string>
     <string name="preference_hdr_contrast_enhancement_off">Aus</string>
     <string name="preference_hdr_contrast_enhancement_smart">Smart</string>
     <string name="preference_hdr_contrast_enhancement_always">Immer</string>
@@ -894,15 +887,8 @@
         \n%s</string>
 
     <!-- beware of string being too long to display! -->
-    <string name="preference_stamp_geo_address_summary">Wenn möglich, nutze eine Adresse bei der Speicherung des GPS Standorts.
-        Diese Option erfordert, dass Ihr Gerät Standortdaten über das Internet an einen Dritten überträgt,
-        um GPS in eine Adresse umzuwandeln. Siehe https://developer.android.com/reference/android/location/Geocoder .
-        Gibt keine Garantien für Verfügbarkeit oder Genauigkeit. Es wird nicht garantiert, dass die Ergebnisse aussagekräftig oder korrekt sind.
-        \n%s</string>
-
     <string name="intro_text">Zum Fokussieren berühren und blaue Kamerataste drücken, um Bilder aufzunehmen.
-        \n\nUm die maximale Bildschirmhelligkeit zu deaktivieren, siehe Einstellungen/Benutzeroberfläche/\"Maximale Helligkeit erzwingen\".
-        Zur Speicherung auf der SD-Karte auf Android 5+, siehe Einstellungen/Mehr Kamera-Einstellungen…/\"Storage Access Framework\".
+        \n\nZur Speicherung auf der SD-Karte auf Android 5+, siehe Einstellungen/Mehr Kamera-Einstellungen…/\"Storage Access Framework\".
         Für weitere Hilfe, klicke auf  \"Online-Hilfe\" in den Einstellungen.
     </string>
 
@@ -925,7 +911,6 @@
     <string name="preference_video_profile_gamma_2_8">2,8</string>
 
     <string name="preference_immersive_mode_off">Nichts ausblenden</string>
-    <string name="preference_immersive_mode_low_profile">Nur Navigationstasten auf dem Bildschirm dimmen</string>
     <string name="preference_immersive_mode_navigation">Nur Navigationstasten ausblenden</string>
     <string name="preference_immersive_mode_gui">Alle Einstellelemente ausblenden</string>
     <string name="preference_immersive_mode_everything">Alles ausblenden</string>
@@ -967,7 +952,7 @@
     <string name="error_features_slow_motion">Slow-Motion</string>
 
     <string name="preference_comment_ypr">Eigentliche Eulerwinkel speichern</string>
-    <string name="preference_comment_ypr_summary">Speichern der drei Euler-Winkel (Drehlage des Geräts im EXIF Benutzerkommentar des Fotos (nur im JPEG-Format)</string>
+    <string name="preference_comment_ypr_summary">Speichern der drei Euler-Winkel (Drehlage des Geräts im Exif Benutzerkommentar des Fotos (nur im JPEG-Format usw)</string>
 
     <string name="preference_audio_control_none">Keine</string>
     <string name="preference_audio_control_noise">Lautes Geräusch</string>

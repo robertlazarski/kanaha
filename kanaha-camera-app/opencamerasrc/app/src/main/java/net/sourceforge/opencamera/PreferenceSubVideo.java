@@ -26,6 +26,9 @@ public class PreferenceSubVideo extends PreferenceSubScreen {
         final int cameraId = bundle.getInt("cameraId");
         if( MyDebug.LOG )
             Log.d(TAG, "cameraId: " + cameraId);
+        final String cameraIdSPhysical = bundle.getString("cameraIdSPhysical");
+        if( MyDebug.LOG )
+            Log.d(TAG, "cameraIdSPhysical: " + cameraIdSPhysical);
 
         final boolean camera_open = bundle.getBoolean("camera_open");
         if( MyDebug.LOG )
@@ -37,7 +40,7 @@ public class PreferenceSubVideo extends PreferenceSubScreen {
         final int [] video_fps = bundle.getIntArray("video_fps");
         final boolean [] video_fps_high_speed = bundle.getBooleanArray("video_fps_high_speed");
 
-        String fps_preference_key = PreferenceKeys.getVideoFPSPreferenceKey(cameraId);
+        String fps_preference_key = PreferenceKeys.getVideoFPSPreferenceKey(cameraId, cameraIdSPhysical);
         if( MyDebug.LOG )
             Log.d(TAG, "fps_preference_key: " + fps_preference_key);
         String fps_value = sharedPreferences.getString(fps_preference_key, "default");
@@ -118,9 +121,9 @@ public class PreferenceSubVideo extends PreferenceSubScreen {
                     entries[i] = fps + high_speed_append;
                 }
                 else {
-                    entries[i] = "" + fps;
+                    entries[i] = String.valueOf(fps);
                 }
-                values[i] = "" + fps;
+                values[i] = String.valueOf(fps);
                 i++;
             }
 
@@ -164,9 +167,6 @@ public class PreferenceSubVideo extends PreferenceSubScreen {
 
         if( Build.VERSION.SDK_INT < Build.VERSION_CODES.N ) {
             MyPreferenceFragment.filterArrayEntry((ListPreference)findPreference("preference_video_output_format"), "preference_video_output_format_mpeg4_hevc");
-        }
-        if( Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP ) {
-            MyPreferenceFragment.filterArrayEntry((ListPreference)findPreference("preference_video_output_format"), "preference_video_output_format_webm");
         }
 
         {
@@ -213,7 +213,7 @@ public class PreferenceSubVideo extends PreferenceSubScreen {
                 boolean using_saf = false;
                 // n.b., not safe to call main_activity.getApplicationInterface().getStorageUtils().isUsingSAF() if fragment
                 // is being recreated
-                if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
+                {
                     SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this.getActivity());
                     if( sharedPreferences.getBoolean(PreferenceKeys.UsingSAFPreferenceKey, false) ) {
                         using_saf = true;

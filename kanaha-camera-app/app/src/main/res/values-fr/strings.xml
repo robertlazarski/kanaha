@@ -99,7 +99,7 @@
     <string name="preference_burst_interval">Intervale du mode rafale</string>
     <string name="preference_screen_camera_controls_more">Plus de paramètres…</string>
     <string name="preference_touch_capture">Toucher pour capturer</string>
-    <string name="preference_touch_capture_summary">Prendre une photo en touchant 1 ou 2 fois l\'aperçu</string>
+    <string name="preference_touch_capture_summary">Prendre une photo en touchant 1 ou 2 fois l\'aperçu\n%s</string>
     <string name="preference_pause_preview">Mettre en pause après la prise de photo</string>
     <string name="preference_pause_preview_summary">Mettre en pause l\'écran après avoir pris une photo, avec la possibilité de partager ou supprimer la photo</string>
     <string name="preference_shutter_sound">Son de l\'obturateur</string>
@@ -107,7 +107,7 @@
     <string name="preference_volume_keys">Touches de volumes</string>
     <string name="preference_audio_control">Option contrôle audio</string>
     <string name="preference_audio_noise_control_sensitivity">Sensibilité contrôle audio</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Niveau de la sensibilité sonore pour l\'option contrôle audio (bruit fort)</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Niveau de la sensibilité sonore pour l\'option contrôle audio (bruit fort)\n%s</string>
     <string name="preference_save_location">Dossier de stockage</string>
     <string name="preference_save_location_summary">Dossier où sont stockés les fichiers photo/vidéo</string>
     <string name="preference_using_saf_summary">Utilise le Storage Access Framework pour enregistrer les photos et vidéos</string>
@@ -129,8 +129,6 @@
     <string name="preference_immersive_mode">Mode immersif</string>
     <string name="preference_show_zoom">Afficher le zoom</string>
     <string name="preference_show_zoom_summary">Affiche le niveau actuel de zoom à l\'écran (quand le zoom est actif)</string>
-    <string name="preference_show_zoom_controls">Afficher les contrôles de zoom -/+</string>
-    <string name="preference_show_zoom_controls_summary">Affiche les bouttons -/+ pour contrôler le zoom</string>
     <string name="preference_show_zoom_slider_controls">Afficher le curseur de zoom</string>
     <string name="preference_show_zoom_slider_controls_summary">Affiche le curseur pour modifier le niveau de zoom</string>
     <string name="preference_show_iso">Afficher les ISO</string>
@@ -142,7 +140,7 @@
     <string name="preference_show_angle_line">Montrer la ligne d\'angle</string>
     <string name="preference_show_angle_line_summary">Affiche une ligne de niveau horizontal</string>
     <string name="preference_angle_highlight_color">Couleur de surbrillance de la ligne d\'angle</string>
-    <string name="preference_angle_highlight_color_summary">Met la ligne d\'angle en surbrillance lorsque l\'appareil est presque de niveau</string>
+    <string name="preference_angle_highlight_color_summary">Met la ligne d\'angle en surbrillance lorsque l\'appareil est presque de niveau\n%s</string>
     <string name="preference_show_geo_direction">Afficher la boussole de direction</string>
     <string name="preference_show_geo_direction_summary">Affiche la boussole de direction de l\'appareil à l\'écran</string>
     <string name="preference_show_time">Afficher l\'heure</string>
@@ -220,8 +218,6 @@
     <string name="preference_category_online">Divers</string>
     <string name="preference_online_help">Aide en ligne</string>
     <string name="preference_online_help_summary">Ouvre le site web de Open Camera dans votre navigateur</string>
-    <string name="preference_donate">Faire un don pour soutenir le développement</string>
-    <string name="preference_donate_summary">Si vous aimez ce logiciel, n\'hésitez pas à faire un don. Vous pouvez le faire via l\'achat de mon «\u00A0application de don\u00A0» - Cliquer sur cette option va ouvrir la page de l\'application de don. Merci\u00A0!</string>
     <string name="preference_use_camera2">Utiliser l\'API Camera2</string>
     <string name="preference_use_camera2_summary">Active l\'API Camera2 - permet d\'utiliser des fonctionnalités supplémentaires, mais reste encore expérimental (peut provoquer un redémarrage)</string>
     <string name="preference_about">À propos</string>

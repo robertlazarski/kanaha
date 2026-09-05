@@ -6,7 +6,7 @@ import android.util.Log;
 public class JavaImageProcessing {
     private static final String TAG = "JavaImageProcessing";
 
-    interface ApplyFunctionInterface {
+    public interface ApplyFunctionInterface {
         void init(int n_threads);
         void apply(CachedBitmap output, int thread_index, int off_x, int off_y, int this_width, int this_height); // version with no input
 
@@ -81,7 +81,7 @@ public class JavaImageProcessing {
      *  This differs to FastAccessBitmap in that CachedBitmap requires the caller to actually do the
      *  caching.
      */
-    static class CachedBitmap {
+    public static class CachedBitmap {
         private final Bitmap bitmap;
         private final int [] cache_pixels_i;
         private final byte [] cache_pixels_b;

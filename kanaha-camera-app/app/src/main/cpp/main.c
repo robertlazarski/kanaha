@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <unistd.h>   /* getpid() -- newer clang rejects the implicit declaration */
 #include <android/log.h>
 
 #define LOG_TAG "KanahaHttpdMain"

@@ -10,100 +10,32 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Point;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffXfermode;
+//import android.graphics.PorterDuff;
+//import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
-import android.os.Build;
 import android.os.Environment;
-import android.renderscript.Allocation;
-import android.renderscript.Element;
-import android.renderscript.RSInvalidStateException;
-import android.renderscript.RenderScript;
-import android.renderscript.Script;
-//import android.renderscript.ScriptIntrinsicResize;
-import android.renderscript.Type;
-import androidx.annotation.RequiresApi;
 import android.util.Log;
 
 public class PanoramaProcessor {
     private static final String TAG = "PanoramaProcessor";
 
-    private final Context context;
+    private final MainActivity main_activity;
     private final HDRProcessor hdrProcessor;
-    private RenderScript rs; // lazily created, so we don't take up resources if application isn't using panorama
 
-    // we lazily create and cache scripts that would otherwise have to be repeatedly created in a single
-    // panorama photo
-    // these should be set to null in freeScript(), to help garbage collection
-    private ScriptC_pyramid_blending pyramidBlendingScript = null;
-    private ScriptC_feature_detector featureDetectorScript = null;
-
-    public PanoramaProcessor(Context context, HDRProcessor hdrProcessor) {
-        this.context = context;
+    public PanoramaProcessor(MainActivity main_activity, HDRProcessor hdrProcessor) {
+        this.main_activity = main_activity;
         this.hdrProcessor = hdrProcessor;
     }
 
-    private void freeScripts() {
-        if( MyDebug.LOG )
-            Log.d(TAG, "freeScripts");
-
-        pyramidBlendingScript = null;
-        featureDetectorScript = null;
-    }
     public void onDestroy() {
         if( MyDebug.LOG )
             Log.d(TAG, "onDestroy");
-
-        freeScripts(); // just in case
-
-        if( rs != null ) {
-            // need to destroy context, otherwise this isn't necessarily garbage collected - we had tests failing with out of memory
-            // problems e.g. when running MainTests as a full set with Camera2 API. Although we now reduce the problem by creating
-            // the rs lazily, it's still good to explicitly clear.
-            try {
-                rs.destroy(); // on Android M onwards this is a NOP - instead we call RenderScript.releaseAllContexts(); in MainActivity.onDestroy()
-            }
-            catch(RSInvalidStateException e) {
-                e.printStackTrace();
-            }
-            rs = null;
-        }
-    }
-
-    private void initRenderscript() {
-        if( MyDebug.LOG )
-            Log.d(TAG, "initRenderscript");
-        if( !HDRProcessor.use_renderscript ) {
-            throw new RuntimeException("shouldn't be using renderscript");
-        }
-        if( rs == null ) {
-            // initialise renderscript
-            this.rs = RenderScript.create(context);
-            if( MyDebug.LOG )
-                Log.d(TAG, "create renderscript object");
-        }
-    }
-
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private Allocation reduceBitmapRS(ScriptC_pyramid_blending script, Allocation allocation) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "reduceBitmapRS");
-        int width = allocation.getType().getX();
-        int height = allocation.getType().getY();
-
-        Allocation reduced_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.RGBA_8888(rs), width/2, height/2));
-
-        script.set_bitmap(allocation);
-        script.forEach_reduce(reduced_allocation, reduced_allocation);
-
-        return reduced_allocation;
     }
 
     private Bitmap reduceBitmap(Bitmap bitmap) {
@@ -121,7 +53,7 @@ public class PanoramaProcessor {
         //final boolean use_reduce_2d = true;
         final boolean use_reduce_2d = false; // faster to do reduce as two 1D passes (note this gives minor differences in resultant images due to numerical wobble)
         if( use_reduce_2d ) {
-            JavaImageFunctions.ReduceBitmapFunction function = new JavaImageFunctions.ReduceBitmapFunction(bitmap);
+            JavaImageFunctionsPanorama.ReduceBitmapFunction function = new JavaImageFunctionsPanorama.ReduceBitmapFunction(bitmap);
             JavaImageProcessing.applyFunction(function, null, reduced_bitmap, 0, 0, reduced_bitmap.getWidth(), reduced_bitmap.getHeight());
         }
         else {
@@ -130,12 +62,12 @@ public class PanoramaProcessor {
             // work on bitmap directly:
 
             Bitmap reduced_bitmap_x = Bitmap.createBitmap(width/2, height, Bitmap.Config.ARGB_8888);
-            JavaImageFunctions.ReduceBitmapXFunction function_x = new JavaImageFunctions.ReduceBitmapXFunction(bitmap);
+            JavaImageFunctionsPanorama.ReduceBitmapXFunction function_x = new JavaImageFunctionsPanorama.ReduceBitmapXFunction(bitmap);
             JavaImageProcessing.applyFunction(function_x, null, reduced_bitmap_x, 0, 0, reduced_bitmap_x.getWidth(), reduced_bitmap_x.getHeight());
             if( MyDebug.LOG )
                 Log.d(TAG, "### time for reduceBitmapX: " + (System.currentTimeMillis() - time_s));
 
-            JavaImageFunctions.ReduceBitmapYFunction function_y = new JavaImageFunctions.ReduceBitmapYFunction(reduced_bitmap_x);
+            JavaImageFunctionsPanorama.ReduceBitmapYFunction function_y = new JavaImageFunctionsPanorama.ReduceBitmapYFunction(reduced_bitmap_x);
             JavaImageProcessing.applyFunction(function_y, null, reduced_bitmap, 0, 0, reduced_bitmap.getWidth(), reduced_bitmap.getHeight());
 
             reduced_bitmap_x.recycle();
@@ -158,21 +90,21 @@ public class PanoramaProcessor {
             }
 
             byte [] reduced_bitmap_x_argb = new byte[4*(width/2)*(height)];
-            JavaImageFunctions.ReduceBitmapXFullFunction function_x = new JavaImageFunctions.ReduceBitmapXFullFunction(bitmap_argb, reduced_bitmap_x_argb, width/2);
+            JavaImageFunctionsPanorama.ReduceBitmapXFullFunction function_x = new JavaImageFunctionsPanorama.ReduceBitmapXFullFunction(bitmap_argb, reduced_bitmap_x_argb, width/2);
             JavaImageProcessing.applyFunction(function_x, null, null, 0, 0, width/2,  height);
             if( MyDebug.LOG )
                 Log.d(TAG, "### time for reduceBitmapX: " + (System.currentTimeMillis() - time_s));
 
-            //noinspection ReassignedVariable,UnusedAssignment
+            // noinspection UnusedAssignment
             bitmap_argb = null; // help garbage collection
 
             byte [] reduced_bitmap_argb = new byte[4*(width/2)*(height/2)];
-            JavaImageFunctions.ReduceBitmapYFullFunction function_y = new JavaImageFunctions.ReduceBitmapYFullFunction(reduced_bitmap_x_argb, reduced_bitmap_argb, width/2, height/2);
+            JavaImageFunctionsPanorama.ReduceBitmapYFullFunction function_y = new JavaImageFunctionsPanorama.ReduceBitmapYFullFunction(reduced_bitmap_x_argb, reduced_bitmap_argb, width/2, height/2);
             JavaImageProcessing.applyFunction(function_y, null, null, 0, 0, width/2,  height/2);
             if( MyDebug.LOG )
                 Log.d(TAG, "### time for reduceBitmapY: " + (System.currentTimeMillis() - time_s));
 
-            //noinspection ReassignedVariable,UnusedAssignment
+            // noinspection UnusedAssignment
             reduced_bitmap_x_argb = null; // help garbage collection
 
             {
@@ -192,61 +124,6 @@ public class PanoramaProcessor {
         return reduced_bitmap;
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private Allocation expandBitmapRS(ScriptC_pyramid_blending script, Allocation allocation) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "expandBitmapRS");
-        long time_s = 0;
-        if( MyDebug.LOG )
-            time_s = System.currentTimeMillis();
-
-        int width = allocation.getType().getX();
-        int height = allocation.getType().getY();
-        Allocation result_allocation;
-
-        Allocation expanded_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.RGBA_8888(rs), 2*width, 2*height));
-        if( MyDebug.LOG )
-            Log.d(TAG, "### expandBitmap: time after creating expanded_allocation: " + (System.currentTimeMillis() - time_s));
-
-        script.set_bitmap(allocation);
-        script.forEach_expand(expanded_allocation, expanded_allocation);
-        if( MyDebug.LOG )
-            Log.d(TAG, "### expandBitmap: time after expand: " + (System.currentTimeMillis() - time_s));
-
-        final boolean use_blur_2d = false; // faster to do blur as two 1D passes
-        if( use_blur_2d ) {
-            result_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.RGBA_8888(rs), 2*width, 2*height));
-            if( MyDebug.LOG )
-                Log.d(TAG, "### expandBitmap: time after creating result_allocation: " + (System.currentTimeMillis() - time_s));
-            script.set_bitmap(expanded_allocation);
-            script.forEach_blur(expanded_allocation, result_allocation);
-            if( MyDebug.LOG )
-                Log.d(TAG, "### expandBitmap: time after blur: " + (System.currentTimeMillis() - time_s));
-            expanded_allocation.destroy();
-            //result_allocation = expanded_allocation;
-        }
-        else {
-            Allocation temp_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.RGBA_8888(rs), 2*width, 2*height));
-            if( MyDebug.LOG )
-                Log.d(TAG, "### expandBitmap: time after creating temp_allocation: " + (System.currentTimeMillis() - time_s));
-            script.set_bitmap(expanded_allocation);
-            script.forEach_blur1dX(expanded_allocation, temp_allocation);
-            if( MyDebug.LOG )
-                Log.d(TAG, "### expandBitmap: time after blur1dX: " + (System.currentTimeMillis() - time_s));
-
-            // now re-use expanded_allocation for the result_allocation
-            result_allocation = expanded_allocation;
-            script.set_bitmap(temp_allocation);
-            script.forEach_blur1dY(temp_allocation, result_allocation);
-            if( MyDebug.LOG )
-                Log.d(TAG, "### expandBitmap: time after blur1dY: " + (System.currentTimeMillis() - time_s));
-
-            temp_allocation.destroy();
-        }
-
-        return result_allocation;
-    }
-
     private Bitmap expandBitmap(Bitmap bitmap) {
         if( MyDebug.LOG )
             Log.d(TAG, "expandBitmap");
@@ -263,7 +140,7 @@ public class PanoramaProcessor {
         Bitmap expanded_bitmap = Bitmap.createBitmap(2*width, 2*height, Bitmap.Config.ARGB_8888);
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after create expanded_bitmap: " + (System.currentTimeMillis() - time_s));
-        JavaImageFunctions.ExpandBitmapFunction function = new JavaImageFunctions.ExpandBitmapFunction(bitmap);
+        JavaImageFunctionsPanorama.ExpandBitmapFunction function = new JavaImageFunctionsPanorama.ExpandBitmapFunction(bitmap);
         JavaImageProcessing.applyFunction(function, null, expanded_bitmap, 0, 0, expanded_bitmap.getWidth(), expanded_bitmap.getHeight());
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after expand: " + (System.currentTimeMillis() - time_s));
@@ -271,7 +148,7 @@ public class PanoramaProcessor {
         Bitmap temp_bitmap = Bitmap.createBitmap(2*width, 2*height, Bitmap.Config.ARGB_8888);
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after create temp_bitmap: " + (System.currentTimeMillis() - time_s));
-        JavaImageFunctions.Blur1dXFunction function_blur1dX = new JavaImageFunctions.Blur1dXFunction(expanded_bitmap);
+        JavaImageFunctionsPanorama.Blur1dXFunction function_blur1dX = new JavaImageFunctionsPanorama.Blur1dXFunction(expanded_bitmap);
         JavaImageProcessing.applyFunction(function_blur1dX, null, temp_bitmap, 0, 0, temp_bitmap.getWidth(), temp_bitmap.getHeight());
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after blur1dX: " + (System.currentTimeMillis() - time_s));
@@ -279,7 +156,7 @@ public class PanoramaProcessor {
         // now re-use expanded_bitmap for the result_bitmap
         @SuppressWarnings("UnnecessaryLocalVariable")
         Bitmap result_bitmap = expanded_bitmap;
-        JavaImageFunctions.Blur1dYFunction function_blur1dY = new JavaImageFunctions.Blur1dYFunction(temp_bitmap);
+        JavaImageFunctionsPanorama.Blur1dYFunction function_blur1dY = new JavaImageFunctionsPanorama.Blur1dYFunction(temp_bitmap);
         JavaImageProcessing.applyFunction(function_blur1dY, null, result_bitmap, 0, 0, result_bitmap.getWidth(), result_bitmap.getHeight());
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after blur1dY: " + (System.currentTimeMillis() - time_s));
@@ -313,18 +190,18 @@ public class PanoramaProcessor {
         }
 
         byte [] expanded_bitmap_argb = new byte[4*(2*width)*(2*height)];
-        JavaImageFunctions.ExpandBitmapFullFunction function = new JavaImageFunctions.ExpandBitmapFullFunction(bitmap_argb, expanded_bitmap_argb, 2*width, 2*height);
+        JavaImageFunctionsPanorama.ExpandBitmapFullFunction function = new JavaImageFunctionsPanorama.ExpandBitmapFullFunction(bitmap_argb, expanded_bitmap_argb, 2*width, 2*height);
         JavaImageProcessing.applyFunction(function, null, null, 0, 0, 2*width, 2*height);
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after expand: " + (System.currentTimeMillis() - time_s));
 
-        //noinspection ReassignedVariable,UnusedAssignment
+        // noinspection UnusedAssignment
         bitmap_argb = null; // help garbage collection
 
         /*Bitmap expanded_bitmap = Bitmap.createBitmap(2*width, 2*height, Bitmap.Config.ARGB_8888);
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after create expanded_bitmap: " + (System.currentTimeMillis() - time_s));
-        JavaImageFunctions.ExpandBitmapFunction function = new JavaImageFunctions.ExpandBitmapFunction(bitmap);
+        JavaImageFunctionsPanorama.ExpandBitmapFunction function = new JavaImageFunctionsPanorama.ExpandBitmapFunction(bitmap);
         JavaImageProcessing.applyFunction(function, null, expanded_bitmap, 0, 0, expanded_bitmap.getWidth(), expanded_bitmap.getHeight());
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after expand: " + (System.currentTimeMillis() - time_s));
@@ -344,7 +221,7 @@ public class PanoramaProcessor {
         }*/
 
         byte [] temp_bitmap_argb = new byte[4*(2*width)*(2*height)];
-        JavaImageFunctions.Blur1dXFullFunction function_blur1dX = new JavaImageFunctions.Blur1dXFullFunction(expanded_bitmap_argb, temp_bitmap_argb, 2*width, 2*height);
+        JavaImageFunctionsPanorama.Blur1dXFullFunction function_blur1dX = new JavaImageFunctionsPanorama.Blur1dXFullFunction(expanded_bitmap_argb, temp_bitmap_argb, 2*width, 2*height);
         JavaImageProcessing.applyFunction(function_blur1dX, null, null, 0, 0, 2*width, 2*height);
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after blur1dX: " + (System.currentTimeMillis() - time_s));
@@ -352,7 +229,7 @@ public class PanoramaProcessor {
         /*Bitmap temp_bitmap = Bitmap.createBitmap(2*width, 2*height, Bitmap.Config.ARGB_8888);
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after create temp_bitmap: " + (System.currentTimeMillis() - time_s));
-        JavaImageFunctions.Blur1dXFunction function_blur1dX = new JavaImageFunctions.Blur1dXFunction(expanded_bitmap);
+        JavaImageFunctionsPanorama.Blur1dXFunction function_blur1dX = new JavaImageFunctionsPanorama.Blur1dXFunction(expanded_bitmap);
         JavaImageProcessing.applyFunction(function_blur1dX, null, temp_bitmap, 0, 0, temp_bitmap.getWidth(), temp_bitmap.getHeight());
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after blur1dX: " + (System.currentTimeMillis() - time_s));
@@ -377,12 +254,12 @@ public class PanoramaProcessor {
         @SuppressWarnings("UnnecessaryLocalVariable")
         byte [] result_bitmap_argb = expanded_bitmap_argb;
 
-        JavaImageFunctions.Blur1dYFullFunction function_blur1dY = new JavaImageFunctions.Blur1dYFullFunction(temp_bitmap_argb, result_bitmap_argb, 2*width, 2*height);
+        JavaImageFunctionsPanorama.Blur1dYFullFunction function_blur1dY = new JavaImageFunctionsPanorama.Blur1dYFullFunction(temp_bitmap_argb, result_bitmap_argb, 2*width, 2*height);
         JavaImageProcessing.applyFunction(function_blur1dY, null, null, 0, 0, 2*width, 2*height);
         if( MyDebug.LOG )
             Log.d(TAG, "### expandBitmap: time after blur1dY: " + (System.currentTimeMillis() - time_s));
 
-        //noinspection ReassignedVariable,UnusedAssignment
+        // noinspection UnusedAssignment
         temp_bitmap_argb = null; // help garbage collection
 
         Bitmap result_bitmap = Bitmap.createBitmap(2*width, 2*height, Bitmap.Config.ARGB_8888);
@@ -407,27 +284,7 @@ public class PanoramaProcessor {
         return result_bitmap;
     }
 
-    /** Creates an allocation where each pixel equals the pixel from allocation0 minus the corresponding
-     *  pixel from allocation1.
-     */
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private Allocation subtractBitmapRS(ScriptC_pyramid_blending script, Allocation allocation0, Allocation allocation1) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "subtractBitmapRS");
-        int width = allocation0.getType().getX();
-        int height = allocation0.getType().getY();
-        if( allocation1.getType().getX() != width || allocation1.getType().getY() != height ) {
-            Log.e(TAG, "allocations of different dimensions");
-            throw new RuntimeException();
-        }
-        Allocation result_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.F32_3(rs), width, height));
-        script.set_bitmap(allocation1);
-        script.forEach_subtract(allocation0, result_allocation);
-
-        return result_allocation;
-    }
-
-    /** Creates a floating point array represending a bitmap where each pixel equals the pixel from
+    /** Creates a floating point array representing a bitmap where each pixel equals the pixel from
      *  bitmap0 minus the corresponding pixel from bitmap1.
      */
     private float [] subtractBitmap(Bitmap bitmap0, Bitmap bitmap1) {
@@ -441,28 +298,10 @@ public class PanoramaProcessor {
         }
         float [] result_rgbf = new float[3*width*height];
 
-        JavaImageFunctions.SubtractBitmapFunction function = new JavaImageFunctions.SubtractBitmapFunction(result_rgbf, bitmap1);
+        JavaImageFunctionsPanorama.SubtractBitmapFunction function = new JavaImageFunctionsPanorama.SubtractBitmapFunction(result_rgbf, bitmap1);
         JavaImageProcessing.applyFunction(function, bitmap0, null, 0, 0, bitmap0.getWidth(), bitmap0.getHeight());
 
         return result_rgbf;
-    }
-
-    /** Updates allocation0 such that each pixel equals the pixel from allocation0 plus the
-     *  corresponding pixel from allocation1.
-     *  allocation0 should be of type RGBA_8888, allocation1 should be of type F32_3.
-     */
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private void addBitmapRS(ScriptC_pyramid_blending script, Allocation allocation0, Allocation allocation1) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "addBitmapRS");
-        int width = allocation0.getType().getX();
-        int height = allocation0.getType().getY();
-        if( allocation1.getType().getX() != width || allocation1.getType().getY() != height ) {
-            Log.e(TAG, "allocations of different dimensions");
-            throw new RuntimeException();
-        }
-        script.set_bitmap(allocation1);
-        script.forEach_add(allocation0, allocation0);
     }
 
     /** Updates bitmap0 such that each pixel equals the pixel from bitmap0 plus the
@@ -478,24 +317,8 @@ public class PanoramaProcessor {
             Log.e(TAG, "bitmaps of different dimensions");
             throw new RuntimeException();
         }
-        JavaImageFunctions.AddBitmapFunction function = new JavaImageFunctions.AddBitmapFunction(bitmap1, width);
+        JavaImageFunctionsPanorama.AddBitmapFunction function = new JavaImageFunctionsPanorama.AddBitmapFunction(bitmap1, width);
         JavaImageProcessing.applyFunction(function, bitmap0, bitmap0, 0, 0, bitmap0.getWidth(), bitmap0.getHeight());
-    }
-
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private List<Allocation> createGaussianPyramidRS(ScriptC_pyramid_blending script, Bitmap bitmap, int n_levels) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "createGaussianPyramidRS");
-        List<Allocation> pyramid = new ArrayList<>();
-
-        Allocation allocation = Allocation.createFromBitmap(rs, bitmap);
-        pyramid.add(allocation);
-        for(int i=0;i<n_levels;i++ ) {
-            allocation = reduceBitmapRS(script, allocation);
-            pyramid.add(allocation);
-        }
-
-        return pyramid;
     }
 
     private List<Bitmap> createGaussianPyramid(Bitmap bitmap, int n_levels) {
@@ -508,72 +331,6 @@ public class PanoramaProcessor {
             bitmap = reduceBitmap(bitmap);
             pyramid.add(bitmap);
         }
-
-        return pyramid;
-    }
-
-    /** Creates a laplacian pyramid of the supplied bitmap, ordered from bottom to top. The i-th
-     *  entry is equal to [G(i) - G'(i+1)], where G(i) is the i-th level of the gaussian pyramid,
-     *  and G' is created by expanding a level of the gaussian pyramid; except the last entry
-     *  is simply equal to the last (i.e., top) level of the gaussian pyramid.
-     *  The allocations are of type floating point (F32_3), except the last which is of type
-     *  RGBA_8888.
-     */
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private List<Allocation> createLaplacianPyramidRS(ScriptC_pyramid_blending script, Bitmap bitmap, int n_levels, String name) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "createLaplacianPyramidRS");
-        long time_s = 0;
-        if( MyDebug.LOG )
-            time_s = System.currentTimeMillis();
-
-        List<Allocation> gaussianPyramid = createGaussianPyramidRS(script, bitmap, n_levels);
-        if( MyDebug.LOG )
-            Log.d(TAG, "### createLaplacianPyramid: time after createGaussianPyramid: " + (System.currentTimeMillis() - time_s));
-        /*if( MyDebug.LOG )
-        {
-            // debug
-            savePyramid("gaussian", gaussianPyramid);
-        }*/
-        List<Allocation> pyramid = new ArrayList<>();
-
-        for(int i=0;i<gaussianPyramid.size()-1;i++) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "createLaplacianPyramid: i = " + i);
-            Allocation this_gauss = gaussianPyramid.get(i);
-            Allocation next_gauss = gaussianPyramid.get(i+1);
-            Allocation next_gauss_expanded = expandBitmapRS(script, next_gauss);
-            if( MyDebug.LOG )
-                Log.d(TAG, "### createLaplacianPyramid: time after expandBitmap for level " + i + ": " + (System.currentTimeMillis() - time_s));
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "this_gauss: " + this_gauss.getType().getX() + " , " + this_gauss.getType().getY());
-                Log.d(TAG, "next_gauss: " + next_gauss.getType().getX() + " , " + next_gauss.getType().getY());
-                Log.d(TAG, "next_gauss_expanded: " + next_gauss_expanded.getType().getX() + " , " + next_gauss_expanded.getType().getY());
-            }
-            /*if( MyDebug.LOG )
-            {
-                // debug
-                saveAllocation(name + "_this_gauss_" + i + ".jpg", this_gauss);
-                saveAllocation(name + "_next_gauss_expanded_" + i + ".jpg", next_gauss_expanded);
-            }*/
-            Allocation difference = subtractBitmapRS(script, this_gauss, next_gauss_expanded);
-            if( MyDebug.LOG )
-                Log.d(TAG, "### createLaplacianPyramid: time after subtractBitmap for level " + i + ": " + (System.currentTimeMillis() - time_s));
-            /*if( MyDebug.LOG )
-            {
-                // debug
-                saveAllocation(name + "_difference_" + i + ".jpg", difference);
-            }*/
-            pyramid.add(difference);
-            //pyramid.add(this_gauss);
-
-            this_gauss.destroy();
-            gaussianPyramid.set(i, null); // to help garbage collection
-            next_gauss_expanded.destroy();
-            if( MyDebug.LOG )
-                Log.d(TAG, "### createLaplacianPyramid: time after level " + i + ": " + (System.currentTimeMillis() - time_s));
-        }
-        pyramid.add(gaussianPyramid.get(gaussianPyramid.size()-1));
 
         return pyramid;
     }
@@ -624,41 +381,18 @@ public class PanoramaProcessor {
             savePyramid("gaussian", gaussianPyramid);
         }*/
 
-        /*List<Allocation> gaussianPyramid_rs = new ArrayList<>();
-        for(Bitmap bm : gaussianPyramid) {
-            Allocation allocation = Allocation.createFromBitmap(rs, bm);
-            gaussianPyramid_rs.add(allocation);
-        }*/
-
-        //List<Allocation> pyramid = new ArrayList<>();
         LaplacianPyramid pyramid = new LaplacianPyramid();
 
         for(int i=0;i<gaussianPyramid.size()-1;i++) {
             if( MyDebug.LOG )
                 Log.d(TAG, "createLaplacianPyramid: i = " + i);
-            //Allocation this_gauss_rs = gaussianPyramid_rs.get(i);
             Bitmap this_gauss = gaussianPyramid.get(i);
-            //Allocation next_gauss_rs = gaussianPyramid_rs.get(i+1);
             Bitmap next_gauss = gaussianPyramid.get(i+1);
-            //Allocation next_gauss_expanded_rs = expandBitmap(script, next_gauss);
             Bitmap next_gauss_expanded = expandBitmap(next_gauss);
 
             if( MyDebug.LOG )
                 Log.d(TAG, "### createLaplacianPyramid: time after expandBitmap for level " + i + ": " + (System.currentTimeMillis() - time_s));
-            /*if( MyDebug.LOG )
-            {
-                // debug
-                saveAllocation(name + "_this_gauss_" + i + ".jpg", this_gauss);
-                saveAllocation(name + "_next_gauss_expanded_" + i + ".jpg", next_gauss_expanded);
-            }*/
-            //Allocation next_gauss_expanded_rs = Allocation.createFromBitmap(rs, next_gauss_expanded);
-            //Allocation difference = subtractBitmapRS(script, this_gauss_rs, next_gauss_expanded_rs);
             float [] difference_rgbf = subtractBitmap(this_gauss, next_gauss_expanded);
-            /*Allocation difference = Allocation.createTyped(rs, Type.createXY(rs, Element.F32_3(rs), this_gauss.getWidth(), this_gauss.getHeight()));
-            HDRProcessor.RGBfToAllocation(difference_rgbf, difference, this_gauss.getWidth(), this_gauss.getHeight());
-            pyramid.add(difference);
-            //pyramid.add(this_gauss);
-            */
             pyramid.addDiff(difference_rgbf, this_gauss.getWidth(), this_gauss.getHeight());
             if( MyDebug.LOG )
                 Log.d(TAG, "### createLaplacianPyramid: time after subtractBitmap for level " + i + ": " + (System.currentTimeMillis() - time_s));
@@ -676,33 +410,6 @@ public class PanoramaProcessor {
         pyramid.setTopLevel(gaussianPyramid.get(gaussianPyramid.size()-1));
 
         return pyramid;
-    }
-
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private Bitmap collapseLaplacianPyramidRS(ScriptC_pyramid_blending script, List<Allocation> pyramid) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "collapseLaplacianPyramidRS");
-
-        Allocation allocation = pyramid.get(pyramid.size()-1);
-        boolean first = true;
-        for(int i=pyramid.size()-2;i>=0;i--) {
-            Allocation expanded_allocation = expandBitmapRS(script, allocation);
-            if( !first ) {
-                allocation.destroy();
-            }
-            addBitmapRS(script, expanded_allocation, pyramid.get(i));
-            allocation = expanded_allocation;
-            first = false;
-        }
-
-        int width = allocation.getType().getX();
-        int height = allocation.getType().getY();
-        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        allocation.copyTo(bitmap);
-        if( !first ) {
-            allocation.destroy();
-        }
-        return bitmap;
     }
 
     private Bitmap collapseLaplacianPyramid(LaplacianPyramid pyramid) {
@@ -793,111 +500,6 @@ public class PanoramaProcessor {
         }
     }
 
-    /** Updates every allocation in pyramid0 to be a blend from the left hand of pyramid0 to the
-     *  right hand of pyramid1.
-     *  Note that the width of the blend region will be half of the width of each image.
-     * @param best_path If non-null, the blend region will follow the supplied best path.
-     */
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private void mergePyramidsRS(ScriptC_pyramid_blending script, List<Allocation> pyramid0, List<Allocation> pyramid1, int [] best_path, int best_path_n_x) {
-        if( MyDebug.LOG )
-            Log.d(TAG, "mergePyramidsRS");
-
-        if( best_path == null ) {
-            best_path = new int[1];
-            best_path_n_x = 3;
-            best_path[0] = 1;
-            //best_path[0] = 2; // test
-        }
-        if( MyDebug.LOG ) {
-            for(int i=0;i<best_path.length;i++)
-                Log.d(TAG, "best_path[" + i + "]: " + best_path[i]);
-        }
-        //Allocation bestPathAllocation = Allocation.createSized(rs, Element.I32(rs), best_path.length);
-        //script.bind_best_path(bestPathAllocation);
-        //bestPathAllocation.copyFrom(best_path);
-
-        int max_height = 0;
-        for(int i=0;i<pyramid0.size();i++) {
-            Allocation allocation0 = pyramid0.get(i);
-            int height = allocation0.getType().getY();
-            max_height = Math.max(max_height, height);
-        }
-
-        Allocation interpolatedbestPathAllocation = Allocation.createSized(rs, Element.I32(rs), max_height);
-        script.bind_interpolated_best_path(interpolatedbestPathAllocation);
-        int [] interpolated_best_path = new int[max_height];
-
-        for(int i=0;i<pyramid0.size();i++) {
-            Allocation allocation0 = pyramid0.get(i);
-            Allocation allocation1 = pyramid1.get(i);
-
-            int width = allocation0.getType().getX();
-            int height = allocation0.getType().getY();
-            if( allocation1.getType().getX() != width || allocation1.getType().getY() != height ) {
-                Log.e(TAG, "allocations of different dimensions");
-                throw new RuntimeException();
-            }
-            else if( allocation0.getType().getElement().getDataType() != allocation1.getType().getElement().getDataType() ) {
-                Log.e(TAG, "allocations of different data types");
-                throw new RuntimeException();
-            }
-
-            script.set_bitmap(allocation1);
-
-            // when using best_path, we have a narrower region to blend across
-            //int blend_window_width = width;
-            int blend_window_width = width/2;
-            //int blend_width = (i==pyramid0.size()-1) ? blend_window_width : 2;
-            int blend_width;
-            if( i==pyramid0.size()-1 ) {
-                blend_width = blend_window_width;
-            }
-            else {
-                blend_width = 2;
-                for(int j=0;j<i;j++) {
-                    blend_width *= 2;
-                }
-                blend_width = Math.min(blend_width, blend_window_width);
-            }
-            /*int blend_width = blend_window_width;
-            for(int j=i;j<pyramid0.size()-1;j++) {
-                blend_width /= 2;
-            }
-            blend_width = Math.max(blend_width, 2);*/
-            //blend_width = 1; // test
-
-            //float best_path_x_width = width / (best_path_n_x+1.0f); // width of each "bucket" for the best paths
-            //blend_width = Math.min(blend_width, (int)(2.0f*best_path_x_width+0.5f));
-            /*if( MyDebug.LOG ) {
-                Log.d(TAG, "i = " + i);
-                Log.d(TAG, "    width: " + width);
-                Log.d(TAG, "    blend_width: " + blend_width);
-                Log.d(TAG, "    height: " + height);
-                //Log.d(TAG, "    best_path_x_width: " + best_path_x_width);
-                Log.d(TAG, "    best_path_y_scale: " + best_path_y_scale);
-            }*/
-
-            // compute interpolated_best_path
-            computeInterpolatedBestPath(interpolated_best_path, width, height, blend_width, best_path, best_path_n_x);
-            interpolatedbestPathAllocation.copyFrom(interpolated_best_path);
-
-            script.invoke_setBlendWidth(blend_width, width);
-            //script.set_best_path_x_width(best_path_x_width);
-            //script.set_best_path_y_scale(best_path.length/(float)height);
-
-            if( allocation0.getType().getElement().getDataType() == Element.DataType.FLOAT_32 ) {
-                script.forEach_merge_f(allocation0, allocation0);
-            }
-            else {
-                script.forEach_merge(allocation0, allocation0);
-            }
-        }
-
-        //bestPathAllocation.destroy();
-        interpolatedbestPathAllocation.destroy();
-    }
-
     /** Updates every entry in pyramid0 to be a blend from the left hand of pyramid0 to the
      *  right hand of pyramid1.
      *  Note that the width of the blend region will be half of the width of each image.
@@ -952,7 +554,7 @@ public class PanoramaProcessor {
             // compute interpolated_best_path
             computeInterpolatedBestPath(interpolated_best_path, width, height, blend_width, best_path, best_path_n_x);
 
-            JavaImageFunctions.MergefFunction function = new JavaImageFunctions.MergefFunction(pyramid0.diffs.get(i), pyramid1.diffs.get(i), blend_width, width, interpolated_best_path);
+            JavaImageFunctionsPanorama.MergefFunction function = new JavaImageFunctionsPanorama.MergefFunction(pyramid0.diffs.get(i), pyramid1.diffs.get(i), blend_width, width, interpolated_best_path);
             JavaImageProcessing.applyFunction(function, null, null, 0, 0, width, height);
         }
         // now do top_level
@@ -973,7 +575,7 @@ public class PanoramaProcessor {
             // compute interpolated_best_path
             computeInterpolatedBestPath(interpolated_best_path, width, height, blend_width, best_path, best_path_n_x);
 
-            JavaImageFunctions.MergeFunction function = new JavaImageFunctions.MergeFunction(pyramid1.top_level, blend_width, interpolated_best_path);
+            JavaImageFunctionsPanorama.MergeFunction function = new JavaImageFunctionsPanorama.MergeFunction(pyramid1.top_level, blend_width, interpolated_best_path);
             JavaImageProcessing.applyFunction(function, pyramid0.top_level, pyramid0.top_level, 0, 0, width, height);
         }
     }
@@ -989,68 +591,13 @@ public class PanoramaProcessor {
             else
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 90, outputStream);
             outputStream.close();
-            MainActivity mActivity = (MainActivity) context;
-            mActivity.getStorageUtils().broadcastFile(file, true, false, true, false, null);
+            main_activity.getStorageUtils().broadcastFile(file, true, false, true, false, null);
         }
         catch(IOException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to save file", e);
             throw new RuntimeException();
         }
     }
-
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private void saveAllocation(String name, Allocation allocation) {
-        Bitmap bitmap;
-        int width = allocation.getType().getX();
-        int height = allocation.getType().getY();
-        Log.d(TAG, "count: " + allocation.getType().getCount());
-        Log.d(TAG, "byte size: " + allocation.getType().getElement().getBytesSize());
-        if( allocation.getType().getElement().getDataType() == Element.DataType.FLOAT_32 ) {
-            float [] bytes = new float[width*height*4];
-            allocation.copyTo(bytes);
-            int [] pixels = new int[width*height];
-            for(int j=0;j<width*height;j++) {
-                float r = bytes[4*j];
-                float g = bytes[4*j+1];
-                float b = bytes[4*j+2];
-                // each value should be from -255 to +255, we compress to be in the range [0, 255]
-                int ir = (int)(255.0f * ((r/510.0f) + 0.5f) + 0.5f);
-                int ig = (int)(255.0f * ((g/510.0f) + 0.5f) + 0.5f);
-                int ib = (int)(255.0f * ((b/510.0f) + 0.5f) + 0.5f);
-                ir = Math.max(Math.min(ir, 255), 0);
-                ig = Math.max(Math.min(ig, 255), 0);
-                ib = Math.max(Math.min(ib, 255), 0);
-                pixels[j] = Color.argb(255, ir, ig, ib);
-            }
-            bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
-        }
-        else if( allocation.getType().getElement().getDataType() == Element.DataType.UNSIGNED_8 ) {
-            byte [] bytes = new byte[width*height];
-            allocation.copyTo(bytes);
-            int [] pixels = new int[width*height];
-            for(int j=0;j<width*height;j++) {
-                int b = bytes[j];
-                if( b < 0 )
-                    b += 255;
-                pixels[j] = Color.argb(255, b, b, b);
-            }
-            bitmap = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
-        }
-        else {
-            bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-            allocation.copyTo(bitmap);
-        }
-        saveBitmap(bitmap, name);
-        bitmap.recycle();
-    }
-
-    /*@RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private void savePyramid(String name, List<Allocation> pyramid) {
-        for(int i=0;i<pyramid.size();i++) {
-            Allocation allocation = pyramid.get(i);
-            saveAllocation(name + "_" + i + ".jpg", allocation);
-        }
-    }*/
 
     private final static int blend_n_levels = 4; // number of levels used for pyramid blending
 
@@ -1065,41 +612,16 @@ public class PanoramaProcessor {
      *  Note that the width of the blend region will be half of the width of the image. The blend
      *  region will follow a path in order to minimise the transition between the images.
      */
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     private Bitmap blendPyramids(Bitmap lhs, Bitmap rhs) {
         long time_s = 0;
         if( MyDebug.LOG )
             time_s = System.currentTimeMillis();
-
-        if( !HDRProcessor.use_renderscript ) {
-        }
-        else {
-            if( pyramidBlendingScript == null ) {
-                pyramidBlendingScript = new ScriptC_pyramid_blending(rs);
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "### blendPyramids: time after creating ScriptC_pyramid_blending: " + (System.currentTimeMillis() - time_s));
-        }
 
         // debug
         /*if( MyDebug.LOG )
         {
             saveBitmap(lhs, "lhs.jpg");
             saveBitmap(rhs, "rhs.jpg");
-        }*/
-        // debug
-        /*if( MyDebug.LOG )
-        {
-            List<Allocation> lhs_pyramid = createGaussianPyramid(script, lhs, blend_n_levels);
-            List<Allocation> rhs_pyramid = createGaussianPyramid(script, rhs, blend_n_levels);
-            savePyramid("lhs_gauss", lhs_pyramid);
-            savePyramid("rhs_gauss", rhs_pyramid);
-            for(Allocation allocation : lhs_pyramid) {
-                allocation.destroy();
-            }
-            for(Allocation allocation : rhs_pyramid) {
-                allocation.destroy();
-            }
         }*/
 
         if( lhs.getWidth() != rhs.getWidth() || lhs.getHeight() != rhs.getHeight() ) {
@@ -1139,29 +661,7 @@ public class PanoramaProcessor {
                 saveBitmap(best_path_rhs, "best_path_rhs.jpg");
             }*/
 
-            JavaImageFunctions.PyramidBlendingComputeErrorFunction compute_error_function = null;
-            Allocation lhs_allocation = null;
-            Allocation rhs_allocation = null;
-            int [] errors = null;
-            Allocation errorsAllocation = null;
-            Script.LaunchOptions launch_options = null;
-            if( !HDRProcessor.use_renderscript ) {
-                compute_error_function = new JavaImageFunctions.PyramidBlendingComputeErrorFunction(best_path_rhs);
-            }
-            else {
-                lhs_allocation = Allocation.createFromBitmap(rs, best_path_lhs);
-                rhs_allocation = Allocation.createFromBitmap(rs, best_path_rhs);
-
-                errors = new int[1];
-                errorsAllocation = Allocation.createSized(rs, Element.I32(rs), 1);
-                pyramidBlendingScript.bind_errors(errorsAllocation);
-
-                launch_options = new Script.LaunchOptions();
-                if( MyDebug.LOG )
-                    Log.d(TAG, "### blendPyramids: time after creating allocations for best path: " + (System.currentTimeMillis() - time_s));
-
-                pyramidBlendingScript.set_bitmap(rhs_allocation);
-            }
+            JavaImageFunctionsPanorama.PyramidBlendingComputeErrorFunction compute_error_function = new JavaImageFunctionsPanorama.PyramidBlendingComputeErrorFunction(best_path_rhs);
 
             int window_width = Math.max(2, best_path_lhs.getWidth()/8);
             int start_y = 0, stop_y;
@@ -1170,11 +670,6 @@ public class PanoramaProcessor {
                 int best_error = -1;
 
                 stop_y = ((y+1) * best_path_lhs.getHeight()) / best_path_n_y;
-                if( !HDRProcessor.use_renderscript ) {
-                }
-                else {
-                    launch_options.setY(start_y, stop_y);
-                }
 
                 //int start_x = 0, stop_x;
                 for(int x=0;x<best_path_n_x;x++) {
@@ -1186,18 +681,8 @@ public class PanoramaProcessor {
                     int stop_x = mid_x + window_width/2;
                     //stop_x = ((x+1) * best_path_lhs.getWidth()) / best_path_n_x;
 
-                    int this_error;
-                    if( !HDRProcessor.use_renderscript ) {
-                        JavaImageProcessing.applyFunction(compute_error_function, best_path_lhs, null, start_x, start_y, stop_x, stop_y);
-                        this_error = compute_error_function.getError();
-                    }
-                    else {
-                        launch_options.setX(start_x, stop_x);
-                        pyramidBlendingScript.invoke_init_errors();
-                        pyramidBlendingScript.forEach_compute_error(lhs_allocation, launch_options);
-                        errorsAllocation.copyTo(errors);
-                        this_error = errors[0];
-                    }
+                    JavaImageProcessing.applyFunction(compute_error_function, best_path_lhs, null, start_x, start_y, stop_x, stop_y);
+                    int this_error = compute_error_function.getError();
                     //start_x = stop_x; // set for next iteration
 
                     if( MyDebug.LOG )
@@ -1216,14 +701,6 @@ public class PanoramaProcessor {
                     Log.d(TAG, "best_path [" + y + "]: " + best_path[y]);
             }
 
-            if( !HDRProcessor.use_renderscript ) {
-            }
-            else {
-                lhs_allocation.destroy();
-                rhs_allocation.destroy();
-                errorsAllocation.destroy();
-            }
-
             if( best_path_lhs != lhs ) {
                 best_path_lhs.recycle();
             }
@@ -1236,7 +713,7 @@ public class PanoramaProcessor {
         }
 
         Bitmap merged_bitmap;
-        if( !HDRProcessor.use_renderscript ) {
+        {
             LaplacianPyramid lhs_pyramid = createLaplacianPyramid(lhs, blend_n_levels, "lhs");
             if( MyDebug.LOG )
                 Log.d(TAG, "### blendPyramids: time after createLaplacianPyramid 1st call: " + (System.currentTimeMillis() - time_s));
@@ -1244,49 +721,10 @@ public class PanoramaProcessor {
             if( MyDebug.LOG )
                 Log.d(TAG, "### blendPyramids: time after createLaplacianPyramid 2nd call: " + (System.currentTimeMillis() - time_s));
 
-            /*{
-                lhs_pyramid_rs = new ArrayList<>();
-                for(int i=0;i<lhs_pyramid.diffs.size();i++) {
-                    float [] difference_rgbf = lhs_pyramid.diffs.get(i);
-                    int width = lhs_pyramid.widths.get(i);
-                    int height = lhs_pyramid.heights.get(i);
-                    Allocation allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.F32_3(rs), width, height));
-                    HDRProcessor.RGBfToAllocation(difference_rgbf, allocation, width, height);
-                    lhs_pyramid_rs.add(allocation);
-                }
-                Allocation allocation = Allocation.createFromBitmap(rs, lhs_pyramid.top_level);
-                lhs_pyramid_rs.add(allocation);
-            }
-            {
-                rhs_pyramid_rs = new ArrayList<>();
-                for(int i=0;i<rhs_pyramid.diffs.size();i++) {
-                    float [] difference_rgbf = rhs_pyramid.diffs.get(i);
-                    int width = rhs_pyramid.widths.get(i);
-                    int height = rhs_pyramid.heights.get(i);
-                    Allocation allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.F32_3(rs), width, height));
-                    HDRProcessor.RGBfToAllocation(difference_rgbf, allocation, width, height);
-                    rhs_pyramid_rs.add(allocation);
-                }
-                Allocation allocation = Allocation.createFromBitmap(rs, rhs_pyramid.top_level);
-                rhs_pyramid_rs.add(allocation);
-            }*/
 
             mergePyramids(lhs_pyramid, rhs_pyramid, best_path, best_path_n_x);
             if( MyDebug.LOG )
                 Log.d(TAG, "### blendPyramids: time after mergePyramids: " + (System.currentTimeMillis() - time_s));
-            /*{
-                lhs_pyramid_rs = new ArrayList<>();
-                for(int i=0;i<lhs_pyramid.diffs.size();i++) {
-                    float [] difference_rgbf = lhs_pyramid.diffs.get(i);
-                    int width = lhs_pyramid.widths.get(i);
-                    int height = lhs_pyramid.heights.get(i);
-                    Allocation allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.F32_3(rs), width, height));
-                    HDRProcessor.RGBfToAllocation(difference_rgbf, allocation, width, height);
-                    lhs_pyramid_rs.add(allocation);
-                }
-                Allocation allocation = Allocation.createFromBitmap(rs, lhs_pyramid.top_level);
-                lhs_pyramid_rs.add(allocation);
-            }*/
 
             merged_bitmap = collapseLaplacianPyramid(lhs_pyramid);
             if( MyDebug.LOG )
@@ -1294,47 +732,6 @@ public class PanoramaProcessor {
 
             lhs_pyramid.top_level.recycle();
             rhs_pyramid.top_level.recycle();
-        }
-        else {
-            List<Allocation> lhs_pyramid_rs = createLaplacianPyramidRS(pyramidBlendingScript, lhs, blend_n_levels, "lhs");
-            if( MyDebug.LOG )
-                Log.d(TAG, "### blendPyramids: time after createLaplacianPyramid 1st call: " + (System.currentTimeMillis() - time_s));
-            List<Allocation> rhs_pyramid_rs = createLaplacianPyramidRS(pyramidBlendingScript, rhs, blend_n_levels, "rhs");
-            if( MyDebug.LOG )
-                Log.d(TAG, "### blendPyramids: time after createLaplacianPyramid 2nd call: " + (System.currentTimeMillis() - time_s));
-
-            // debug
-            /*if( MyDebug.LOG )
-            {
-                savePyramid("lhs_laplacian", lhs_pyramid);
-                savePyramid("rhs_laplacian", rhs_pyramid);
-            }*/
-
-                // debug
-            /*if( MyDebug.LOG )
-            {
-                Bitmap lhs_collapsed = collapseLaplacianPyramid(script, lhs_pyramid);
-                saveBitmap(lhs_collapsed, "lhs_collapsed.jpg");
-                Bitmap rhs_collapsed = collapseLaplacianPyramid(script, rhs_pyramid);
-                saveBitmap(rhs_collapsed, "rhs_collapsed.jpg");
-                lhs_collapsed.recycle();
-                rhs_collapsed.recycle();
-            }*/
-
-            mergePyramidsRS(pyramidBlendingScript, lhs_pyramid_rs, rhs_pyramid_rs, best_path, best_path_n_x);
-            if( MyDebug.LOG )
-                Log.d(TAG, "### blendPyramids: time after mergePyramids: " + (System.currentTimeMillis() - time_s));
-
-            merged_bitmap = collapseLaplacianPyramidRS(pyramidBlendingScript, lhs_pyramid_rs);
-            if( MyDebug.LOG )
-                Log.d(TAG, "### blendPyramids: time after collapseLaplacianPyramid: " + (System.currentTimeMillis() - time_s));
-
-            for(Allocation allocation : lhs_pyramid_rs) {
-                allocation.destroy();
-            }
-            for(Allocation allocation : rhs_pyramid_rs) {
-                allocation.destroy();
-            }
         }
 
         // debug
@@ -1493,7 +890,6 @@ public class PanoramaProcessor {
         }
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     private AutoAlignmentByFeatureResult autoAlignmentByFeature(int width, int height, List<Bitmap> bitmaps, int debug_index) throws PanoramaProcessorException {
         if( MyDebug.LOG ) {
             Log.d(TAG, "autoAlignmentByFeature");
@@ -1528,28 +924,6 @@ public class PanoramaProcessor {
             c.drawBitmap(gs_bitmaps[i], 0, 0, paint);
         }*/
 
-        Allocation [] allocations = null;
-        if( !HDRProcessor.use_renderscript ) {
-        }
-        else {
-            initRenderscript();
-            if( MyDebug.LOG )
-                Log.d(TAG, "### autoAlignmentByFeature: time after initRenderscript: " + (System.currentTimeMillis() - time_s));
-            allocations = new Allocation[bitmaps.size()];
-            for(int i=0;i<bitmaps.size();i++) {
-                allocations[i] = Allocation.createFromBitmap(rs, bitmaps.get(i));
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "### autoAlignmentByFeature: time after creating allocations: " + (System.currentTimeMillis() - time_s));
-
-            // create RenderScript
-            if( featureDetectorScript == null ) {
-                featureDetectorScript = new ScriptC_feature_detector(rs);
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "### autoAlignmentByFeature: time after create featureDetectorScript: " + (System.currentTimeMillis() - time_s));
-        }
-
         //final int feature_descriptor_radius = 2; // radius of square used to compare features
         final int feature_descriptor_radius = 3; // radius of square used to compare features
         //final int feature_descriptor_radius = 5; // radius of square used to compare features
@@ -1559,17 +933,12 @@ public class PanoramaProcessor {
             if( MyDebug.LOG )
                 Log.d(TAG, "detect features for image: " + i);
 
-            float [] strength_rgbf = null;
-            Allocation gs_allocation;
-            Allocation ix_allocation;
-            Allocation iy_allocation;
-            Allocation strength_allocation = null;
-            Allocation local_max_features_allocation = null;
-            if( !HDRProcessor.use_renderscript ) {
+            float [] strength_rgbf;
+            {
                 if( MyDebug.LOG )
                     Log.d(TAG, "convert to greyscale");
                 Bitmap gs_bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ALPHA_8);
-                JavaImageFunctions.ConvertToGreyscaleFunction gs_function = new JavaImageFunctions.ConvertToGreyscaleFunction();
+                JavaImageFunctionsPanorama.ConvertToGreyscaleFunction gs_function = new JavaImageFunctionsPanorama.ConvertToGreyscaleFunction();
                 JavaImageProcessing.applyFunction(gs_function, bitmaps.get(i), gs_bitmap, 0, 0, width, height);
                 if( MyDebug.LOG )
                     Log.d(TAG, "### autoAlignmentByFeature: time after ConvertToGreyscaleFunction: " + (System.currentTimeMillis() - time_s));
@@ -1578,7 +947,7 @@ public class PanoramaProcessor {
                     Log.d(TAG, "compute derivatives");
                 Bitmap ix_bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ALPHA_8);
                 Bitmap iy_bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ALPHA_8);
-                JavaImageFunctions.ComputeDerivativesFunction derivatives_function = new JavaImageFunctions.ComputeDerivativesFunction(ix_bitmap, iy_bitmap, gs_bitmap);
+                JavaImageFunctionsPanorama.ComputeDerivativesFunction derivatives_function = new JavaImageFunctionsPanorama.ComputeDerivativesFunction(ix_bitmap, iy_bitmap, gs_bitmap);
                 JavaImageProcessing.applyFunction(derivatives_function, null, null, 0, 0, width, height);
                 if( MyDebug.LOG )
                     Log.d(TAG, "### autoAlignmentByFeature: time after ComputeDerivativesFunction: " + (System.currentTimeMillis() - time_s));
@@ -1588,7 +957,7 @@ public class PanoramaProcessor {
                 if( MyDebug.LOG )
                     Log.d(TAG, "call corner detector script for image: " + i);
                 strength_rgbf = new float[width*height]; // floating point format
-                JavaImageFunctions.CornerDetectorFunction corner_detector_function = new JavaImageFunctions.CornerDetectorFunction(strength_rgbf, ix_bitmap, iy_bitmap);
+                JavaImageFunctionsPanorama.CornerDetectorFunction corner_detector_function = new JavaImageFunctionsPanorama.CornerDetectorFunction(strength_rgbf, ix_bitmap, iy_bitmap);
                 JavaImageProcessing.applyFunction(corner_detector_function, null, null, 0, 0, width, height);
                 if( MyDebug.LOG )
                     Log.d(TAG, "### autoAlignmentByFeature: time after CornerDetectorFunction: " + (System.currentTimeMillis() - time_s));
@@ -1596,113 +965,9 @@ public class PanoramaProcessor {
                 ix_bitmap.recycle();
                 iy_bitmap.recycle();
             }
-            else {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "convert to greyscale");
-                gs_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.U8(rs), width, height));
-                featureDetectorScript.forEach_create_greyscale(allocations[i], gs_allocation);
-
-                if( MyDebug.LOG )
-                    Log.d(TAG, "compute derivatives");
-                ix_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.U8(rs), width, height));
-                iy_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.U8(rs), width, height));
-                featureDetectorScript.set_bitmap(gs_allocation);
-                featureDetectorScript.set_bitmap_Ix(ix_allocation);
-                featureDetectorScript.set_bitmap_Iy(iy_allocation);
-                featureDetectorScript.forEach_compute_derivatives(gs_allocation);
-
-                if( MyDebug.LOG )
-                    Log.d(TAG, "call corner detector script for image: " + i);
-                strength_allocation = Allocation.createTyped(rs, Type.createXY(rs, Element.F32(rs), width, height));
-                featureDetectorScript.set_bitmap(gs_allocation);
-                featureDetectorScript.set_bitmap_Ix(ix_allocation);
-                featureDetectorScript.set_bitmap_Iy(iy_allocation);
-                featureDetectorScript.forEach_corner_detector(gs_allocation, strength_allocation);
-
-                ix_allocation.destroy();
-                //noinspection UnusedAssignment
-                ix_allocation = null;
-                iy_allocation.destroy();
-                //noinspection UnusedAssignment
-                iy_allocation = null;
-
-                // reuse gs_allocation (since it's on the same U8 type that we want)
-                local_max_features_allocation = gs_allocation;
-                //noinspection UnusedAssignment
-                gs_allocation = null;
-            }
-            //Allocation gs_allocation = Allocation.createFromBitmap(rs, gs_bitmaps[i]);
-
-            /*if( MyDebug.LOG ) {
-                // debugging
-                byte [] bytes_x = new byte[width*height];
-                byte [] bytes_y = new byte[width*height];
-                ix_allocation.copyTo(bytes_x);
-                iy_allocation.copyTo(bytes_y);
-                int [] pixels_x = new int[width*height];
-                int [] pixels_y = new int[width*height];
-                for(int j=0;j<width*height;j++) {
-                    int b = bytes_x[j];
-                    if( b < 0 )
-                        b += 255;
-                    pixels_x[j] = Color.argb(255, b, b, b);
-                    b = bytes_y[j];
-                    if( b < 0 )
-                        b += 255;
-                    pixels_y[j] = Color.argb(255, b, b, b);
-                }
-                Bitmap bitmap_x = Bitmap.createBitmap(pixels_x, width, height, Bitmap.Config.ARGB_8888);
-                Bitmap bitmap_y = Bitmap.createBitmap(pixels_y, width, height, Bitmap.Config.ARGB_8888);
-                File file_x = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM) + "/ix_bitmap" + debug_index + "_" + i + ".png");
-                File file_y = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM) + "/iy_bitmap" + debug_index + "_" + i + ".png");
-                try {
-                    MainActivity mActivity = (MainActivity) context;
-
-                    OutputStream outputStream = new FileOutputStream(file_x);
-                    bitmap_x.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
-                    outputStream.close();
-                    mActivity.getStorageUtils().broadcastFile(file_x, true, false, true);
-
-                    outputStream = new FileOutputStream(file_y);
-                    bitmap_y.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
-                    outputStream.close();
-                    mActivity.getStorageUtils().broadcastFile(file_y, true, false, true);
-                }
-                catch(IOException e) {
-                    e.printStackTrace();
-                }
-                bitmap_x.recycle();
-                bitmap_y.recycle();
-            }*/
-
-            /*featureDetectorScript.set_corner_threshold(100000000.0f);
-            featureDetectorScript.set_bitmap(strength_allocation);
-            featureDetectorScript.forEach_local_maximum(strength_allocation, local_max_features_allocation);
-            // collect points
-            byte [] bytes = new byte[width*height];
-            local_max_features_allocation.copyTo(bytes);
-            // find points
-            List<Point> points = new ArrayList<>();
-            for(int y=feature_descriptor_radius;y<height-feature_descriptor_radius;y++) {
-                for(int x=feature_descriptor_radius;x<width-feature_descriptor_radius;x++) {
-                    int j = y*width + x;
-                    // remember, bytes are signed!
-                    if( bytes[j] != 0 ) {
-                        Point point = new Point(x, y);
-                        points.add(point);
-                    }
-                }
-            }
-            points_arrays[i] = points.toArray(new Point[0]);
-            */
 
             if( MyDebug.LOG )
                 Log.d(TAG, "find local maxima for image: " + i);
-            if( !HDRProcessor.use_renderscript ) {
-            }
-            else {
-                featureDetectorScript.set_bitmap(strength_allocation);
-            }
             //final int n_y_chunks = 1;
             final int n_y_chunks = 2;
             //final int n_y_chunks = 3;
@@ -1736,19 +1001,8 @@ public class PanoramaProcessor {
                     if( MyDebug.LOG )
                         Log.d(TAG, "### attempt " + count + " try threshold: " + threshold + " [ " + low_threshold + " : " + high_threshold + " ]");
 
-                    if( !HDRProcessor.use_renderscript ) {
-                        JavaImageFunctions.LocalMaximumFunction function = new JavaImageFunctions.LocalMaximumFunction(strength_rgbf, bytes, width, height, threshold);
-                        JavaImageProcessing.applyFunction(function, null, null, 0, 0, width, height);
-                    }
-                    else {
-                        featureDetectorScript.set_corner_threshold(threshold);
-                        Script.LaunchOptions launch_options = new Script.LaunchOptions();
-                        launch_options.setX(0, width);
-                        launch_options.setY(start_y, stop_y);
-                        featureDetectorScript.forEach_local_maximum(strength_allocation, local_max_features_allocation, launch_options);
-                        // collect points
-                        local_max_features_allocation.copyTo(bytes);
-                    }
+                    JavaImageFunctionsPanorama.LocalMaximumFunction function = new JavaImageFunctionsPanorama.LocalMaximumFunction(strength_rgbf, bytes, width, height, threshold);
+                    JavaImageProcessing.applyFunction(function, null, null, 0, 0, width, height);
 
                     // find points
                     List<Point> points = new ArrayList<>();
@@ -1822,18 +1076,6 @@ public class PanoramaProcessor {
 
             if( MyDebug.LOG )
                 Log.d(TAG, "### image: " + i + " has " + points_arrays[i].length + " points");
-
-            if( strength_allocation != null ) {
-                strength_allocation.destroy();
-                //noinspection UnusedAssignment
-                strength_allocation = null;
-            }
-
-            if( local_max_features_allocation != null ) {
-                local_max_features_allocation.destroy();
-                //noinspection UnusedAssignment
-                local_max_features_allocation = null;
-            }
         }
         if( MyDebug.LOG )
             Log.d(TAG, "### autoAlignmentByFeature: time after feature detection: " + (System.currentTimeMillis() - time_s));
@@ -1845,16 +1087,6 @@ public class PanoramaProcessor {
                 Log.d(TAG, "too few points!");
             /*if( true )
                 throw new RuntimeException();*/
-
-            if( allocations != null ) {
-                // free allocations
-                for(int i=0;i<allocations.length;i++) {
-                    if( allocations[i] != null ) {
-                        allocations[i].destroy();
-                        allocations[i] = null;
-                    }
-                }
-            }
 
             return new AutoAlignmentByFeatureResult(0, 0, 0.0f, 1.0f);
         }
@@ -1949,8 +1181,7 @@ public class PanoramaProcessor {
                     }
                 }
                 catch(InterruptedException e) {
-                    Log.e(TAG, "ComputeDistancesBetweenMatchesThread threads interrupted");
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "ComputeDistancesBetweenMatchesThread threads interrupted", e);
                     Thread.currentThread().interrupt();
                 }
                 if( MyDebug.LOG )
@@ -2065,21 +1296,11 @@ public class PanoramaProcessor {
         if( MyDebug.LOG )
             Log.d(TAG, "### autoAlignmentByFeature: time after choosing best matches: " + (System.currentTimeMillis() - time_s));
 
-        if( actual_matches.size() == 0 ) {
+        if( actual_matches.isEmpty() ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "no matches!");
             /*if( true )
                 throw new RuntimeException();*/
-
-            if( allocations != null ) {
-                // free allocations
-                for(int i=0;i<allocations.length;i++) {
-                    if( allocations[i] != null ) {
-                        allocations[i].destroy();
-                        allocations[i] = null;
-                    }
-                }
-            }
 
             return new AutoAlignmentByFeatureResult(0, 0, 0.0f, 1.0f);
         }
@@ -2210,9 +1431,9 @@ public class PanoramaProcessor {
 
                         float angle = (float)(Math.atan2(dy1, dx1) - Math.atan2(dy0, dx0));
                         if( angle < -Math.PI )
-                            angle += 2.0f*Math.PI;
+                            angle += (float) (2.0f*Math.PI);
                         else if( angle > Math.PI )
-                            angle -= 2.0f*Math.PI;
+                            angle -= (float) (2.0f*Math.PI);
                         if( Math.abs(angle) > 30.0f*Math.PI/180.0f ) {
                             // reject too large angles
                             continue;
@@ -2257,6 +1478,11 @@ public class PanoramaProcessor {
                             //y0 *= y_scale;
                             int transformed_x0 = (int)(x0 * Math.cos(angle) - y0 * Math.sin(angle));
                             int transformed_y0 = (int)(x0 * Math.sin(angle) + y0 * Math.cos(angle));
+                            // warning "Possibly lossy implicit cast in compound assignment" suppressed:
+                            // it's intentional that we multiply int by float, and implicitly cast back to int
+                            // (the suggested solution is to first cast the float to int before multiplying, which
+                            // we don't want)
+                            //noinspection lossy-conversions
                             transformed_y0 *= y_scale;
                             transformed_x0 += c1_x;
                             transformed_y0 += c1_y;
@@ -2387,9 +1613,9 @@ public class PanoramaProcessor {
 
                 float angle = (float)(Math.atan2(dy1, dx1) - Math.atan2(dy0, dx0));
                 if( angle < -Math.PI )
-                    angle += 2.0f*Math.PI;
+                    angle += (float) (2.0f*Math.PI);
                 else if( angle > Math.PI )
-                    angle -= 2.0f*Math.PI;
+                    angle -= (float) (2.0f*Math.PI);
                 if( MyDebug.LOG )
                     Log.d(TAG, "    match has angle: " + angle);
                 angle_sum += angle;
@@ -2442,7 +1668,9 @@ public class PanoramaProcessor {
                 Log.d(TAG, "offset_y before rotation: " + offset_y);
                 Log.d(TAG, "rotated_centre: " + rotated_centre_x + " , " + rotated_centre_y);
             }
+            //noinspection lossy-conversions
             offset_x += centres[0].x - rotated_centre_x;
+            //noinspection lossy-conversions
             offset_y += centres[0].y - rotated_centre_y;
 
         }
@@ -2522,6 +1750,11 @@ public class PanoramaProcessor {
                 //int t_cy = (int)(x0 * Math.sin(rotation) + y_scale * y0 * Math.cos(rotation));
                 int t_cx = (int)(x0 * Math.cos(rotation) - y0 * Math.sin(rotation));
                 int t_cy = (int)(x0 * Math.sin(rotation) + y0 * Math.cos(rotation));
+                // warning "Possibly lossy implicit cast in compound assignment" suppressed:
+                // it's intentional that we multiply int by float, and implicitly cast back to int
+                // (the suggested solution is to first cast the float to int before multiplying, which
+                // we don't want)
+                //noinspection lossy-conversions
                 t_cy *= y_scale;
                 t_cx += offset_x;
                 t_cy += offset_y;
@@ -2544,7 +1777,13 @@ public class PanoramaProcessor {
                 int dir_u_x = 0, dir_u_y = -50;
                 if( i == 1 ) {
                     // transform
+                    // warning "Possibly lossy implicit cast in compound assignment" suppressed:
+                    // it's intentional that we multiply int by float, and implicitly cast back to int
+                    // (the suggested solution is to first cast the float to int before multiplying, which
+                    // we don't want)
+                    //noinspection lossy-conversions
                     dir_r_y *= y_scale;
+                    //noinspection lossy-conversions
                     dir_u_y *= y_scale;
                     int n_dir_r_x = (int)(dir_r_x * Math.cos(rotation) - dir_r_y * Math.sin(rotation));
                     int n_dir_r_y = (int)(dir_r_x * Math.sin(rotation) + dir_r_y * Math.cos(rotation));
@@ -2578,6 +1817,11 @@ public class PanoramaProcessor {
                             //t_cy = (int)(cx * Math.sin(rotation) + y_scale * cy * Math.cos(rotation));
                             t_cx = (int)(cx * Math.cos(rotation) - cy * Math.sin(rotation));
                             t_cy = (int)(cx * Math.sin(rotation) + cy * Math.cos(rotation));
+                            // warning "Possibly lossy implicit cast in compound assignment" suppressed:
+                            // it's intentional that we multiply int by float, and implicitly cast back to int
+                            // (the suggested solution is to first cast the float to int before multiplying, which
+                            // we don't want)
+                            //noinspection lossy-conversions
                             t_cy *= y_scale;
                             t_cx += offset_x;
                             t_cy += offset_y;
@@ -2595,23 +1839,12 @@ public class PanoramaProcessor {
                 OutputStream outputStream = new FileOutputStream(file);
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
                 outputStream.close();
-                MainActivity mActivity = (MainActivity) context;
-                mActivity.getStorageUtils().broadcastFile(file, true, false, true, false, null);
+                main_activity.getStorageUtils().broadcastFile(file, true, false, true, false, null);
             }
             catch(IOException e) {
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "failed to save file", e);
             }
             bitmap.recycle();
-        }
-
-        if( allocations != null ) {
-            // free allocations
-            for(int i=0;i<allocations.length;i++) {
-                if( allocations[i] != null ) {
-                    allocations[i].destroy();
-                    allocations[i] = null;
-                }
-            }
         }
 
         if( MyDebug.LOG )
@@ -2619,7 +1852,7 @@ public class PanoramaProcessor {
         return new AutoAlignmentByFeatureResult(offset_x, offset_y, rotation, y_scale);
     }
 
-    private Bitmap blend_panorama_alpha(Bitmap lhs, Bitmap rhs) {
+    /*private Bitmap blend_panorama_alpha(Bitmap lhs, Bitmap rhs) {
         int width = lhs.getWidth();
         int height = lhs.getHeight();
         if( width != rhs.getWidth() ) {
@@ -2653,7 +1886,7 @@ public class PanoramaProcessor {
             blended_canvas.drawBitmap(rhs, rect, rect, p);
         }
         return blended_bitmap;
-    }
+    }*/
 
     /*private static int nextPowerOf2(int value) {
         int power = 1;
@@ -2724,7 +1957,6 @@ public class PanoramaProcessor {
         return projected_bitmap;
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     private void renderPanoramaImage(final int i, final int n_bitmaps, final Rect src_rect_workspace, final Rect dst_rect_workspace,
                                      final Bitmap bitmap, final Paint p, final int bitmap_width, final int bitmap_height,
                                      final int blend_hwidth, final int slice_width, final int offset_x,
@@ -2967,7 +2199,6 @@ public class PanoramaProcessor {
     /**
      * @return Returns the ratio between maximum and minimum computed brightnesses.
      */
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     private float adjustExposuresLocal(List<Bitmap> bitmaps, int bitmap_width, int bitmap_height, int slice_width, long time_s) {
         final int exposure_hwidth = bitmap_width/10;
         final int offset_x = (bitmap_width - slice_width)/2;
@@ -3125,8 +2356,7 @@ public class PanoramaProcessor {
         return ratio_brightnesses;
     }
 
-    /*@RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-    private void adjustExposures(List<Bitmap> bitmaps, long time_s) {
+    /*private void adjustExposures(List<Bitmap> bitmaps, long time_s) {
         List<HDRProcessor.HistogramInfo> histogramInfos = new ArrayList<>();
 
         float mean_median_brightness = 0.0f;
@@ -3195,7 +2425,6 @@ public class PanoramaProcessor {
         }
     }*/
 
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     private void computePanoramaTransforms(List<Matrix> cumulative_transforms, List<Integer> align_x_values, List<Integer> dst_offset_x_values,
                                            List<Bitmap> bitmaps, final int bitmap_width, final int bitmap_height,
                                            final int offset_x, final int slice_width, final int align_hwidth,
@@ -3307,7 +2536,13 @@ public class PanoramaProcessor {
                 }
                 if( MyDebug.LOG )
                     Log.d(TAG, "### time after auto-alignment for " + i + "th bitmap: " + (System.currentTimeMillis() - time_s));
+                // warning "Possibly lossy implicit cast in compound assignment" suppressed:
+                // it's intentional that we multiply int by float, and implicitly cast back to int
+                // (the suggested solution is to first cast the float to int before multiplying, which
+                // we don't want)
+                //noinspection lossy-conversions
                 this_align_x *= align_downsample;
+                //noinspection lossy-conversions
                 this_align_y *= align_downsample;
                 for(Bitmap alignment_bitmap : alignment_bitmaps) {
                     alignment_bitmap.recycle();
@@ -3444,7 +2679,6 @@ public class PanoramaProcessor {
         }
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     private void renderPanorama(List<Bitmap> bitmaps, int bitmap_width, int bitmap_height,
                                 List<Matrix> cumulative_transforms, List<Integer> align_x_values, List<Integer> dst_offset_x_values,
                                 final int blend_hwidth, final int slice_width, final int offset_x,
@@ -3557,7 +2791,6 @@ public class PanoramaProcessor {
         }
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
     public Bitmap panorama(List<Bitmap> bitmaps, float panorama_pics_per_screen, float camera_angle_y, final boolean crop) throws PanoramaProcessorException {
         if( MyDebug.LOG ) {
             Log.d(TAG, "panorama");
@@ -3729,7 +2962,8 @@ public class PanoramaProcessor {
             }
 
             // take cylindrical projection into account
-            float theta = (float)((bitmap_width/2)*camera_angle)/(float)bitmap_width;
+            int bitmap_hwidth = bitmap_width/2;
+            float theta = (float)(bitmap_hwidth*camera_angle)/(float)bitmap_width;
             float yscale = (float)Math.cos(theta);
             if( MyDebug.LOG ) {
                 Log.d(TAG, "theta: " + theta);
@@ -3774,29 +3008,13 @@ public class PanoramaProcessor {
             /*if( true )
                 throw new RuntimeException("ratio_brightnesses: " + ratio_brightnesses);*/
 
-            if( !HDRProcessor.use_renderscript ) {
-                hdrProcessor.adjustHistogram(panorama, panorama, panorama.getWidth(), panorama.getHeight(), 0.25f, 1, true, time_s);
-                if( MyDebug.LOG )
-                    Log.d(TAG, "### time after adjustHistogram: " + (System.currentTimeMillis() - time_s));
-            }
-            else {
-                Allocation allocation = Allocation.createFromBitmap(rs, panorama);
-                if( MyDebug.LOG )
-                    Log.d(TAG, "### time after creating allocation_out: " + (System.currentTimeMillis() - time_s));
-                hdrProcessor.adjustHistogramRS(allocation, allocation, panorama.getWidth(), panorama.getHeight(), 0.25f, 1, true, time_s);
-                if( MyDebug.LOG )
-                    Log.d(TAG, "### time after adjustHistogram: " + (System.currentTimeMillis() - time_s));
-                allocation.copyTo(panorama);
-                allocation.destroy();
-                if( MyDebug.LOG )
-                    Log.d(TAG, "### time after copying to bitmap: " + (System.currentTimeMillis() - time_s));
-            }
+            hdrProcessor.adjustHistogram(panorama, panorama, panorama.getWidth(), panorama.getHeight(), 0.25f, 1, true, time_s);
+            if( MyDebug.LOG )
+                Log.d(TAG, "### time after adjustHistogram: " + (System.currentTimeMillis() - time_s));
         }
 
         if( MyDebug.LOG )
             Log.d(TAG, "panorama complete!");
-
-        freeScripts();
 
         if( MyDebug.LOG )
             Log.d(TAG, "### time taken for panorama: " + (System.currentTimeMillis() - time_s));

@@ -120,8 +120,6 @@
     <string name="preference_immersive_mode">Modo Imersivo</string>
     <string name="preference_show_zoom">Mostrar zoom</string>
     <string name="preference_show_zoom_summary">Exibe o atual nível de zoom da câmera na tela (quando ampliado)</string>
-    <string name="preference_show_zoom_controls">Mostrar controle de zoom -/+</string>
-    <string name="preference_show_zoom_controls_summary">Mostrar botões -/+ para controlar o zoom</string>
     <string name="preference_show_zoom_slider_controls">Mostrar controle deslizante de zoom</string>
     <string name="preference_show_zoom_slider_controls_summary">Mostrar controle deslizante de zoom</string>
     <string name="preference_show_iso">Mostrar ISO</string>
@@ -189,8 +187,6 @@
     <string name="preference_video_flash_summary">Se habilitada, o flash ficará ligado enquanto filma.</string>
     <string name="preference_category_online">Diversos</string>
     <string name="preference_online_help">Ajuda online</string>
-    <string name="preference_donate">Doar para ajudar o desenvolvimento</string>
-    <string name="preference_donate_summary">Se você gostar deste app, por favor considere fazer uma doação. Você pode fazer isso comprando meu app de doação - clique nesta opção para abrir a página para meu app de doação. Obrigado!</string>
     <string name="preference_use_camera2">Usar Camera2 API</string>
     <string name="preference_use_camera2_summary">Habilitar Camera2 API oferece funções extras, mas é experimental</string>
     <string name="preference_about">Sobre</string>

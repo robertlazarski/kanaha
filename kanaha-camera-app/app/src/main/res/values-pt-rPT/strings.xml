@@ -100,7 +100,7 @@
     <string name="preference_burst_interval">Intervalo do modo disparo contínuo</string>
     <string name="preference_screen_camera_controls_more">Mais controlos da câmara…</string>
     <string name="preference_touch_capture">Tocar para capturar</string>
-    <string name="preference_touch_capture_summary">Tirar uma fotografia com apenas um toque ou com um toque duplo na pré-visualização</string>
+    <string name="preference_touch_capture_summary">Tirar uma fotografia com apenas um toque ou com um toque duplo na pré-visualização\n%s</string>
     <string name="preference_pause_preview">Pausar após tirar fotografia</string>
     <string name="preference_pause_preview_summary">Pausar o ecrã após tirar uma fotografia, com a opção de partilhar ou eliminar a fotografia.</string>
     <string name="preference_shutter_sound">Som do obturador</string>
@@ -108,7 +108,7 @@
     <string name="preference_volume_keys">Teclas de volume</string>
     <string name="preference_audio_control">Opções de controlo por áudio</string>
     <string name="preference_audio_noise_control_sensitivity">Sensibilidade do controlo por áudio</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Definir a sensibilidade do nível de ruído do áudio (ruído alto)</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Definir a sensibilidade do nível de ruído do áudio (ruído alto)\n%s</string>
     <string name="preference_save_location">Local de armazenamento</string>
     <string name="preference_save_location_summary">Pasta para guardar os ficheiros das fotografias/vídeos</string>
     <string name="preference_using_saf_summary">Optar por usar o Storage Access Framework para guardar fotografias e vídeos</string>
@@ -131,8 +131,6 @@
     <string name="preference_immersive_mode">Modo imersivo</string>
     <string name="preference_show_zoom">Mostrar ampliação</string>
     <string name="preference_show_zoom_summary">Exibir no ecrã o nível de ampliação da câmara atual (quando ampliado)</string>
-    <string name="preference_show_zoom_controls">Mostrar controlos de ampliação</string>
-    <string name="preference_show_zoom_controls_summary">Mostrar os botões de -/+ para controlar a ampliação</string>
     <string name="preference_show_zoom_slider_controls">Show zoom slider control</string>
     <string name="preference_show_zoom_slider_controls_summary">Show the slider for zoom control</string>
     <string name="preference_show_iso">Mostrar ISO</string>
@@ -144,7 +142,7 @@
     <string name="preference_show_angle_line">Mostrar linha de ângulo</string>
     <string name="preference_show_angle_line_summary">Exibir linha do nível horizontal</string>
     <string name="preference_angle_highlight_color">Cor de realce do ângulo</string>
-    <string name="preference_angle_highlight_color_summary">Cor de realce para quando a câmera estiver quase nivelada</string>
+    <string name="preference_angle_highlight_color_summary">Cor de realce para quando a câmera estiver quase nivelada\n%s</string>
     <string name="preference_show_geo_direction">Mostrar direção da bússola</string>
     <string name="preference_show_geo_direction_summary">Exibir no ecrã a direção da bússola do dispositivo</string>
     <string name="preference_show_time">Mostrar hora</string>
@@ -224,8 +222,6 @@
     <string name="preference_category_online">Diversos</string>
     <string name="preference_online_help">Ajuda online</string>
     <string name="preference_online_help_summary">Abrir o website do Open Camera no seu navegador</string>
-    <string name="preference_donate">Doar para apoiar o desenvolvimento</string>
-    <string name="preference_donate_summary">Se gosta desta aplicação, por favor concidere fazer um donativo para apoiar o desenvolvimento. Pode fazê-lo ao comprar a minha "aplicação de donativo" - clique nesta opção para abrir a página da minha aplicação de donativo. Obrigado!</string>
     <string name="preference_use_camera2">Usar API Camera2</string>
     <string name="preference_use_camera2_summary">Ativa a API Camera2 - oferece funcionalidades extra, mas é atualmente experimental (causará reinício)</string>
     <string name="preference_about">Sobre</string>
@@ -278,7 +274,7 @@
     <string name="audio_listener_started">Faça um ruído alto</string>
 
     <string name="auto_stabilise_info">Auto-estabilizar irá rodar automaticamente as fotografias para que aparentem estar niveladas.\n\nNote que isto significa que as imagens sairão com uma resolução ligeramente menor (devido à rotação e ao recorte que é necessário).</string>
-    <string name="raw_info">Ficheiros DNG contêm a informação total descomprimida e não processada da sua câmara.\n\nA maioria das aplicações de galeria não reconhecem DNG, em vez disso as mesmas devem ser usadas com aplicações especializadas.\n\nNote que várias opções de processamento como "Carimbar fotografias" e "Auto-estabilizar" serão aplicadas apenas às imagens JPEG, e não às imagens DNG.\n\nFicheiros DNG utilizam muito espaço; um explorador de ficheiros poderá ser útil para transferir ou eliminar os mesmos.</string>
+    <string name="raw_info">Ficheiros DNG contêm a informação total descomprimida e não processada da sua câmara.\n\nA maioria das aplicações de galeria não reconhecem DNG, em vez disso as mesmas devem ser usadas com aplicações especializadas.\n\nNote que várias opções de processamento como \"Carimbar fotografias\" e \"Auto-estabilizar\" serão aplicadas apenas às imagens JPEG, e não às imagens DNG.\n\nFicheiros DNG utilizam muito espaço; um explorador de ficheiros poderá ser útil para transferir ou eliminar os mesmos.</string>
 
     <string name="dont_show_again">Não mostrar novamente</string>
 

@@ -364,8 +364,11 @@ public class GyroSensor implements SensorEventListener {
 
             double mag = Math.sqrt(accelVector[0]*accelVector[0] + accelVector[1]*accelVector[1] + accelVector[2]*accelVector[2]);
             if( mag > 1.0e-8 ) {
+                //noinspection lossy-conversions
                 accelVector[0] /= mag;
+                //noinspection lossy-conversions
                 accelVector[1] /= mag;
+                //noinspection lossy-conversions
                 accelVector[2] /= mag;
             }
 
@@ -404,8 +407,11 @@ public class GyroSensor implements SensorEventListener {
                 // Normalize the rotation vector if it's big enough to get the axis
                 // (that is, EPSILON should represent your maximum allowable margin of error)
                 if( omegaMagnitude > 1.0e-5 ) {
+                    //noinspection lossy-conversions
                     axisX /= omegaMagnitude;
+                    //noinspection lossy-conversions
                     axisY /= omegaMagnitude;
+                    //noinspection lossy-conversions
                     axisZ /= omegaMagnitude;
                 }
 
@@ -549,8 +555,10 @@ public class GyroSensor implements SensorEventListener {
                         Log.d(TAG, "    p_u norm: " + p_ux/p_u_mag + " , " + p_uy/p_u_mag + " , " + p_uz/p_u_mag);
                     }*/
                     // normalise p_u
+                    //noinspection lossy-conversions
                     p_ux /= p_u_mag;
                     //p_uy /= p_u_mag; // commented out as not needed
+                    //noinspection lossy-conversions
                     p_uz /= p_u_mag;
 
                     // compute p_u X (0 1 0)

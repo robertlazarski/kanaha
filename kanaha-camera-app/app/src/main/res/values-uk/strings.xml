@@ -100,7 +100,7 @@
     <string name="preference_burst_interval">Інтервал в пакетному режимі</string>
     <string name="preference_screen_camera_controls_more">Додаткові налаштування</string>
     <string name="preference_touch_capture">Дотик для зйомки</string>
-    <string name="preference_touch_capture_summary">Робити знімок по одному чи подвійному дотику по області перегляду</string>
+    <string name="preference_touch_capture_summary">Робити знімок по одному чи подвійному дотику по області перегляду\n%s</string>
     <string name="preference_pause_preview">Пауза після знімку</string>
     <string name="preference_pause_preview_summary">Пауза після зняття фото, з можливістю поділитися чи видалити фотографію</string>
     <string name="preference_shutter_sound">Звук затвору</string>
@@ -132,8 +132,6 @@
     <string name="preference_immersive_mode">Режим занурення</string>
     <string name="preference_show_zoom">Показувати масштаб</string>
     <string name="preference_show_zoom_summary">Показ поточного рівня масштабування камери на екрані (при збільшені масштабу)</string>
-    <string name="preference_show_zoom_controls">Показувати кнопки масштабу (+/-)</string>
-    <string name="preference_show_zoom_controls_summary">Показ кнопок керування масштабом</string>
     <string name="preference_show_zoom_slider_controls">Повзунок масштабування</string>
     <string name="preference_show_zoom_slider_controls_summary">Показ повзунку для керування масштабуванням</string>
     <string name="preference_show_iso">Показувати ISO</string>
@@ -145,7 +143,7 @@
     <string name="preference_show_angle_line">Показувати лінію рівня</string>
     <string name="preference_show_angle_line_summary">Показує горизонтальну лінію рівня</string>
     <string name="preference_angle_highlight_color">Колір лінії рівня</string>
-    <string name="preference_angle_highlight_color_summary">Колір лінії рівня, який найбільш наближений до горизонтального положення</string>
+    <string name="preference_angle_highlight_color_summary">Колір лінії рівня, який найбільш наближений до горизонтального положення\n%s</string>
     <string name="preference_show_geo_direction">Показувати напрямок компасу</string>
     <string name="preference_show_geo_direction_summary">Показувати напрямок компасу на екрані</string>
     <string name="preference_show_time">Показувати час</string>
@@ -225,8 +223,6 @@
     <string name="preference_category_online">Різне</string>
     <string name="preference_online_help">Онлайн допомога</string>
     <string name="preference_online_help_summary">Відкрити сайт Open Camera в веб браузері</string>
-    <string name="preference_donate">Подякувати</string>
-    <string name="preference_donate_summary">Якщо вам сподобався цей додаток, киньте монетку. Ви можете зробити це, придбавши мій додаток. Дякую!</string>
     <string name="preference_use_camera2">Використовувати Camera2 API</string>
     <string name="preference_use_camera2_summary">Дозволяє використання Camera2 API - додаткові, але експериментальні можливості (потрібно перезавантажити)</string>
     <string name="preference_about">Про додаток</string>
@@ -302,8 +298,7 @@
 
 
 
-    <string name="preference_category_photo_debugging">Налаштування відлагодження</string>
-    <string name="preference_category_video_debugging">Налаштування відлагодження</string>
+    <string name="preference_category_debugging">Налаштування відлагодження</string>
 
 
 

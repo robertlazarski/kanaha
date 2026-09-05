@@ -3,7 +3,6 @@ package net.sourceforge.opencamera;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.SharedPreferences;
-import android.os.Build;
 import android.os.Bundle;
 import android.preference.ListPreference;
 import android.preference.Preference;
@@ -12,6 +11,7 @@ import android.preference.PreferenceManager;
 import android.util.Log;
 import android.widget.Toast;
 
+import net.sourceforge.opencamera.remotecontrol.DeviceScanner;
 import net.sourceforge.opencamera.ui.FolderChooserDialog;
 
 import java.io.File;
@@ -36,20 +36,20 @@ public class PreferenceSubCameraControlsMore extends PreferenceSubScreen {
 
         final SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(this.getActivity());
 
-        if( Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2 ) {
-            // BluetoothLeService requires Android 4.3+
-            Preference pref = findPreference("preference_screen_remote_control");
+        final boolean can_disable_shutter_sound = bundle.getBoolean("can_disable_shutter_sound");
+        if( MyDebug.LOG )
+            Log.d(TAG, "can_disable_shutter_sound: " + can_disable_shutter_sound);
+        if( !can_disable_shutter_sound ) {
+            // Camera.enableShutterSound requires JELLY_BEAN_MR1 or greater
+            Preference pref = findPreference("preference_shutter_sound");
             //PreferenceGroup pg = (PreferenceGroup)this.findPreference("preference_screen_camera_controls_more");
             PreferenceGroup pg = (PreferenceGroup)this.findPreference("preferences_root");
             pg.removePreference(pref);
         }
 
-        final boolean can_disable_shutter_sound = bundle.getBoolean("can_disable_shutter_sound");
-        if( MyDebug.LOG )
-            Log.d(TAG, "can_disable_shutter_sound: " + can_disable_shutter_sound);
-        if( Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1 || !can_disable_shutter_sound ) {
-            // Camera.enableShutterSound requires JELLY_BEAN_MR1 or greater
-            Preference pref = findPreference("preference_shutter_sound");
+        if( !DeviceScanner.useAndroid12BluetoothPermissions() ) {
+            // we require Android 12+ for bluetooth remove control
+            Preference pref = findPreference("preference_screen_remote_control");
             //PreferenceGroup pg = (PreferenceGroup)this.findPreference("preference_screen_camera_controls_more");
             PreferenceGroup pg = (PreferenceGroup)this.findPreference("preferences_root");
             pg.removePreference(pref);
@@ -86,7 +86,7 @@ public class PreferenceSubCameraControlsMore extends PreferenceSubScreen {
                     else if( MainActivity.useScopedStorage() ) {
                         // we can't use an EditTextPreference (or MyEditTextPreference) due to having to support non-scoped-storage, or when SAF is enabled...
                         // anyhow, this means we can share code when called from gallery long-press anyway
-                        AlertDialog.Builder alertDialog = main_activity.createSaveFolderDialog();
+                        AlertDialog.Builder alertDialog = main_activity.getSaveLocationHandler().createSaveFolderDialog();
                         final AlertDialog alert = alertDialog.create();
                         // AlertDialog.Builder.setOnDismissListener() requires API level 17, so do it this way instead
                         alert.setOnDismissListener(new DialogInterface.OnDismissListener() {
@@ -113,13 +113,7 @@ public class PreferenceSubCameraControlsMore extends PreferenceSubScreen {
             });
         }
 
-        if( Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP ) {
-            Preference pref = findPreference("preference_using_saf");
-            //PreferenceGroup pg = (PreferenceGroup)this.findPreference("preference_screen_camera_controls_more");
-            PreferenceGroup pg = (PreferenceGroup)this.findPreference("preferences_root");
-            pg.removePreference(pref);
-        }
-        else {
+        {
             final Preference pref = findPreference("preference_using_saf");
             pref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
                 @Override
@@ -130,10 +124,19 @@ public class PreferenceSubCameraControlsMore extends PreferenceSubScreen {
                         if( sharedPreferences.getBoolean(PreferenceKeys.UsingSAFPreferenceKey, false) ) {
                             if( MyDebug.LOG )
                                 Log.d(TAG, "saf is now enabled");
-                            // seems better to alway re-show the dialog when the user selects, to make it clear where files will be saved (as the SAF location in general will be different to the non-SAF one)
+                            // seems better to always re-show the dialog when the user selects, to make it clear where files will be saved (as the SAF location in general will be different to the non-SAF one)
                             //String uri = sharedPreferences.getString(PreferenceKeys.getSaveLocationSAFPreferenceKey(), "");
                             //if( uri.length() == 0 )
                             {
+                                // Also switch preference back off, and turn it on only once the new folder is selected in
+                                // MainActivity.onActivityResult().
+                                // This is better than turning SAF back off if the user cancels, as it also
+                                // works if the activity is ended whilst showing the SAF dialog (but before
+                                // the user selected a folder).
+                                SharedPreferences.Editor editor = sharedPreferences.edit();
+                                editor.putBoolean(PreferenceKeys.UsingSAFPreferenceKey, false);
+                                editor.apply();
+
                                 MainActivity main_activity = (MainActivity)PreferenceSubCameraControlsMore.this.getActivity();
                                 Toast.makeText(main_activity, R.string.saf_select_save_location, Toast.LENGTH_SHORT).show();
                                 main_activity.openFolderChooserDialogSAF(true);
@@ -142,6 +145,8 @@ public class PreferenceSubCameraControlsMore extends PreferenceSubScreen {
                         else {
                             if( MyDebug.LOG )
                                 Log.d(TAG, "saf is now disabled");
+                            // need to update the summary, as switching back to non-SAF folder
+                            MyPreferenceFragment.setSummary(findPreference("preference_save_location"));
                         }
                     }
                     return false;
@@ -206,6 +211,7 @@ public class PreferenceSubCameraControlsMore extends PreferenceSubScreen {
             });
         }
 
+        // preference_save_location done in onResume
         MyPreferenceFragment.setSummary(findPreference("preference_save_photo_prefix"));
         MyPreferenceFragment.setSummary(findPreference("preference_save_video_prefix"));
 
@@ -213,6 +219,14 @@ public class PreferenceSubCameraControlsMore extends PreferenceSubScreen {
 
         if( MyDebug.LOG )
             Log.d(TAG, "onCreate done");
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+
+        // we need to call this onResume too, to handle updating the summary when changing location via SAF dialoga
+        MyPreferenceFragment.setSummary(findPreference("preference_save_location"));
     }
 
     /** Programmatically set up dependencies for preference types (e.g., ListPreference) that don't

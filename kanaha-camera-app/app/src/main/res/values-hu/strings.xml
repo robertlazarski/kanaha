@@ -100,7 +100,7 @@
     <string name="preference_burst_interval">Sorozatfelvétel intervallum</string>
     <string name="preference_screen_camera_controls_more">További kamera beállítások…</string>
     <string name="preference_touch_capture">Exponálás érintéssel</string>
-    <string name="preference_touch_capture_summary">Fénykép készítése az előnézet érintésével, vagy dupla koppintással</string>
+    <string name="preference_touch_capture_summary">Fénykép készítése az előnézet érintésével, vagy dupla koppintással\n%s</string>
     <string name="preference_pause_preview">Fotózás utáni szünet</string>
     <string name="preference_pause_preview_summary">Kép kimerevítése a fotó elkészítése után, a fotó megosztásának és törlésének lehetőségével</string>
     <string name="preference_shutter_sound">Zárhang</string>
@@ -108,7 +108,7 @@
     <string name="preference_volume_keys">Hangerő gombok</string>
     <string name="preference_audio_control">Hangvezérlési lehetőségek</string>
     <string name="preference_audio_noise_control_sensitivity">Hangvezérlés érzékenysége</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Hangvezérlés zajszintérzékenysége</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Hangvezérlés zajszintérzékenysége\n%s</string>
     <string name="preference_save_location">Mentés helye</string>
     <string name="preference_save_location_summary">Fotók, videofájlok mentésének könyvtára</string>
     <string name="preference_using_saf_summary">Használja-e az Storage Access Frameworkjét a fotók és videók mentéséhez</string>
@@ -131,8 +131,6 @@
     <string name="preference_immersive_mode">Kiterjesztett üzemmód</string>
     <string name="preference_show_zoom">Zoom megjelenítése</string>
     <string name="preference_show_zoom_summary">Az aktuális zoomszint megjelenítése a képernyőn (zoomolt állapotban)</string>
-    <string name="preference_show_zoom_controls">Zoom -/+ gombok</string>
-    <string name="preference_show_zoom_controls_summary">A zoom +/- vezérlőgombjainak megjelenítése</string>
     <string name="preference_show_zoom_slider_controls">Zoomcsúszka megjelenítése</string>
     <string name="preference_show_zoom_slider_controls_summary">Zoomszint állító csúszka megjelenítése</string>
     <string name="preference_show_iso">ISO megjelenítése</string>
@@ -144,7 +142,7 @@
     <string name="preference_show_angle_line">Vízszintező</string>
     <string name="preference_show_angle_line_summary">Megjeleníti a vízszint vonalát</string>
     <string name="preference_angle_highlight_color">Szög/magasság kiemelés színe</string>
-    <string name="preference_angle_highlight_color_summary">A kiemelés színe, amikor a kamera közel vízszintesen áll</string>
+    <string name="preference_angle_highlight_color_summary">A kiemelés színe, amikor a kamera közel vízszintesen áll\n%s</string>
     <string name="preference_show_geo_direction">Iránytű szög megjelenítése</string>
     <string name="preference_show_geo_direction_summary">Az eszköz iránytű szerinti irányának megjelenítése a képernyőn</string>
     <string name="preference_show_time">Idő megjelenítése</string>
@@ -224,8 +222,6 @@
     <string name="preference_category_online">Egyéb</string>
     <string name="preference_online_help">Online súgó</string>
     <string name="preference_online_help_summary">Open Camera weboldal megnyitása böngészőben</string>
-    <string name="preference_donate">Támogasd a fejlesztést adománnyal</string>
-    <string name="preference_donate_summary">A tetszik az alkalmazás, fontold meg adomány küldését a fejlesztés támogatására. Ezt a „támogatói alkalmazás” megvásárlásával teheted meg – kattints ide, hogy megnyisd a támogató alkalmazás oldalát. Köszönjük!</string>
     <string name="preference_use_camera2">Camera2 API használata</string>
     <string name="preference_use_camera2_summary">Lehetővé teszi az Camera2 API használatát - extra funkciókat kínál, de nem minden eszközön működik megfelelően (újraindulást eredményez)</string>
     <string name="preference_about">Névjegy</string>
@@ -298,8 +294,7 @@
     <string name="permission_rationale_title">Engedély szükséges</string>
     <string name="permission_rationale_camera">A kamera eléréséhez „kamera engedély” szükséges</string>
 
-    <string name="preference_category_photo_debugging">Hibakeresési lehetőségek</string>
-    <string name="preference_category_video_debugging">Hibakeresési lehetőségek</string>
+    <string name="preference_category_debugging">Hibakeresési lehetőségek</string>
     <string name="preference_camera2_fake_flash">Alternatív vakukezelés használata</string>
     <string name="preference_camera2_fake_flash_summary">Engedélyezd, ha a készülék vakuja hibásan működik Camera2 API-val</string>
 

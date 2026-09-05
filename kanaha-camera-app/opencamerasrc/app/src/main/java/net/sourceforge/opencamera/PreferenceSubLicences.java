@@ -116,7 +116,7 @@ public class PreferenceSubLicences extends PreferenceSubScreen {
             dialogs.add(alert);
         }
         catch(IOException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to load text for dialog", e);
         }
     }
 }

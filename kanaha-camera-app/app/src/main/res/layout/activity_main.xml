@@ -86,7 +86,7 @@
         android:visibility="gone"
         />
 
-    <!-- alpha of 0.5 flags up Google Play prelaunch warning about contrast ratio too low (2.92; should be at least 3)-->
+    <!-- don't have alpha too low, as otherwise flags up Google Play prelaunch warning about contrast ratio too low (should be at least 3)-->
     <ImageButton
         android:id="@+id/switch_video"
         android:layout_width="60dp"
@@ -96,7 +96,7 @@
         android:contentDescription="@string/switch_to_video"
         app:srcCompat="@drawable/take_video"
         android:stateListAnimator="@animator/button_animation"
-        android:alpha="0.55"
+        android:alpha="0.61"
         android:onClick="clickedSwitchVideo"
         android:background="@null"
         />
@@ -114,17 +114,6 @@
         android:onClick="clickedTakePhotoVideoSnapshot"
         android:background="@null"
         android:visibility="gone"
-        />
-
-    <!-- n.b., need to specify a fixed width/height rather than wrap_content, so that MainUI.setFixedRotation()
-        works okay (to help layout in portrait system orientation)
-    -->
-    <ZoomControls
-        android:id="@+id/zoom"
-        android:contentDescription="@string/zoom"
-        android:layout_width="160dp"
-        android:layout_height="50dp"
-        android:alpha="0.5"
         />
 
     <SeekBar
@@ -163,7 +152,7 @@
         android:background="@color/seekbar_background"
         />
 
-    <Button
+    <View
         android:id="@+id/gui_anchor"
         android:layout_width="0dp"
         android:layout_height="0dp"
@@ -428,6 +417,36 @@
         />
 
     <ImageButton
+        android:id="@+id/cycle_lock_orientation"
+        android:layout_width="@dimen/onscreen_button_size"
+        android:layout_height="@dimen/onscreen_button_size"
+        android:padding="10dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/cycle_lock_orientation"
+        app:srcCompat="@drawable/mobile_unlock_48px"
+        android:background="@color/icons_background"
+        android:backgroundTint="@color/icons_background_tint"
+        android:backgroundTintMode="src_in"
+        android:onClick="clickedCycleLockOrientation"
+        android:visibility="gone"
+        />
+
+    <ImageButton
+        android:id="@+id/preview_shots"
+        android:layout_width="@dimen/onscreen_button_size"
+        android:layout_height="@dimen/onscreen_button_size"
+        android:padding="10dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/preview_shots_enable"
+        app:srcCompat="@drawable/motion_photos_on_48px"
+        android:background="@color/icons_background"
+        android:backgroundTint="@color/icons_background_tint"
+        android:backgroundTintMode="src_in"
+        android:onClick="clickedPreviewShots"
+        android:visibility="gone"
+        />
+
+    <ImageView
         android:id="@+id/kraken_icon"
         android:layout_width="@dimen/onscreen_button_size"
         android:layout_height="@dimen/onscreen_button_size"
@@ -528,17 +547,6 @@
                 android:layout_alignBottom="@+id/exposure_seekbar_text"
                 android:alpha="0.9"
                 />
-
-            <ZoomControls
-                android:id="@+id/exposure_seekbar_zoom"
-                android:contentDescription="@string/exposure_compensation_zoom"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_alignLeft="@+id/exposure_seekbar"
-                android:layout_alignRight="@+id/exposure_seekbar"
-                android:gravity="center"
-                android:layout_below="@+id/exposure_seekbar"
-                />
         </RelativeLayout>
 
         <RelativeLayout
@@ -635,6 +643,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:fadeScrollbars="false"
+        android:scrollbarThumbVertical="@color/scrollview"
         />
     
     <ScrollView

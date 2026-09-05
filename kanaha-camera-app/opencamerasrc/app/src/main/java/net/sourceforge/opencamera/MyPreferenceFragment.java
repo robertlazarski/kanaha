@@ -19,8 +19,10 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.TypedArray;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.Point;
 //import android.net.Uri;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.EditTextPreference;
@@ -36,13 +38,18 @@ import android.text.Html;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.method.LinkMovementMethod;
-import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowMetrics;
 import android.widget.ScrollView;
 import android.widget.TextView;
+
+import androidx.activity.OnBackPressedCallback;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -67,6 +74,8 @@ import java.util.List;
 public class MyPreferenceFragment extends PreferenceFragment implements OnSharedPreferenceChangeListener {
     private static final String TAG = "MyPreferenceFragment";
 
+    private boolean edge_to_edge_mode = false;
+
     private int cameraId;
 
     /* Any AlertDialogs we create should be added to dialogs, and removed when dismissed. Any dialogs still
@@ -88,6 +97,7 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
         addPreferencesFromResource(R.xml.preferences);
 
         final Bundle bundle = getArguments();
+        this.edge_to_edge_mode = bundle.getBoolean("edge_to_edge_mode");
         this.cameraId = bundle.getInt("cameraId");
         if( MyDebug.LOG )
             Log.d(TAG, "cameraId: " + cameraId);
@@ -362,23 +372,6 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
             });
         }
 
-        /*{
-            final Preference pref = findPreference("preference_donate");
-            pref.setOnPreferenceClickListener(new OnPreferenceClickListener() {
-                @Override
-                public boolean onPreferenceClick(Preference arg0) {
-                    if( pref.getKey().equals("preference_donate") ) {
-                        if( MyDebug.LOG )
-                            Log.d(TAG, "user clicked to donate");
-                        Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(MainActivity.DonateLink));
-                        startActivity(browserIntent);
-                        return false;
-                    }
-                    return false;
-                }
-            });
-        }*/
-
         {
             final Preference pref = findPreference("preference_about");
             pref.setOnPreferenceClickListener(new OnPreferenceClickListener() {
@@ -398,9 +391,7 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
                             version_code = pInfo.versionCode;
                         }
                         catch(NameNotFoundException e) {
-                            if( MyDebug.LOG )
-                                Log.d(TAG, "NameNotFoundException exception trying to get version number");
-                            e.printStackTrace();
+                            MyDebug.logStackTrace(TAG, "NameNotFoundException exception trying to get version number", e);
                         }
                         about_string.append("Open Camera v");
                         about_string.append(version);
@@ -414,7 +405,22 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
                         about_string.append(Build.MANUFACTURER);
                         about_string.append("\nDevice model: ");
                         about_string.append(Build.MODEL);
-                        {
+                        if( Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R ) {
+                            // use non-deprecated equivalent of Display.getSize()
+                            WindowMetrics window_metrics = MyPreferenceFragment.this.getActivity().getWindowManager().getCurrentWindowMetrics();
+                            final WindowInsets windowInsets = window_metrics.getWindowInsets();
+                            Insets insets = windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars() | WindowInsets.Type.displayCutout());
+                            int insetsWidth = insets.right + insets.left;
+                            int insetsHeight = insets.top + insets.bottom;
+                            final Rect bounds = window_metrics.getBounds();
+                            int display_x = bounds.width() - insetsWidth;
+                            int display_y = bounds.height() - insetsHeight;
+                            about_string.append("\nDisplay size: ");
+                            about_string.append(display_x);
+                            about_string.append("x");
+                            about_string.append(display_y);
+                        }
+                        else {
                             Point display_size = new Point();
                             Display display = MyPreferenceFragment.this.getActivity().getWindowManager().getDefaultDisplay();
                             display.getSize(display_size);
@@ -422,12 +428,6 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
                             about_string.append(display_size.x);
                             about_string.append("x");
                             about_string.append(display_size.y);
-                            DisplayMetrics outMetrics = new DisplayMetrics();
-                            display.getMetrics(outMetrics);
-                            about_string.append("\nDisplay metrics: ");
-                            about_string.append(outMetrics.widthPixels);
-                            about_string.append("x");
-                            about_string.append(outMetrics.heightPixels);
                         }
                         about_string.append("\nCurrent camera ID: ");
                         about_string.append(cameraId);
@@ -443,7 +443,7 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
                         about_string.append(photo_mode_string==null ? "UNKNOWN" : photo_mode_string);
                         {
                             String last_video_error = sharedPreferences.getString("last_video_error", "");
-                            if( last_video_error.length() > 0 ) {
+                            if( !last_video_error.isEmpty() ) {
                                 about_string.append("\nLast video error: ");
                                 about_string.append(last_video_error);
                             }
@@ -737,6 +737,46 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
         }
 
         setupDependencies();
+
+        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA ) {
+            // handle on back behaviour - workaround for not yet using AndroidX Fragments
+            preferenceFragmentOnBackPressedCallback = new PreferenceFragmentOnBackPressedCallback(true);
+            MainActivity main_activity = (MainActivity)MyPreferenceFragment.this.getActivity();
+            main_activity.getOnBackPressedDispatcher().addCallback(main_activity, preferenceFragmentOnBackPressedCallback);
+        }
+    }
+
+    private PreferenceFragmentOnBackPressedCallback preferenceFragmentOnBackPressedCallback;
+
+    private class PreferenceFragmentOnBackPressedCallback extends OnBackPressedCallback {
+        public PreferenceFragmentOnBackPressedCallback(boolean enabled) {
+            super(enabled);
+        }
+
+        @Override
+        public void handleOnBackPressed() {
+            getFragmentManager().popBackStack();
+        }
+    }
+
+    @Override
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+
+        if( edge_to_edge_mode ) {
+            handleEdgeToEdge(view);
+        }
+    }
+
+    static void handleEdgeToEdge(View view) {
+        ViewCompat.setOnApplyWindowInsetsListener(view, (v, windowInsets) -> {
+            //androidx.core.graphics.Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            // don't need to avoid WindowInsetsCompat.Type.displayCutout(), as we already do this for the entire activity (see MainActivity's setOnApplyWindowInsetsListener)
+            androidx.core.graphics.Insets insets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars());
+            v.setPadding(insets.left, insets.top, insets.right, insets.bottom);
+            return WindowInsetsCompat.CONSUMED;
+        });
+        view.requestApplyInsets();
     }
 
     /** Adds a TextView to an AlertDialog builder, placing it inside a scrollview and adding appropriate padding.
@@ -844,7 +884,7 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
             MainActivity main_activity = (MainActivity)this.getActivity();
             if( main_activity != null ) { // main_activity may be null if this is being closed via MainActivity.onNewIntent()
                 String new_save_location = this.getChosenFolder();
-                main_activity.updateSaveFolder(new_save_location);
+                main_activity.getSaveLocationHandler().updateSaveFolder(new_save_location);
             }
             super.onDismiss(dialog);
         }
@@ -888,20 +928,21 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
         // note, setting color here only seems to affect the "main" preference fragment screen, and not sub-screens
         // note, on Galaxy Nexus Android 4.3 this sets to black rather than the dark grey that the background theme should be (and what the sub-screens use); works okay on Nexus 7 Android 5
         // we used to use a light theme for the PreferenceFragment, but mixing themes in same activity seems to cause problems (e.g., for EditTextPreference colors)
-        TypedArray array = fragment.getActivity().getTheme().obtainStyledAttributes(new int[] {
+        try (TypedArray array = fragment.getActivity().getTheme().obtainStyledAttributes(new int[]{
                 android.R.attr.colorBackground
-        });
-        int backgroundColor = array.getColor(0, Color.BLACK);
-		/*if( MyDebug.LOG ) {
-			int r = (backgroundColor >> 16) & 0xFF;
-			int g = (backgroundColor >> 8) & 0xFF;
-			int b = (backgroundColor >> 0) & 0xFF;
-			Log.d(TAG, "backgroundColor: " + r + " , " + g + " , " + b);
-		}*/
-        fragment.getView().setBackgroundColor(backgroundColor);
-        array.recycle();
+        })) {
+            int backgroundColor = array.getColor(0, Color.BLACK);
+            /*if( MyDebug.LOG ) {
+                int r = (backgroundColor >> 16) & 0xFF;
+                int g = (backgroundColor >> 8) & 0xFF;
+                int b = (backgroundColor >> 0) & 0xFF;
+                Log.d(TAG, "backgroundColor: " + r + " , " + g + " , " + b);
+            }*/
+            fragment.getView().setBackgroundColor(backgroundColor);
+        }
     }
 
+    @Override
     public void onResume() {
         super.onResume();
 
@@ -911,6 +952,7 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
         sharedPreferences.registerOnSharedPreferenceChangeListener(this);
     }
 
+    @Override
     public void onPause() {
         super.onPause();
     }
@@ -920,6 +962,12 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
         if( MyDebug.LOG )
             Log.d(TAG, "onDestroy");
         super.onDestroy();
+
+        if( preferenceFragmentOnBackPressedCallback != null ) {
+            this.preferenceFragmentOnBackPressedCallback.setEnabled(false);
+            this.preferenceFragmentOnBackPressedCallback.remove();
+            this.preferenceFragmentOnBackPressedCallback = null;
+        }
 
         if( MyDebug.LOG )
             Log.d(TAG, "isRemoving?: " + isRemoving());
@@ -997,7 +1045,6 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
      *  summary.
      */
     static void setSummary(Preference pref) {
-        //noinspection DuplicateCondition
         if( pref instanceof EditTextPreference ) {
             /* We have a runtime check for using EditTextPreference - we don't want these due to importance of
              * supporting the Google Play emoji policy (see comment in MyEditTextPreference.java) - and this
@@ -1008,8 +1055,24 @@ public class MyPreferenceFragment extends PreferenceFragment implements OnShared
             throw new RuntimeException("detected an EditTextPreference: " + pref.getKey() + " pref: " + pref);
         }
 
-        //noinspection DuplicateCondition
-        if( pref instanceof EditTextPreference || pref instanceof MyEditTextPreference) {
+        if( pref.getKey().equals("preference_save_location") ) {
+            // can't use %s (as only supported for ListPreference), so handle this directly
+            MainActivity main_activity = (MainActivity)pref.getContext();
+            String folder_name;
+            if( main_activity.getStorageUtils().isUsingSAF() ) {
+                folder_name = main_activity.getStorageUtils().getSaveLocationSAF();
+            }
+            else {
+                folder_name = main_activity.getStorageUtils().getSaveLocation();
+            }
+            folder_name = main_activity.getSaveLocationHandler().getHumanReadableSaveFolder(folder_name);
+            String summary = main_activity.getResources().getString(R.string.preference_save_location_summary);
+            if( !folder_name.isEmpty() ) {
+                summary += "\n" + folder_name;
+            }
+            pref.setSummary(summary);
+        }
+        else if( pref instanceof EditTextPreference || pref instanceof MyEditTextPreference ) {
             // %s only supported for ListPreference
             // we also display the usual summary if no preference value is set
             if( pref.getKey().equals("preference_exif_artist") ||

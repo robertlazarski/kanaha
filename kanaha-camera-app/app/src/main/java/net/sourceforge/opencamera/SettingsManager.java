@@ -49,8 +49,7 @@ public class SettingsManager {
             inputStream = new FileInputStream(file);
         }
         catch(FileNotFoundException e) {
-            Log.e(TAG, "failed to load: " + file);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to load: " + file, e);
             main_activity.getPreview().showToast(null, R.string.restore_settings_failed);
             return false;
         }
@@ -65,8 +64,7 @@ public class SettingsManager {
             inputStream = main_activity.getContentResolver().openInputStream(uri);
         }
         catch(FileNotFoundException e) {
-            Log.e(TAG, "failed to load: " + uri);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to load: " + uri, e);
             main_activity.getPreview().showToast(null, R.string.restore_settings_failed);
             return false;
         }
@@ -138,9 +136,7 @@ public class SettingsManager {
                 editor.putInt(PreferenceKeys.LatestVersionPreferenceKey, version_code);
             }
             catch(PackageManager.NameNotFoundException e) {
-                if (MyDebug.LOG)
-                    Log.d(TAG, "NameNotFoundException exception trying to get version number");
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "NameNotFoundException exception trying to get version number", e);
             }
 
             editor.apply();
@@ -151,7 +147,7 @@ public class SettingsManager {
             return true;
         }
         catch(Exception e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to restore settings", e);
             main_activity.getPreview().showToast(null, R.string.restore_settings_failed);
             return false;
         }
@@ -160,7 +156,7 @@ public class SettingsManager {
                 inputStream.close();
             }
             catch(IOException e) {
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "failed to close inputStream", e);
             }
         }
     }
@@ -265,7 +261,7 @@ public class SettingsManager {
             }
         }
         catch(IOException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to save settings", e);
             main_activity.getPreview().showToast(null, R.string.save_settings_failed);
         }
         finally {
@@ -274,7 +270,7 @@ public class SettingsManager {
                     outputStream.close();
                 }
                 catch(IOException e) {
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "failed to close outputStream", e);
                 }
             }
         }

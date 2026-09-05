@@ -2,11 +2,14 @@ package net.sourceforge.opencamera.cameracontroller;
 
 import net.sourceforge.opencamera.MyDebug;
 
+import java.io.Serial;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import android.graphics.Rect;
 import android.location.Location;
@@ -56,8 +59,32 @@ public abstract class CameraController {
     public volatile boolean test_used_tonemap_curve;
     public volatile int test_texture_view_buffer_w; // for TextureView, keep track of buffer size
     public volatile int test_texture_view_buffer_h;
+    public volatile boolean test_force_run_post_capture; // for Camera2 API, test using adjustPreview() / RequestTagType.RUN_POST_CAPTURE
+    public static volatile boolean test_force_slow_preview_start; // for Camera2 API, test waiting for test_force_slow_preview_start_ms when starting preview
+    protected static final long test_force_slow_preview_start_ms = 6000;
+
+    /** Class for caching a subset of CameraFeatures, that are slow to read.
+     *  For now only used for vendor extensions which are slow to read.
+     */
+    public static class CameraFeaturesCache {
+        public List<Integer> supported_extensions;
+        public List<Integer> supported_extensions_zoom;
+
+        final Map<Integer, List<android.util.Size>> extension_picture_sizes_map; // key is extension
+        final Map<Integer, List<android.util.Size>> extension_preview_sizes_map; // key is extension
+
+        CameraFeaturesCache(CameraFeatures camera_features, Map<Integer, List<android.util.Size>> extension_picture_sizes_map, Map<Integer, List<android.util.Size>> extension_preview_sizes_map) {
+            if( camera_features.supported_extensions != null )
+                this.supported_extensions = new ArrayList<>(camera_features.supported_extensions);
+            if( camera_features.supported_extensions_zoom != null )
+                this.supported_extensions_zoom = new ArrayList<>(camera_features.supported_extensions_zoom);
+            this.extension_picture_sizes_map = extension_picture_sizes_map;
+            this.extension_preview_sizes_map = extension_preview_sizes_map;
+        }
+    }
 
     public static class CameraFeatures {
+        public Set<String> physical_camera_ids; // if non-null, this camera is part of a logical camera that exposes these physical camera IDs
         public boolean is_zoom_supported;
         public int max_zoom;
         public List<Integer> zoom_ratios; // list of supported zoom ratios; each value is the zoom multiplied by 100
@@ -97,6 +124,7 @@ public abstract class CameraController {
         public int max_expo_bracketing_n_images;
         public boolean supports_focus_bracketing; // whether setBurstTye(BURSTTYPE_FOCUS) can be used
         public boolean supports_burst; // whether setBurstTye(BURSTTYPE_NORMAL) can be used
+        public boolean supports_jpeg_r; // whether supports JPEG_R (Ultra HDR)
         public boolean supports_raw;
         public float view_angle_x; // horizontal angle of view in degrees (when unzoomed)
         public float view_angle_y; // vertical angle of view in degrees (when unzoomed)
@@ -144,6 +172,7 @@ public abstract class CameraController {
 
     // Android docs and FindBugs recommend that Comparators also be Serializable
     static class RangeSorter implements Comparator<int[]>, Serializable {
+        @Serial
         private static final long serialVersionUID = 5802214721073728212L;
         @Override
         public int compare(int[] o1, int[] o2) {
@@ -156,6 +185,7 @@ public abstract class CameraController {
      * Android docs and FindBugs recommend that Comparators also be Serializable
      */
     static class SizeSorter implements Comparator<Size>, Serializable {
+        @Serial
         private static final long serialVersionUID = 5802214721073718212L;
 
         @Override
@@ -350,6 +380,11 @@ public abstract class CameraController {
     }
 
     public abstract void release();
+    /** Can be called from activity onPause(), before release(), as a hint that the activity is pausing and
+     *  that the camera will be closing. Used to avoid e.g. starting preview if that's running on a background
+     *  thread.
+     */
+    public abstract void appIsPaused();
     public abstract void onError(); // triggers error mechanism - should only be called externally for testing purposes
 
     CameraController(int cameraId) {
@@ -357,6 +392,13 @@ public abstract class CameraController {
     }
     public abstract String getAPI();
     public abstract CameraFeatures getCameraFeatures() throws CameraControllerException;
+
+    /** For CameraController2 only. Normally the returned CameraFeatures.zoom_ratios for Camera2
+     *  contains repeated values, so that the zoom seekbar is sticky at e.g. powers of 2. Call this
+     *  method to set whether the zoom_ratios should contain these repeated values or not.
+     * @return The updated zoom_ratios.
+     */
+    public abstract List<Integer> setZoomSticky(boolean sticky);
     public int getCameraId() {
         return cameraId;
     }
@@ -469,7 +511,12 @@ public abstract class CameraController {
      *  first image.
      */
     public abstract void setDummyCaptureHack(boolean dummy_capture_hack);
-    public abstract boolean isBurstOrExpo();
+
+    /** Whether the current BurstType is one that requires the camera driver to capture the images
+     *  as a burst at a fast rate. If true, we should not use high resolutions that don't support a
+     *  capture burst (for Camera2 API, see StreamConfigurationMap.getHighResolutionOutputSizes()).
+     */
+    public abstract boolean isCaptureFastBurst();
     /** If true, then the camera controller is currently capturing a burst of images.
      */
     public abstract boolean isCapturingBurst();
@@ -481,6 +528,11 @@ public abstract class CameraController {
      *  burst if known. If not known (e.g., for continuous burst mode), returns 0.
      */
     public abstract int getBurstTotal();
+
+    /**
+     * @param want_jpeg_r Whether to enable taking photos in JPEG_R (Ultra HDR) format.
+     */
+    public abstract void setJpegR(boolean want_jpeg_r);
 
     /**
      * @param want_raw       Whether to enable taking photos in RAW (DNG) format.
@@ -579,11 +631,19 @@ public abstract class CameraController {
      *  additional image will be included at infinite distance.
      */
     public abstract void setFocusBracketingAddInfinity(boolean focus_bracketing_add_infinity);
-    /** Only relevant if setBurstType() is also called with BURSTTYPE_FOCUS. Sets the target focus
+    /** Only relevant if setBurstType() is also called with BURSTTYPE_FOCUS. Sets the source focus
      *  distance for focus bracketing.
      */
     public abstract void setFocusBracketingSourceDistance(float focus_bracketing_source_distance);
     public abstract float getFocusBracketingSourceDistance();
+    /** Only relevant if setBurstType() is also called with BURSTTYPE_FOCUS. Sets the source focus
+     *  distance to match the camera's current focus distance (typically useful if running in a
+     *  non-manual focus mode).
+     */
+    public abstract void setFocusBracketingSourceDistanceFromCurrent();
+    /** Only relevant if setBurstType() is also called with BURSTTYPE_FOCUS. Sets the target focus
+     *  distance for focus bracketing.
+     */
     public abstract void setFocusBracketingTargetDistance(float focus_bracketing_target_distance);
     public abstract float getFocusBracketingTargetDistance();
     public abstract void setFlashValue(String flash_value);
@@ -605,7 +665,12 @@ public abstract class CameraController {
     public abstract boolean supportsMetering();
     public abstract boolean focusIsContinuous();
     public abstract boolean focusIsVideo();
-    public abstract void reconnect() throws CameraControllerException;
+    /** Reconnect to the camera after recording video is completed.
+     * @param restart_preview If false, then there is no need to restart the camera preview.
+     *                        Only relevant for CameraController2 (for CameraController1, the
+     *                        preview will always be started).
+     */
+    public abstract void reconnect(boolean restart_preview) throws CameraControllerException;
     public abstract void setPreviewDisplay(SurfaceHolder holder) throws CameraControllerException;
     public abstract void setPreviewTexture(TextureView texture) throws CameraControllerException;
     /** This should be called when using a TextureView, and the texture view has reported a change
@@ -617,7 +682,30 @@ public abstract class CameraController {
     /** Starts the camera preview.
      *  @throws CameraControllerException if the camera preview fails to start.
      */
-    public abstract void startPreview() throws CameraControllerException;
+    /** Starts the camera preview.
+     * @param wait_until_started Whether to wait until the preview is started. Only relevant for
+     *                           CameraController2; CameraController1 will always wait.
+     * @param runnable           If non-null, a runnable to be called once preview is started. If
+     *                           wait_until_started==true, or using CameraController1, this will be
+     *                           called on the current thread, before this method exits. Otherwise,
+     *                           this will be called on the UI thread, after this method exits (once
+     *                           the preview has started).
+     * @param on_failed          If non-null, a runnable to be called if the preview fails to start.
+     *                           Only relevant for wait_until_started==false and when using
+     *                           CameraController2. In such cases, failing to start the camera preview
+     *                           may result in either CameraControllerException being thrown, or
+     *                           on_failed being called on the UI thread after this method exits
+     *                           (depending on when the failure occurs). If either of these happens,
+     *                           the "runnable" runnable will not be called.
+     * @throws CameraControllerException Failed to start preview. In this case, the runnable will not
+     *                                   be called.
+     */
+    public abstract void startPreview(boolean wait_until_started, Runnable runnable, Runnable on_failed) throws CameraControllerException;
+    /** Only relevant for CameraController2: stops the repeating burst for the previous (so effectively
+     *  stops the preview), but does not close the capture session for the preview (for that, using
+     *  stopPreview() instead of stopRepeating()).
+     */
+    public abstract void stopRepeating();
     public abstract void stopPreview();
     public abstract boolean startFaceDetection();
     public abstract void setFaceDetectionListener(final CameraController.FaceDetectionListener listener);
@@ -696,6 +784,12 @@ public abstract class CameraController {
     }
     public long captureResultFrameDuration() {
         return 0;
+    }
+    public boolean captureResultHasFocusDistance() {
+        return false;
+    }
+    public float captureResultFocusDistance() {
+        return 0.0f;
     }
     public boolean captureResultHasAperture() {
         return false;

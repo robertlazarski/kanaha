@@ -20,7 +20,6 @@ import net.sourceforge.opencamera.preview.Preview;
 import net.sourceforge.opencamera.preview.VideoProfile;
 import net.sourceforge.opencamera.ui.DrawPreview;
 
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Context;
@@ -29,7 +28,9 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.Paint;
+import android.graphics.Point;
 import android.graphics.Rect;
 //import android.location.Address; // don't use until we have info for data privacy!
 //import android.location.Geocoder; // don't use until we have info for data privacy!
@@ -50,9 +51,12 @@ import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Log;
 import android.util.Pair;
+import android.view.Display;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowMetrics;
 import android.widget.ImageButton;
 
 import androidx.annotation.RequiresApi;
@@ -150,6 +154,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     private final static int cameraId_default = 0;
     private boolean has_set_cameraId;
     private int cameraId = cameraId_default;
+    private String cameraIdSPhysical = null; // if non-null, this is the ID string for a physical camera, undlerying the logical cameraId
     private final static String nr_mode_default = "preference_nr_mode_normal";
     private String nr_mode = nr_mode_default;
     private final static float aperture_default = -1.0f;
@@ -190,6 +195,9 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             cameraId = savedInstanceState.getInt("cameraId", cameraId_default);
             if( MyDebug.LOG )
                 Log.d(TAG, "found cameraId: " + cameraId);
+            cameraIdSPhysical = savedInstanceState.getString("cameraIdSPhysical", null);
+            if( MyDebug.LOG )
+                Log.d(TAG, "found cameraIdSPhysical: " + cameraIdSPhysical);
             nr_mode = savedInstanceState.getString("nr_mode", nr_mode_default);
             if( MyDebug.LOG )
                 Log.d(TAG, "found nr_mode: " + nr_mode);
@@ -212,6 +220,9 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         if( MyDebug.LOG )
             Log.d(TAG, "save cameraId: " + cameraId);
         state.putInt("cameraId", cameraId);
+        if( MyDebug.LOG )
+            Log.d(TAG, "save cameraIdSPhysical: " + cameraIdSPhysical);
+        state.putString("cameraIdSPhysical", cameraIdSPhysical);
         if( MyDebug.LOG )
             Log.d(TAG, "save nr_mode: " + nr_mode);
         state.putString("nr_mode", nr_mode);
@@ -323,23 +334,35 @@ public class MyApplicationInterface extends BasicApplicationInterface {
 
     @Override
     public File createOutputVideoFile(String extension) throws IOException {
-        last_video_file = storageUtils.createOutputMediaFile(StorageUtils.MEDIA_TYPE_VIDEO, "", extension, new Date());
-        return last_video_file;
+        return createOutputVideoFile(false, extension, new Date());
     }
 
     @Override
     public Uri createOutputVideoSAF(String extension) throws IOException {
-        last_video_file_uri = storageUtils.createOutputMediaFileSAF(StorageUtils.MEDIA_TYPE_VIDEO, "", extension, new Date());
-        return last_video_file_uri;
+        return createOutputVideoSAF(false, extension, new Date());
     }
 
     @Override
     public Uri createOutputVideoMediaStore(String extension) throws IOException {
+        return createOutputVideoMediaStore(false, extension, new Date());
+    }
+
+    public File createOutputVideoFile(boolean is_preshot, String extension, Date date) throws IOException {
+        last_video_file = storageUtils.createOutputMediaFile(is_preshot ? StorageUtils.MEDIA_TYPE_PRESHOT : StorageUtils.MEDIA_TYPE_VIDEO, "", extension, date);
+        return last_video_file;
+    }
+
+    public Uri createOutputVideoSAF(boolean is_preshot, String extension, Date date) throws IOException {
+        last_video_file_uri = storageUtils.createOutputMediaFileSAF(is_preshot ? StorageUtils.MEDIA_TYPE_PRESHOT : StorageUtils.MEDIA_TYPE_VIDEO, "", extension, date);
+        return last_video_file_uri;
+    }
+
+    public Uri createOutputVideoMediaStore(boolean is_preshot, String extension, Date date) throws IOException {
         Uri folder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ?
                 MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) :
                 MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
         ContentValues contentValues = new ContentValues();
-        String filename = storageUtils.createMediaFilename(StorageUtils.MEDIA_TYPE_VIDEO, "", 0, "." + extension, new Date());
+        String filename = storageUtils.createMediaFilename(is_preshot ? StorageUtils.MEDIA_TYPE_PRESHOT : StorageUtils.MEDIA_TYPE_VIDEO, "", 0, "." + extension, date);
         if( MyDebug.LOG )
             Log.d(TAG, "filename: " + filename);
         contentValues.put(MediaStore.Video.Media.DISPLAY_NAME, filename);
@@ -362,16 +385,12 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         }
         catch(IllegalArgumentException e) {
             // can happen for mediastore method if invalid ContentResolver.insert() call
-            if( MyDebug.LOG )
-                Log.e(TAG, "IllegalArgumentException writing video file: " + e.getMessage());
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "IllegalArgumentException writing video file", e);
             throw new IOException();
         }
         catch(IllegalStateException e) {
             // have received Google Play crashes from ContentResolver.insert() call for mediastore method
-            if( MyDebug.LOG )
-                Log.e(TAG, "IllegalStateException writing video file: " + e.getMessage());
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "IllegalStateException writing video file", e);
             throw new IOException();
         }
         if( last_video_file_uri == null ) {
@@ -405,6 +424,11 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     }
 
     @Override
+    public String getCameraIdSPhysicalPref() {
+        return cameraIdSPhysical;
+    }
+
+    @Override
     public String getFlashPref() {
         return sharedPreferences.getString(PreferenceKeys.getFlashPreferenceKey(cameraId), "");
     }
@@ -412,8 +436,12 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     @Override
     public String getFocusPref(boolean is_video) {
         if( getPhotoMode() == PhotoMode.FocusBracketing && !main_activity.getPreview().isVideo() ) {
-            // alway run in manual focus mode for focus bracketing
-            return "focus_mode_manual2";
+            if( isFocusBracketingSourceAutoPref() ) {
+                return "focus_mode_continuous_picture";
+            }
+            else {
+                return "focus_mode_manual2";
+            }
         }
         return sharedPreferences.getString(PreferenceKeys.getFocusPreferenceKey(cameraId, is_video), "");
     }
@@ -425,9 +453,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             focus_assist = Integer.parseInt(focus_assist_value);
         }
         catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse focus_assist_value: " + focus_assist_value);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse focus_assist_value: " + focus_assist_value, e);
             focus_assist = 0;
         }
         if( focus_assist > 0 && main_activity.getPreview().isVideoRecording() ) {
@@ -551,11 +577,11 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             return new Pair<>(best_size.width, best_size.height);
         }
 
-        String resolution_value = sharedPreferences.getString(PreferenceKeys.getResolutionPreferenceKey(cameraId), "");
+        String resolution_value = sharedPreferences.getString(PreferenceKeys.getResolutionPreferenceKey(cameraId, cameraIdSPhysical), "");
         if( MyDebug.LOG )
             Log.d(TAG, "resolution_value: " + resolution_value);
         Pair<Integer, Integer> result = null;
-        if( resolution_value.length() > 0 ) {
+        if( !resolution_value.isEmpty() ) {
             // parse the saved size, and make sure it is still valid
             int index = resolution_value.indexOf(' ');
             if( index == -1 ) {
@@ -695,7 +721,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
 
         // Conceivably, we might get in a state where the fps isn't supported at all (e.g., an upgrade changes the available
         // supported video resolutions/frame-rates).
-        return sharedPreferences.getString(PreferenceKeys.getVideoQualityPreferenceKey(cameraId, fpsIsHighSpeed()), "");
+        return sharedPreferences.getString(PreferenceKeys.getVideoQualityPreferenceKey(cameraId, cameraIdSPhysical, fpsIsHighSpeed()), "");
     }
 
     @Override
@@ -743,7 +769,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 Log.d(TAG, "preferred_fps: " + preferred_fps);
             if( main_activity.getPreview().getVideoQualityHander().videoSupportsFrameRateHighSpeed(preferred_fps) ||
                     main_activity.getPreview().getVideoQualityHander().videoSupportsFrameRate(preferred_fps) )
-                return "" + preferred_fps;
+                return String.valueOf(preferred_fps);
             // just in case say we support 120fps but NOT 60fps, getSupportedSlowMotionRates() will have returned that 2x slow
             // motion is supported, but we need to set 120fps instead of 60fps
             while( preferred_fps < 240 ) {
@@ -752,18 +778,18 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                     Log.d(TAG, "preferred_fps not supported, try: " + preferred_fps);
                 if( main_activity.getPreview().getVideoQualityHander().videoSupportsFrameRateHighSpeed(preferred_fps) ||
                         main_activity.getPreview().getVideoQualityHander().videoSupportsFrameRate(preferred_fps) )
-                    return "" + preferred_fps;
+                    return String.valueOf(preferred_fps);
             }
             // shouln't happen based on getSupportedSlowMotionRates()
             Log.e(TAG, "can't find valid fps for slow motion");
             return "default";
         }
-        return sharedPreferences.getString(PreferenceKeys.getVideoFPSPreferenceKey(cameraId), "default");
+        return sharedPreferences.getString(PreferenceKeys.getVideoFPSPreferenceKey(cameraId, cameraIdSPhysical), "default");
     }
 
     @Override
     public float getVideoCaptureRateFactor() {
-        float capture_rate_factor = sharedPreferences.getFloat(PreferenceKeys.getVideoCaptureRatePreferenceKey(main_activity.getPreview().getCameraId()), 1.0f);
+        float capture_rate_factor = sharedPreferences.getFloat(PreferenceKeys.getVideoCaptureRatePreferenceKey(main_activity.getPreview().getCameraId(), cameraIdSPhysical), 1.0f);
         if( MyDebug.LOG )
             Log.d(TAG, "capture_rate_factor: " + capture_rate_factor);
         if( Math.abs(capture_rate_factor - 1.0f) > 1.0e-5 ) {
@@ -815,7 +841,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             }
         }
         rates.add(1.0f);
-        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
+        {
             // add timelapse options
             // in theory this should work on any Android version, though video fails to record in timelapse mode on Galaxy Nexus...
             rates.add(2.0f);
@@ -911,9 +937,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 Log.d(TAG, "gamma: " + gamma);
         }
         catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse gamma value: " + gamma_value);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse gamma value: " + gamma_value, e);
         }
         return gamma;
     }
@@ -937,9 +961,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             video_max_duration = (long)Integer.parseInt(video_max_duration_value) * 1000;
         }
         catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse preference_video_max_duration value: " + video_max_duration_value);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse preference_video_max_duration value: " + video_max_duration_value, e);
             video_max_duration = 0;
         }
         return video_max_duration;
@@ -953,9 +975,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             remaining_restart_video = Integer.parseInt(restart_value);
         }
         catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse preference_video_restart value: " + restart_value);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse preference_video_restart value: " + restart_value, e);
             remaining_restart_video = 0;
         }
         return remaining_restart_video;
@@ -982,9 +1002,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             video_max_filesize = Long.parseLong(video_max_filesize_value);
         }
         catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse preference_video_max_filesize value: " + video_max_filesize_value);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse preference_video_max_filesize value: " + video_max_filesize_value, e);
             video_max_filesize = 0;
         }
         //video_max_filesize = 1024*1024; // test
@@ -1106,7 +1124,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     @Override
     public String getLockOrientationPref() {
         if( getPhotoMode() == PhotoMode.Panorama )
-            return "portrait"; // for now panorama only supports portrait
+            return "portrait"; // for now panorama only supports portrait; update OnScreenIcons.showCycleLockOrientationIcon() if we ever change this
         return sharedPreferences.getString(PreferenceKeys.LockOrientationPreferenceKey, "none");
     }
 
@@ -1173,9 +1191,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             timer_delay = (long)Integer.parseInt(timer_value) * 1000;
         }
         catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse preference_timer value: " + timer_value);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse preference_timer value: " + timer_value, e);
             timer_delay = 0;
         }
         return timer_delay;
@@ -1199,9 +1215,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             timer_delay = (long)(timer_delay_s * 1000);
         }
         catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse repeat interval value: " + timer_value);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse repeat interval value: " + timer_value, e);
             timer_delay = 0;
         }
         return timer_delay;
@@ -1252,6 +1266,16 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         return !focus_peaking_pref.equals("preference_focus_peaking_off") && main_activity.supportsPreviewBitmaps();
     }
 
+    public boolean getPreShotsPref(PhotoMode photo_mode) {
+        if( main_activity.getPreview().isVideo() || photo_mode == PhotoMode.ExpoBracketing || photo_mode == PhotoMode.FocusBracketing || photo_mode == PhotoMode.Panorama ) {
+            // pre-shots not supported for these modes
+            // update OnScreenIcons.showPreviewShotsIcon() if we ever change this
+            return false;
+        }
+        String pre_shots_pref = sharedPreferences.getString(PreferenceKeys.PreShotsPreferenceKey, "preference_save_preshots_off");
+        return !pre_shots_pref.equals("preference_save_preshots_off") && main_activity.supportsPreShots();
+    }
+
     public boolean getAutoStabilisePref() {
         boolean auto_stabilise = sharedPreferences.getBoolean(PreferenceKeys.AutoStabilisePreferenceKey, false);
         return auto_stabilise && main_activity.supportsAutoStabilise();
@@ -1267,9 +1291,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             ghost_image_alpha = Integer.parseInt(ghost_image_alpha_value);
         }
         catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse ghost_image_alpha_value: " + ghost_image_alpha_value);
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to parse ghost_image_alpha_value: " + ghost_image_alpha_value, e);
             ghost_image_alpha = 50;
         }
         ghost_image_alpha = (int)(ghost_image_alpha*2.55f+0.1f);
@@ -1437,6 +1459,16 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 return false;
             }
         }
+        if( getPausePreviewPref() && n_images_to_save > 0 ) {
+            // With pause preview mode, allowing multiple to save at once is not worthwhile since the whole point is to
+            // pause the preview after every shot; also we want to avoid the problem where the user unpauses when a photo
+            // is still being saved in background: if we allow another photo to be taken, we then have trouble not knowing
+            // which of the photos being saved are the ones that should be shared/trashed (we can't just say it's the last
+            // image, as some modes e.g. RAW or expo will have a set of photo).
+            if( MyDebug.LOG )
+                Log.d(TAG, "canTakeNewPhoto: no, as too many for pause preview");
+            return false;
+        }
         // otherwise, still have a max limit of 5 photos
         if( n_images_to_save >= 5*photo_cost ) {
             if( main_activity.supportsNoiseReduction() && n_images_to_save <= 8 ) {
@@ -1500,6 +1532,26 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     }
 
     @Override
+    public boolean isFocusBracketingSourceAutoPref() {
+        if( !main_activity.supportsFocusBracketingSourceAuto() )
+            return false; // not supported
+        return sharedPreferences.getBoolean(PreferenceKeys.FocusBracketingAutoSourceDistancePreferenceKey, false);
+    }
+
+    /** Sets whether in focus bracketing auto focusing mode for source focus distance.
+     *  If enabled==false (i.e. returning to manual mode), the caller should call Preview.setFocusDistance()
+     *  to set the new manual focus distance.
+     */
+    public void setFocusBracketingSourceAutoPref(boolean enabled) {
+        SharedPreferences.Editor editor = sharedPreferences.edit();
+        editor.putBoolean(PreferenceKeys.FocusBracketingAutoSourceDistancePreferenceKey, enabled);
+        editor.apply();
+        if( main_activity.getPreview().getCameraController() != null ) {
+            main_activity.getPreview().setFocusPref(true);
+        }
+    }
+
+    @Override
     public boolean isExpoBracketingPref() {
         PhotoMode photo_mode = getPhotoMode();
         return photo_mode == PhotoMode.HDR || photo_mode == PhotoMode.ExpoBracketing;
@@ -1527,9 +1579,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 n_images = Integer.parseInt(n_images_value);
             }
             catch(NumberFormatException e) {
-                if( MyDebug.LOG )
-                    Log.e(TAG, "failed to parse FastBurstNImagesPreferenceKey value: " + n_images_value);
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "failed to parse FastBurstNImagesPreferenceKey value: " + n_images_value, e);
                 n_images = 5;
             }
             return n_images;
@@ -1726,6 +1776,25 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         return PhotoMode.Standard;
     }
 
+    @Override
+    public boolean getJpegRPref() {
+        if( sharedPreferences.getString(PreferenceKeys.ImageFormatPreferenceKey, "preference_image_format_jpeg").equals("preference_image_format_jpeg_r") ) {
+            if( main_activity.getPreview().isVideo() ) {
+                // don't support JPEG R, either for video recording or video snapshot - problem that video recording fails
+                // if CameraController2 sets "config.setDynamicRangeProfile(DynamicRangeProfiles.HLG10);" for the preview
+                return false;
+            }
+            else {
+                PhotoMode photo_mode = getPhotoMode();
+                if( photo_mode == PhotoMode.NoiseReduction || photo_mode == PhotoMode.HDR || photo_mode == PhotoMode.Panorama )
+                    return false; // not supported for these photo modes
+                // n.b., JPEG R won't be supported by x- extension modes either, although this is automatically handled by Preview
+                return true;
+            }
+        }
+        return false;
+    }
+
     private ImageSaver.Request.ImageFormat getImageFormatPref() {
         switch( sharedPreferences.getString(PreferenceKeys.ImageFormatPreferenceKey, "preference_image_format_jpeg") ) {
             case "preference_image_format_webp":
@@ -1855,6 +1924,37 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     }
 
     @Override
+    public boolean optimiseFocusForLatency() {
+        String pref = sharedPreferences.getString(PreferenceKeys.OptimiseFocusPreferenceKey, "preference_photo_optimise_focus_latency");
+        return pref.equals("preference_photo_optimise_focus_latency") && main_activity.supportsOptimiseFocusLatency();
+    }
+
+    @Override
+    public void getDisplaySize(Point display_size, boolean exclude_insets) {
+        if( Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R ) {
+            WindowMetrics window_metrics = main_activity.getWindowManager().getCurrentWindowMetrics();
+            final Rect bounds = window_metrics.getBounds();
+            if( !main_activity.getEdgeToEdgeMode() || exclude_insets ) {
+                // use non-deprecated equivalent of Display.getSize()
+                final WindowInsets windowInsets = window_metrics.getWindowInsets();
+                Insets insets = windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars() | WindowInsets.Type.displayCutout());
+                int insetsWidth = insets.right + insets.left;
+                int insetsHeight = insets.top + insets.bottom;
+                display_size.x = bounds.width() - insetsWidth;
+                display_size.y = bounds.height() - insetsHeight;
+            }
+            else {
+                display_size.x = bounds.width();
+                display_size.y = bounds.height();
+            }
+        }
+        else {
+            Display display = main_activity.getWindowManager().getDefaultDisplay();
+            display.getSize(display_size);
+        }
+    }
+
+    @Override
     public boolean isTestAlwaysFocus() {
         if( MyDebug.LOG ) {
             Log.d(TAG, "isTestAlwaysFocus: " + main_activity.is_test);
@@ -1970,8 +2070,11 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         @SuppressWarnings("PointlessArithmeticExpression")
         final float target_angle = 1.0f * 0.01745329252f;
         //final float target_angle = 0.5f * 0.01745329252f;
-        final float upright_angle_tol = 2.0f * 0.017452406437f;
-        //final float upright_angle_tol = 1.0f * 0.017452406437f;
+        // good to not allow too small an angle for upright_angle_tol - as sometimes the device may
+        // get in a state where what we think is upright isn't quite right, and frustrating for users
+        // to be told they have to tilt to not be upright
+        final float upright_angle_tol = 3.0f * 0.017452406437f;
+        //final float upright_angle_tol = 2.0f * 0.017452406437f;
         final float too_far_angle = 45.0f * 0.01745329252f;
         gyroSensor.setTarget(x, y, z, target_angle, upright_angle_tol, too_far_angle, new GyroSensor.TargetCallback() {
             @Override
@@ -2111,20 +2214,20 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 }
 
                 String datetime_stamp = "";
-                if( date_stamp.length() > 0 )
+                if( !date_stamp.isEmpty() )
                     datetime_stamp += date_stamp;
-                if( time_stamp.length() > 0 ) {
-                    if( datetime_stamp.length() > 0 )
+                if( !time_stamp.isEmpty() ) {
+                    if( !datetime_stamp.isEmpty() )
                         datetime_stamp += " ";
                     datetime_stamp += time_stamp;
                 }
 
                 // build subtitles
                 StringBuilder subtitles = new StringBuilder();
-                if( datetime_stamp.length() > 0 )
+                if( !datetime_stamp.isEmpty() )
                     subtitles.append(datetime_stamp).append("\n");
 
-                if( gps_stamp.length() > 0 ) {
+                if( !gps_stamp.isEmpty() ) {
                     /*Address address = null;
                     if( store_location && !preference_stamp_geo_address.equals("preference_stamp_geo_address_no") ) {
                         // try to find an address
@@ -2149,8 +2252,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                                 }
                             }
                             catch(Exception e) {
-                                Log.e(TAG, "failed to read from geocoder");
-                                e.printStackTrace();
+                                MyDebug.logStackTrace(TAG, "failed to read from geocoder", e);
                             }
                         }
                         else {
@@ -2184,6 +2286,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                     }*/
                 }
 
+                // Android warning that we should replace with isEmpty(), but that requires Android 15 for CharSequence.isEmpty()
                 if( subtitles.length() == 0 ) {
                     return;
                 }
@@ -2240,15 +2343,11 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                                     }
                                     catch(IllegalArgumentException e) {
                                         // can happen for mediastore method if invalid ContentResolver.insert() call
-                                        if( MyDebug.LOG )
-                                            Log.e(TAG, "IllegalArgumentException from SubtitleVideoTimerTask inserting to mediastore: " + e.getMessage());
-                                        e.printStackTrace();
+                                        MyDebug.logStackTrace(TAG, "IllegalArgumentException from SubtitleVideoTimerTask inserting to mediastore", e);
                                         throw new IOException();
                                     }
                                     catch(IllegalStateException e) {
-                                        if( MyDebug.LOG )
-                                            Log.e(TAG, "IllegalStateException from SubtitleVideoTimerTask inserting to mediastore: " + e.getMessage());
-                                        e.printStackTrace();
+                                        MyDebug.logStackTrace(TAG, "IllegalStateException from SubtitleVideoTimerTask inserting to mediastore", e);
                                         throw new IOException();
                                     }
                                     if( uri == null ) {
@@ -2277,9 +2376,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                     count++;
                 }
                 catch(IOException e) {
-                    if( MyDebug.LOG )
-                        Log.e(TAG, "SubtitleVideoTimerTask failed to create or write");
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "SubtitleVideoTimerTask failed to create or write", e);
                 }
                 if( MyDebug.LOG )
                     Log.d(TAG, "SubtitleVideoTimerTask exit");
@@ -2296,7 +2393,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                             writer.close();
                         }
                         catch(IOException e) {
-                            e.printStackTrace();
+                            MyDebug.logStackTrace(TAG, "failed to close writer", e);
                         }
                         writer = null;
                     }
@@ -2305,7 +2402,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                             pfd_saf.close();
                         }
                         catch(IOException e) {
-                            e.printStackTrace();
+                            MyDebug.logStackTrace(TAG, "failed to close pfd_saf", e);
                         }
                         pfd_saf = null;
                     }
@@ -2352,6 +2449,8 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         if( dategeo_subtitles && video_method != ApplicationInterface.VideoMethod.URI ) {
             startVideoSubtitlesTask(video_method);
         }
+
+        main_activity.setZoomSticky(false); // don't want the zoom to be sticky while recording video
     }
 
     @Override
@@ -2363,6 +2462,8 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         view.setImageResource(R.drawable.take_video_selector);
         view.setContentDescription( getContext().getResources().getString(R.string.start_video) );
         view.setTag(R.drawable.take_video_selector); // for testing
+
+        main_activity.setZoomSticky(true); // reenable the zoom sticky available (for Camera2 API)
     }
 
     @Override
@@ -2419,8 +2520,9 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 main_activity.finish();
             }
         }
-        else if( done ) {
+        else if( done && !main_activity.isAppPaused() ) {
             // create thumbnail
+            // no need to do this if we are stopping video due to pausing (and avoids risks of ANR from retriever.getFrameAtTime)
             long debug_time = System.currentTimeMillis();
             Bitmap thumbnail = null;
             ParcelFileDescriptor pfd_saf = null; // keep a reference to this as long as retriever, to avoid risk of pfd_saf being garbage collected
@@ -2434,12 +2536,15 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                     pfd_saf = getContext().getContentResolver().openFileDescriptor(uri, "r");
                     retriever.setDataSource(pfd_saf.getFileDescriptor());
                 }
+                if( MyDebug.LOG )
+                    Log.d(TAG, "    time to before retriever.getFrameAtTime: " + (System.currentTimeMillis() - debug_time));
                 thumbnail = retriever.getFrameAtTime(-1);
+                if( MyDebug.LOG )
+                    Log.d(TAG, "    time to after retriever.getFrameAtTime: " + (System.currentTimeMillis() - debug_time));
             }
             catch(FileNotFoundException | /*IllegalArgumentException |*/ RuntimeException e) {
                 // video file wasn't saved or corrupt video file?
-                Log.d(TAG, "failed to find thumbnail");
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "failed to find thumbnail", e);
             }
             finally {
                 try {
@@ -2454,7 +2559,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                     }
                 }
                 catch(IOException e) {
-                    e.printStackTrace();
+                    MyDebug.logStackTrace(TAG, "failed to close pfd_saf", e);
                 }
             }
             if( thumbnail != null ) {
@@ -2513,7 +2618,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     /** Called when we've finished recording to a video file, to do any necessary cleanup for the
      *  file.
      */
-    private void completeVideo(final VideoMethod video_method, final Uri uri) {
+    void completeVideo(final VideoMethod video_method, final Uri uri) {
         if( MyDebug.LOG )
             Log.d(TAG, "completeVideo");
         if( video_method == VideoMethod.MEDIASTORE ) {
@@ -2525,7 +2630,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         }
     }
 
-    private boolean broadcastVideo(final VideoMethod video_method, final Uri uri, final String filename) {
+    boolean broadcastVideo(final VideoMethod video_method, final Uri uri, final String filename) {
         if( MyDebug.LOG ) {
             Log.d(TAG, "broadcastVideo");
             Log.d(TAG, "video_method " + video_method);
@@ -2673,7 +2778,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             Log.d(TAG, "onVideoRecordStartError");
         String error_message;
         String features = main_activity.getPreview().getErrorFeatures(profile);
-        if( features.length() > 0 ) {
+        if( !features.isEmpty() ) {
             error_message = getContext().getResources().getString(R.string.sorry) + ", " + features + " " + getContext().getResources().getString(R.string.not_supported);
         }
         else {
@@ -2689,7 +2794,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         //main_activity.getPreview().showToast(null, R.string.failed_to_record_video);
         String features = main_activity.getPreview().getErrorFeatures(profile);
         String error_message = getContext().getResources().getString(R.string.video_may_be_corrupted);
-        if( features.length() > 0 ) {
+        if( !features.isEmpty() ) {
             error_message += ", " + features + " " + getContext().getResources().getString(R.string.not_supported);
         }
         main_activity.getPreview().showToast(null, error_message);
@@ -2714,8 +2819,10 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         View shareButton = main_activity.findViewById(R.id.share);
         View trashButton = main_activity.findViewById(R.id.trash);
         if( paused ) {
-            shareButton.setVisibility(View.VISIBLE);
-            trashButton.setVisibility(View.VISIBLE);
+            // we don't show the share/trash buttons here, as image is saved on background thread, and need to wait until it's saved -
+            // so instead we show them from MainActivity.imageQueueChanged() once saved
+            //shareButton.setVisibility(View.VISIBLE);
+            //trashButton.setVisibility(View.VISIBLE);
             main_activity.enablePausePreviewOnBackPressedCallback(true); // so that pressing back button instead unpauses the preview
         }
         else {
@@ -2816,7 +2923,9 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         if( getPhotoMode() == PhotoMode.X_Night ) {
             message = getContext().getResources().getString(R.string.preference_nr_mode_low_light_message) + "\n";
         }
-        main_activity.getPreview().showToast(null, message + progress + "%", true);
+        // call with dont_clear==true, as on some devices (e.g., Galaxy S24+ in X-Night mode), there can be a pause long enough that
+        // the toast would clear, even when not at 100%
+        main_activity.getPreview().showToast(null, message + progress + "%", true, true);
     }
 
     @Override
@@ -2834,7 +2943,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             Log.d(TAG, "updateThumbnail");
         main_activity.updateGalleryIcon(thumbnail);
         drawPreview.updateThumbnail(thumbnail, is_video, true);
-        if( !is_video && this.getPausePreviewPref() ) {
+        if( !is_video && this.getPausePreviewPref() && main_activity.getPreview().isPreviewPaused() ) {
             drawPreview.showLastImage();
         }
     }
@@ -2856,7 +2965,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 Log.d(TAG, "speak countdown!");
             int remaining_time_s = (int)(remaining_time/1000);
             if( remaining_time_s <= 60 )
-                main_activity.speak("" + remaining_time_s);
+                main_activity.speak(String.valueOf(remaining_time_s));
         }
     }
 
@@ -2884,7 +2993,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             if( main_activity.getPreview().getCameraControllerManager().getFacing(i) == want_facing ) {
                 if( MyDebug.LOG )
                     Log.d(TAG, "found desired camera: " + i);
-                this.setCameraIdPref(i);
+                this.setCameraIdPref(i, null);
                 break;
             }
         }
@@ -2897,9 +3006,10 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     }
 
     @Override
-    public void setCameraIdPref(int cameraId) {
+    public void setCameraIdPref(int cameraId, String cameraIdSPhysical) {
         this.has_set_cameraId = true;
         this.cameraId = cameraId;
+        this.cameraIdSPhysical = cameraIdSPhysical;
     }
 
     @Override
@@ -2991,7 +3101,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     @Override
     public void setExposureCompensationPref(int exposure) {
         SharedPreferences.Editor editor = sharedPreferences.edit();
-        editor.putString(PreferenceKeys.ExposurePreferenceKey, "" + exposure);
+        editor.putString(PreferenceKeys.ExposurePreferenceKey, String.valueOf(exposure));
         editor.apply();
     }
 
@@ -3013,14 +3123,14 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             Log.d(TAG, "save new resolution_value: " + resolution_value);
         }
         SharedPreferences.Editor editor = sharedPreferences.edit();
-        editor.putString(PreferenceKeys.getResolutionPreferenceKey(cameraId), resolution_value);
+        editor.putString(PreferenceKeys.getResolutionPreferenceKey(cameraId, cameraIdSPhysical), resolution_value);
         editor.apply();
     }
 
     @Override
     public void setVideoQualityPref(String video_quality) {
         SharedPreferences.Editor editor = sharedPreferences.edit();
-        editor.putString(PreferenceKeys.getVideoQualityPreferenceKey(cameraId, fpsIsHighSpeed()), video_quality);
+        editor.putString(PreferenceKeys.getVideoQualityPreferenceKey(cameraId, cameraIdSPhysical, fpsIsHighSpeed()), video_quality);
         editor.apply();
     }
 
@@ -3158,7 +3268,9 @@ public class MyApplicationInterface extends BasicApplicationInterface {
 				Log.d(TAG, "width: " + width);*/
             if( paint.getTextAlign() == Paint.Align.CENTER )
                 width /= 2.0f;
+            //noinspection lossy-conversions
             text_bounds.left -= width;
+            //noinspection lossy-conversions
             text_bounds.right -= width;
         }
 		/*if( MyDebug.LOG )
@@ -3220,8 +3332,6 @@ public class MyApplicationInterface extends BasicApplicationInterface {
 			do_in_background = false;
 		else*/ if( image_capture_intent )
             do_in_background = false;
-        else if( getPausePreviewPref() )
-            do_in_background = false;
         return do_in_background;
     }
 
@@ -3264,9 +3374,10 @@ public class MyApplicationInterface extends BasicApplicationInterface {
      *                  as separate images.
      * @param images The set of images.
      * @param current_date The current date/time stamp for the images.
+     * @param location The location for the image.
      * @return Whether saving was successful.
      */
-    private boolean saveImage(boolean save_expo, List<byte []> images, Date current_date) {
+    private boolean saveImage(boolean save_expo, List<byte []> images, Date current_date, Location location) {
         if( MyDebug.LOG )
             Log.d(TAG, "saveImage");
 
@@ -3323,8 +3434,10 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         String preference_units_distance = this.getUnitsDistancePref();
         boolean panorama_crop = sharedPreferences.getString(PreferenceKeys.PanoramaCropPreferenceKey, "preference_panorama_crop_on").equals("preference_panorama_crop_on");
         ImageSaver.Request.RemoveDeviceExif remove_device_exif = getRemoveDeviceExifPref();
-        boolean store_location = getGeotaggingPref() && getLocation() != null;
-        Location location = store_location ? getLocation() : null;
+        // check getGeotaggingPref() again to be safe, just in case
+        boolean store_location = getGeotaggingPref() && location != null;
+        if( !store_location )
+            location = null;
         boolean store_geo_direction = main_activity.getPreview().hasGeoDirection() && getGeodirectionPref();
         double geo_direction = main_activity.getPreview().hasGeoDirection() ? main_activity.getPreview().getGeoDirection() : 0.0;
         String custom_tag_artist = sharedPreferences.getString(PreferenceKeys.ExifArtistPreferenceKey, "");
@@ -3377,6 +3490,23 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             photo_mode = PhotoMode.Standard;
         }
 
+        List<Bitmap> preshot_bitmaps = null;
+        if( !image_capture_intent && n_capture_images <= 1 && getPreShotsPref(photo_mode) ) {
+            // n.b., n_capture_images == 0 if using onBurstPictureTaken(), e.g., for photo mode HDR
+            Preview.RingBuffer ring_buffer = main_activity.getPreview().getPreShotsRingBuffer();
+
+            if( ring_buffer.getNBitmaps() >= 3 ) {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "save pre-shots");
+
+                preshot_bitmaps = new ArrayList<>();
+                while( ring_buffer.hasBitmaps() ) {
+                    Bitmap bitmap = ring_buffer.get();
+                    preshot_bitmaps.add(bitmap);
+                }
+            }
+        }
+
         if( !main_activity.is_test && photo_mode == PhotoMode.Panorama && gyroSensor.isRecording() && gyroSensor.hasTarget() && !gyroSensor.isTargetAchieved() ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "ignore panorama image as target no longer achieved!");
@@ -3419,6 +3549,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
 
                 imageSaver.startImageBatch(true,
                         photo_mode == PhotoMode.NoiseReduction ? ImageSaver.Request.ProcessType.AVERAGE : ImageSaver.Request.ProcessType.PANORAMA,
+                        preshot_bitmaps,
                         save_base,
                         image_capture_intent, image_capture_intent_uri,
                         using_camera2, using_camera_extensions,
@@ -3495,6 +3626,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                     // of images where images.size() > 1 (e.g., expo bracketing mode) where we also start from _0.)
                     force_suffix ? (n_capture_images-1) : 0,
                     save_expo, images,
+                    preshot_bitmaps,
                     image_capture_intent, image_capture_intent_uri,
                     using_camera2, using_camera_extensions,
                     image_format, image_quality,
@@ -3525,7 +3657,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     }
 
     @Override
-    public boolean onPictureTaken(byte [] data, Date current_date) {
+    public boolean onPictureTaken(byte [] data, Date current_date, Location location) {
         if( MyDebug.LOG )
             Log.d(TAG, "onPictureTaken");
 
@@ -3536,7 +3668,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         List<byte []> images = new ArrayList<>();
         images.add(data);
 
-        boolean success = saveImage(false, images, current_date);
+        boolean success = saveImage(false, images, current_date, location);
 
         if( MyDebug.LOG )
             Log.d(TAG, "onPictureTaken complete, success: " + success);
@@ -3545,7 +3677,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     }
 
     @Override
-    public boolean onBurstPictureTaken(List<byte []> images, Date current_date) {
+    public boolean onBurstPictureTaken(List<byte []> images, Date current_date, Location location) {
         if( MyDebug.LOG )
             Log.d(TAG, "onBurstPictureTaken: received " + images.size() + " images");
 
@@ -3564,7 +3696,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             if( MyDebug.LOG )
                 Log.d(TAG, "save_expo: " + save_expo);
 
-            success = saveImage(save_expo, images, current_date);
+            success = saveImage(save_expo, images, current_date, location);
         }
         else {
             if( MyDebug.LOG ) {
@@ -3573,7 +3705,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                     Log.e(TAG, "onBurstPictureTaken called with unexpected photo mode?!: " + photo_mode);
             }
 
-            success = saveImage(true, images, current_date);
+            success = saveImage(true, images, current_date, location);
         }
         return success;
     }
@@ -3699,12 +3831,11 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             }
             if( done ) {
                 clearLastImages();
-                preview.startCameraPreview();
+                preview.startCameraPreview(true, null);
             }
         }
     }
 
-    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private void trashImage(LastImagesType image_type, Uri image_uri, String image_name, boolean from_user) {
         if( MyDebug.LOG )
             Log.d(TAG, "trashImage");
@@ -3732,9 +3863,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             catch(FileNotFoundException e) {
                 // note, Android Studio reports a warning that FileNotFoundException isn't thrown, but it can be
                 // thrown by DocumentsContract.deleteDocument - and we get an error if we try to remove the catch!
-                if( MyDebug.LOG )
-                    Log.e(TAG, "exception when deleting " + image_uri);
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "exception when deleting " + image_uri, e);
             }
         }
         else if( image_type == LastImagesType.MEDIASTORE && image_uri != null ) {
@@ -3774,7 +3903,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             }
             clearLastImages();
             drawPreview.clearGhostImage(); // doesn't make sense to show the last image as a ghost, if the user has trashed it!
-            preview.startCameraPreview();
+            preview.startCameraPreview(true, null);
         }
         // Calling updateGalleryIcon() immediately has problem that it still returns the latest image that we've just deleted!
         // But works okay if we call after a delay. 100ms works fine on Nexus 7 and Galaxy Nexus, but set to 500 just to be safe.

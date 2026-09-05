@@ -100,7 +100,7 @@
     <string name="preference_burst_interval">Intervalo de modo de ráfaga</string>
     <string name="preference_screen_camera_controls_more">Más controles de cámara…</string>
     <string name="preference_touch_capture">Tocar para capturar</string>
-    <string name="preference_touch_capture_summary">Toma una foto simplemente tocando o tocando dos veces la pantalla</string>
+    <string name="preference_touch_capture_summary">Toma una foto simplemente tocando o tocando dos veces la pantalla\n%s</string>
     <string name="preference_pause_preview">Pausar después de tomar la foto</string>
     <string name="preference_pause_preview_summary">Pause la pantalla después de tomar una foto, con la opción de compartir o eliminar la foto</string>
     <string name="preference_shutter_sound">Sonido del obturador</string>
@@ -108,7 +108,7 @@
     <string name="preference_volume_keys">Teclas de volumen</string>
     <string name="preference_audio_control">Opciones de control de audio</string>
     <string name="preference_audio_noise_control_sensitivity">Sensibilidad de control de audio</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Sensibilidad al nivel de ruido para la opción de audio (ruido fuerte)</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Sensibilidad al nivel de ruido para la opción de audio (ruido fuerte)\n%s</string>
     <string name="preference_save_location">Carpeta de almacenamiento</string>
     <string name="preference_save_location_summary">Carpeta para guardar los archivos de foto/video</string>
     <string name="preference_using_saf_summary">Utilice el Framework de Acceso del Almacenamiento para guardar fotos y videos</string>
@@ -131,8 +131,6 @@
     <string name="preference_immersive_mode">Modo inmersivo</string>
     <string name="preference_show_zoom">Mostrar zoom</string>
     <string name="preference_show_zoom_summary">Muestra el nivel de zoom actual de la cámara en la pantalla (cuando se amplía)</string>
-    <string name="preference_show_zoom_controls">Mostrar controles zoom -/+</string>
-    <string name="preference_show_zoom_controls_summary">Muestra los botones para el control del zoom -/+</string>
     <string name="preference_show_zoom_slider_controls">Mostrar control deslizante del zoom</string>
     <string name="preference_show_zoom_slider_controls_summary">Muestra el control deslizante para controlar el zoom</string>
     <string name="preference_show_iso">Mostrar ISO</string>
@@ -144,7 +142,7 @@
     <string name="preference_show_angle_line">Mostrar la línea del ángulo</string>
     <string name="preference_show_angle_line_summary">Muestra línea de nivel horizontal</string>
     <string name="preference_angle_highlight_color">Color de resaltado de ángulo/altitud</string>
-    <string name="preference_angle_highlight_color_summary">Color de resalte cuando la cámara está casi nivelada</string>
+    <string name="preference_angle_highlight_color_summary">Color de resalte cuando la cámara está casi nivelada\n%s</string>
     <string name="preference_show_geo_direction">Mostrar la dirección de la brújula</string>
     <string name="preference_show_geo_direction_summary">Muestra la dirección de la brújula del dispositivo en la pantalla</string>
     <string name="preference_show_time">Mostrar hora</string>
@@ -224,8 +222,6 @@
     <string name="preference_category_online">Varios</string>
     <string name="preference_online_help">Ayuda en línea</string>
     <string name="preference_online_help_summary">Inicie el sitio web de Open Camera en su navegador</string>
-    <string name="preference_donate">Done para apoyar el proyecto</string>
-    <string name="preference_donate_summary">Si te gusta esta aplicación, por favor considera hacer una donación para apoyar el proyecto. Puedes hacerlo comprando mi "aplicación de donación" - haz clic en esta opción para abrir la página de mi aplicación de donación. ¡Gracias!</string>
     <string name="preference_use_camera2">Utiliza Camera2 API</string>
     <string name="preference_use_camera2_summary">Utiliza la Camara2 - ofrece funcionalidades extra, pero esta en fase experimental (causara un reseteo de la aplicación)</string>
     <string name="preference_about">Acerca de</string>
@@ -302,8 +298,7 @@
     <string name="permission_rationale_title">Permiso requerido</string>
     <string name="permission_rationale_camera">Se requiere el permiso de la cámara para habilitarla</string>
 
-    <string name="preference_category_photo_debugging">Opciones de depuración</string>
-    <string name="preference_category_video_debugging">Opciones de depuración</string>
+    <string name="preference_category_debugging">Opciones de depuración</string>
     <string name="preference_camera2_fake_flash">Utilizar un método de flash alternativo</string>
     <string name="preference_camera2_fake_flash_summary">Habilitar si su dispositivo tiene un comportamiento erróneo del flash con la API Camera2</string>
 
@@ -435,7 +430,6 @@
     <string name="color_effect_whiteboard">Pizarra blanca</string>
 
     <string name="whats_new">Qué hay de nuevo:</string>
-    <string name="donate">Donar</string>
 
     <!-- for accessibility, these strings for face detection will typically be spoken, e.g., through Google Talkback -->
     <string name="face_detected">cara detectada</string>
@@ -449,9 +443,9 @@
     <string name="high_speed">Alta velocidad</string>
 
     <string name="preference_exif_artist">Autor</string>
-    <string name="preference_exif_artist_summary">Texto para almacenar en los metadatos de la imagen para la etiqueta del Autor (formato JPEG solamente). (Déjelo en blanco para ninguno)</string>
+    <string name="preference_exif_artist_summary">Texto para almacenar en los metadatos de la imagen para la etiqueta del Autor (formato JPEG etc solamente). (Déjelo en blanco para ninguno)</string>
     <string name="preference_exif_copyright">Copyright</string>
-    <string name="preference_exif_copyright_summary">Texto para almacenar en los metadatos de la imagen para la etiqueta de Copyright (formato JPEG solamente). (Déjelo en blanco para ninguno)</string>
+    <string name="preference_exif_copyright_summary">Texto para almacenar en los metadatos de la imagen para la etiqueta de Copyright (formato JPEG etc solamente). (Déjelo en blanco para ninguno)</string>
 
     <string name="processing">Procesando…</string>
 

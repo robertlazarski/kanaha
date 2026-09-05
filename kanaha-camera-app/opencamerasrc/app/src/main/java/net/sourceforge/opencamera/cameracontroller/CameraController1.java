@@ -20,6 +20,9 @@ import android.view.TextureView;
 
 /** Provides support using Android's original camera API
  *  android.hardware.Camera.
+ *  Deprecation warnings are suppressed, as we intentionally
+ *  offer both old and Camera2 APIs to users.
+ * @noinspection deprecation
  */
 public class CameraController1 extends CameraController {
     private static final String TAG = "CameraController1";
@@ -39,6 +42,10 @@ public class CameraController1 extends CameraController {
     private final static int max_expo_bracketing_n_images = 3; // seem to have problems with 5 images in some cases, e.g., images coming out same brightness on OnePlus 3T
     private int expo_bracketing_n_images = 3;
     private double expo_bracketing_stops = 2.0;
+
+    private static final long autofocus_timeout_c = 2000;
+    private Handler autofocus_timeout_handler; // handler for tracking autofocus timeout
+    private Runnable autofocus_timeout_runnable; // runnable set for tracking autofocus timeout
 
     // we keep track of some camera settings rather than reading from Camera.getParameters() every time. Firstly this is important
     // for performance (affects UI rendering times, e.g., see profiling of GPU rendering). Secondly runtimeexceptions from
@@ -62,9 +69,7 @@ public class CameraController1 extends CameraController {
             camera = Camera.open(cameraId);
         }
         catch(RuntimeException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to open camera");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to open camera", e);
             throw new CameraControllerException();
         }
         if( camera == null ) {
@@ -81,9 +86,7 @@ public class CameraController1 extends CameraController {
         catch(RuntimeException e) {
             // Had reported RuntimeExceptions from Google Play
             // also see http://stackoverflow.com/questions/22383708/java-lang-runtimeexception-fail-to-get-camera-info
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to get camera info");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to get camera info", e);
             this.release();
             throw new CameraControllerException();
         }
@@ -141,6 +144,11 @@ public class CameraController1 extends CameraController {
         }
     }
 
+    @Override
+    public void appIsPaused() {
+        // unused
+    }
+
     private Camera.Parameters getParameters() {
         if( MyDebug.LOG )
             Log.d(TAG, "getParameters");
@@ -157,9 +165,7 @@ public class CameraController1 extends CameraController {
         }
         catch(RuntimeException e) {
             // just in case something has gone wrong
-            if( MyDebug.LOG )
-                Log.d(TAG, "failed to set parameters");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to set parameters", e);
             count_camera_parameters_exception++;
         }
     }
@@ -291,8 +297,7 @@ public class CameraController1 extends CameraController {
             parameters = this.getParameters();
         }
         catch(RuntimeException e) {
-            Log.e(TAG, "failed to get camera parameters");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to get camera parameters", e);
             throw new CameraControllerException();
         }
         CameraFeatures camera_features = new CameraFeatures();
@@ -305,9 +310,7 @@ public class CameraController1 extends CameraController {
             catch(NumberFormatException e) {
                 // crash java.lang.NumberFormatException: Invalid int: " 500" reported in v1.4 on device "es209ra", Android 4.1, 3 Jan 2014
                 // this is from java.lang.Integer.invalidInt(Integer.java:138) - unclear if this is a bug in Open Camera, all we can do for now is catch it
-                if( MyDebug.LOG )
-                    Log.e(TAG, "NumberFormatException in getZoomRatios()");
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "NumberFormatException in getZoomRatios()", e);
                 camera_features.is_zoom_supported = false;
                 camera_features.max_zoom = 0;
                 camera_features.zoom_ratios = null;
@@ -381,13 +384,7 @@ public class CameraController1 extends CameraController {
         if( MyDebug.LOG )
             Log.d(TAG, "camera parameters: " + parameters.flatten());
 
-        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 ) {
-            // Camera.canDisableShutterSound requires JELLY_BEAN_MR1 or greater
-            camera_features.can_disable_shutter_sound = camera_info.canDisableShutterSound;
-        }
-        else {
-            camera_features.can_disable_shutter_sound = false;
-        }
+        camera_features.can_disable_shutter_sound = camera_info.canDisableShutterSound;
 
         // Determine view angles. Note that these can vary based on the resolution - and since we read these before the caller has
         // set the desired resolution, this isn't strictly correct. However these are presumably view angles for the photo anyway,
@@ -401,8 +398,7 @@ public class CameraController1 extends CameraController {
         }
         catch(Exception e) {
             // apparently some devices throw exceptions...
-            e.printStackTrace();
-            Log.e(TAG, "exception reading horizontal or vertical view angles");
+            MyDebug.logStackTrace(TAG, "exception reading horizontal or vertical view angles", e);
             camera_features.view_angle_x = default_view_angle_x;
             camera_features.view_angle_y = default_view_angle_y;
         }
@@ -420,6 +416,12 @@ public class CameraController1 extends CameraController {
         return camera_features;
     }
 
+    @Override
+    public List<Integer> setZoomSticky(boolean sticky) {
+        // not supported for CameraController1
+        throw new RuntimeException(); // throw as RuntimeException, as this is a programming error
+    }
+
     /** Important, from docs:
      *  "Changing scene mode may override other parameters (such as flash mode, focus mode, white balance).
      *  For example, suppose originally flash mode is on and supported flash modes are on/off. In night
@@ -433,8 +435,7 @@ public class CameraController1 extends CameraController {
             parameters = this.getParameters();
         }
         catch(RuntimeException e) {
-            Log.e(TAG, "exception from getParameters");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "exception from getParameters", e);
             count_camera_parameters_exception++;
             return null;
         }
@@ -592,7 +593,7 @@ public class CameraController1 extends CameraController {
             }
         }
         List<String> values = null;
-        if( iso_values != null && iso_values.length() > 0 ) {
+        if( iso_values != null && !iso_values.isEmpty() ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "iso_values: " + iso_values);
             String [] isos_array = iso_values.split(",");
@@ -862,7 +863,7 @@ public class CameraController1 extends CameraController {
     }
 
     @Override
-    public boolean isBurstOrExpo() {
+    public boolean isCaptureFastBurst() {
         // not supported for CameraController1
         return false;
     }
@@ -880,6 +881,11 @@ public class CameraController1 extends CameraController {
     @Override
     public int getBurstTotal() {
         return n_burst;
+    }
+
+    @Override
+    public void setJpegR(boolean want_jpeg_r) {
+        // not supported for CameraController1
     }
 
     @Override
@@ -912,8 +918,7 @@ public class CameraController1 extends CameraController {
         }
         catch(RuntimeException e) {
             // have had crashes from Google Play for getParameters - assume video stabilization not enabled
-            Log.e(TAG, "failed to get parameters for video stabilization");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to get parameters for video stabilization", e);
             count_camera_parameters_exception++;
             return false;
         }
@@ -957,8 +962,7 @@ public class CameraController1 extends CameraController {
             setCameraParameters(parameters);
         }
         catch(RuntimeException e) {
-            Log.e(TAG, "failed to set parameters for zoom");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to set parameters for zoom", e);
             count_camera_parameters_exception++;
         }
     }
@@ -987,9 +991,7 @@ public class CameraController1 extends CameraController {
         }
         catch(Exception e) {
             // received a NullPointerException from StringToReal.parseFloat() beneath getExposureCompensationStep() on Google Play!
-            if( MyDebug.LOG )
-                Log.e(TAG, "exception from getExposureCompensationStep()");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "exception from getExposureCompensationStep()", e);
             exposure_step = 1.0f/3.0f; // make up a typical example
         }
         return exposure_step;
@@ -1024,8 +1026,7 @@ public class CameraController1 extends CameraController {
         catch(RuntimeException e) {
             // can get RuntimeException from getParameters - we don't catch within that function because callers may not be able to recover,
             // but here it doesn't really matter if we fail to set the fps range
-            Log.e(TAG, "setPreviewFpsRange failed to get parameters");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "setPreviewFpsRange failed to get parameters", e);
             count_camera_parameters_exception++;
         }
     }
@@ -1048,7 +1049,7 @@ public class CameraController1 extends CameraController {
 				at android.hardware.Camera$Parameters.getSupportedPreviewFpsRange(Camera.java:2799)
 			  But that's a subclass of RuntimeException which we now catch anyway.
 			  */
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "exception from getSupportedPreviewFpsRange", e);
             count_camera_parameters_exception++;
         }
         return null;
@@ -1163,6 +1164,11 @@ public class CameraController1 extends CameraController {
     }
 
     @Override
+    public void setFocusBracketingSourceDistanceFromCurrent() {
+        // not supported for CameraController1!
+    }
+
+    @Override
     public void setFocusBracketingTargetDistance(float focus_bracketing_target_distance) {
         // not supported for CameraController1!
     }
@@ -1216,7 +1222,7 @@ public class CameraController1 extends CameraController {
         }
 
         final String flash_mode = convertFlashValueToMode(flash_value);
-        if( flash_mode.length() > 0 && !flash_mode.equals(parameters.getFlashMode()) ) {
+        if( !flash_mode.isEmpty() && !flash_mode.equals(parameters.getFlashMode()) ) {
             if( parameters.getFlashMode().equals(Camera.Parameters.FLASH_MODE_TORCH) && !flash_mode.equals(Camera.Parameters.FLASH_MODE_OFF) ) {
                 // workaround for bug on Nexus 5 and Nexus 6 where torch doesn't switch off until we set FLASH_MODE_OFF
                 if( MyDebug.LOG )
@@ -1302,8 +1308,7 @@ public class CameraController1 extends CameraController {
         catch(RuntimeException e) {
             // can get RuntimeException from getParameters - we don't catch within that function because callers may not be able to recover,
             // but here it doesn't really matter if we fail to set the recording hint
-            Log.e(TAG, "setRecordingHint failed to get parameters");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "setRecordingHint failed to get parameters", e);
             count_camera_parameters_exception++;
         }
     }
@@ -1375,9 +1380,7 @@ public class CameraController1 extends CameraController {
     }
 
     public void enableShutterSound(boolean enabled) {
-        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 ) {
-            camera.enableShutterSound(enabled);
-        }
+        camera.enableShutterSound(enabled);
         sounds_enabled = enabled;
     }
 
@@ -1417,7 +1420,7 @@ public class CameraController1 extends CameraController {
             }
         }
         catch(RuntimeException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to set focus or metering areas", e);
             count_camera_parameters_exception++;
         }
         return false;
@@ -1440,7 +1443,7 @@ public class CameraController1 extends CameraController {
             }
         }
         catch(RuntimeException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to clear focus or metering areas", e);
             count_camera_parameters_exception++;
         }
     }
@@ -1481,7 +1484,7 @@ public class CameraController1 extends CameraController {
             }
         }
         catch(RuntimeException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to get focus mode", e);
             count_camera_parameters_exception++;
         }
         return false;
@@ -1494,7 +1497,7 @@ public class CameraController1 extends CameraController {
             return parameters.getMaxNumMeteringAreas() > 0;
         }
         catch(RuntimeException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to get metering support", e);
             count_camera_parameters_exception++;
         }
         return false;
@@ -1512,7 +1515,7 @@ public class CameraController1 extends CameraController {
             }
         }
         catch(RuntimeException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to get focus mode", e);
             count_camera_parameters_exception++;
         }
         return false;
@@ -1531,16 +1534,14 @@ public class CameraController1 extends CameraController {
     }
 
     @Override
-    public void reconnect() throws CameraControllerException {
+    public void reconnect(boolean restart_preview) throws CameraControllerException {
         if( MyDebug.LOG )
             Log.d(TAG, "reconnect");
         try {
             camera.reconnect();
         }
         catch(IOException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "reconnect threw IOException");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "reconnect threw IOException", e);
             throw new CameraControllerException();
         }
     }
@@ -1553,7 +1554,7 @@ public class CameraController1 extends CameraController {
             camera.setPreviewDisplay(holder);
         }
         catch(IOException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to set preview display", e);
             throw new CameraControllerException();
         }
     }
@@ -1566,24 +1567,30 @@ public class CameraController1 extends CameraController {
             camera.setPreviewTexture(texture.getSurfaceTexture());
         }
         catch(IOException e) {
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to set preview texture", e);
             throw new CameraControllerException();
         }
     }
 
     @Override
-    public void startPreview() throws CameraControllerException {
+    public void startPreview(boolean wait_until_started, Runnable runnable, Runnable on_failed) throws CameraControllerException {
         if( MyDebug.LOG )
             Log.d(TAG, "startPreview");
         try {
             camera.startPreview();
         }
         catch(RuntimeException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to start preview");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to start preview", e);
             throw new CameraControllerException();
         }
+        if( runnable != null ) {
+            runnable.run();
+        }
+    }
+
+    @Override
+    public void stopRepeating() {
+        // not relevant for old camera API
     }
 
     @Override
@@ -1641,6 +1648,8 @@ public class CameraController1 extends CameraController {
                 public void run() {
                     if( MyDebug.LOG )
                         Log.d(TAG, "autofocus timeout check");
+                    autofocus_timeout_runnable = null;
+                    autofocus_timeout_handler = null;
                     if( !done_autofocus ) {
                         Log.e(TAG, "autofocus timeout!");
                         done_autofocus = true;
@@ -1650,7 +1659,7 @@ public class CameraController1 extends CameraController {
             };
 
             private void setTimeout() {
-                handler.postDelayed(runnable, 2000); // set autofocus timeout
+                handler.postDelayed(runnable, autofocus_timeout_c); // set autofocus timeout
             }
 
             @Override
@@ -1658,6 +1667,8 @@ public class CameraController1 extends CameraController {
                 if( MyDebug.LOG )
                     Log.d(TAG, "autoFocus.onAutoFocus");
                 handler.removeCallbacks(runnable);
+                autofocus_timeout_runnable = null;
+                autofocus_timeout_handler = null;
                 // in theory we should only ever get one call to onAutoFocus(), but some Samsung phones at least can call the callback multiple times
                 // see http://stackoverflow.com/questions/36316195/take-picture-fails-on-samsung-phones
                 // needed to fix problem on Samsung S7 with flash auto/on and continuous picture focus where it would claim failed to take picture even though it'd succeeded,
@@ -1674,6 +1685,8 @@ public class CameraController1 extends CameraController {
             }
         }
         MyAutoFocusCallback camera_cb = new MyAutoFocusCallback();
+        autofocus_timeout_handler = camera_cb.handler;
+        autofocus_timeout_runnable = camera_cb.runnable;
 
         try {
             camera_cb.setTimeout();
@@ -1682,9 +1695,14 @@ public class CameraController1 extends CameraController {
         catch(RuntimeException e) {
             // just in case? We got a RuntimeException report here from 1 user on Google Play:
             // 21 Dec 2013, Xperia Go, Android 4.1
-            if( MyDebug.LOG )
-                Log.e(TAG, "runtime exception from autoFocus");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "runtime exception from autoFocus", e);
+            if( autofocus_timeout_handler != null ) {
+                if( autofocus_timeout_runnable != null ) {
+                    autofocus_timeout_handler.removeCallbacks(autofocus_timeout_runnable);
+                    autofocus_timeout_runnable = null;
+                }
+                autofocus_timeout_handler = null;
+            }
             // should call the callback, so the application isn't left waiting (e.g., when we autofocus before trying to take a photo)
             cb.onAutoFocus(false);
         }
@@ -1699,12 +1717,18 @@ public class CameraController1 extends CameraController {
     public void cancelAutoFocus() {
         try {
             camera.cancelAutoFocus();
+            if( autofocus_timeout_handler != null ) {
+                if( autofocus_timeout_runnable != null ) {
+                    // so we don't trigger autofocus timeout
+                    autofocus_timeout_handler.removeCallbacks(autofocus_timeout_runnable);
+                    autofocus_timeout_runnable = null;
+                }
+                autofocus_timeout_handler = null;
+            }
         }
         catch(RuntimeException e) {
             // had a report of crash on some devices, see comment at https://sourceforge.net/p/opencamera/tickets/4/ made on 20140520
-            if( MyDebug.LOG )
-                Log.d(TAG, "cancelAutoFocus() failed");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "cancelAutoFocus() failed", e);
         }
     }
 
@@ -1712,8 +1736,7 @@ public class CameraController1 extends CameraController {
     public void setContinuousFocusMoveCallback(final ContinuousFocusMoveCallback cb) {
         if( MyDebug.LOG )
             Log.d(TAG, "setContinuousFocusMoveCallback");
-        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN ) {
-            // setAutoFocusMoveCallback() requires JELLY_BEAN
+        {
             try {
                 if( cb != null ) {
                     camera.setAutoFocusMoveCallback(new AutoFocusMoveCallback() {
@@ -1731,14 +1754,8 @@ public class CameraController1 extends CameraController {
             }
             catch(RuntimeException e) {
                 // received RuntimeException reports from some users on Google Play - seems to be older devices, but still important to catch!
-                if( MyDebug.LOG )
-                    Log.e(TAG, "runtime exception from setAutoFocusMoveCallback");
-                e.printStackTrace();
+                MyDebug.logStackTrace(TAG, "runtime exception from setAutoFocusMoveCallback", e);
             }
-        }
-        else {
-            if( MyDebug.LOG )
-                Log.d(TAG, "setContinuousFocusMoveCallback requires Android JELLY_BEAN or higher");
         }
     }
 
@@ -1812,12 +1829,10 @@ public class CameraController1 extends CameraController {
                         // need to start preview again: otherwise fail to take subsequent photos on Nexus 6
                         // and Nexus 7; on Galaxy Nexus we succeed, but exposure compensation has no effect
                         try {
-                            startPreview();
+                            startPreview(true, null, null);
                         }
                         catch(CameraControllerException e) {
-                            if( MyDebug.LOG )
-                                Log.d(TAG, "CameraControllerException trying to startPreview");
-                            e.printStackTrace();
+                            MyDebug.logStackTrace(TAG, "CameraControllerException trying to startPreview", e);
                         }
 
                         Handler handler = new Handler();
@@ -1849,10 +1864,8 @@ public class CameraController1 extends CameraController {
             camera.takePicture(shutter, null, camera_jpeg);
         }
         catch(RuntimeException e) {
-            // just in case? We got a RuntimeException report here from 1 user on Google Play; I also encountered it myself once of Galaxy Nexus when starting up
-            if( MyDebug.LOG )
-                Log.e(TAG, "runtime exception from takePicture");
-            e.printStackTrace();
+            // just in case? We got a RuntimeException report here from 1 user on Google Play; I also encountered it myself once on Galaxy Nexus when starting up
+            MyDebug.logStackTrace(TAG, "runtime exception from takePicture", e);
             error.onError();
         }
     }
@@ -1954,8 +1967,7 @@ public class CameraController1 extends CameraController {
         }
         catch(RuntimeException e) {
             // unclear why this happens, but have had crashes from Google Play...
-            Log.e(TAG, "failed to set display orientation");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "failed to set display orientation", e);
         }
         this.display_orientation = result;
     }
@@ -2003,9 +2015,7 @@ public class CameraController1 extends CameraController {
         }
         catch(Exception e) {
             // received a StringIndexOutOfBoundsException from beneath getParameters().flatten() on Google Play!
-            if( MyDebug.LOG )
-                Log.e(TAG, "exception from getParameters().flatten()");
-            e.printStackTrace();
+            MyDebug.logStackTrace(TAG, "exception from getParameters().flatten()", e);
         }
         return string;
     }

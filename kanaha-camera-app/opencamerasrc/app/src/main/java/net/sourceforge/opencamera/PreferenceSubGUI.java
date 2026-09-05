@@ -1,7 +1,6 @@
 package net.sourceforge.opencamera;
 
 import android.content.SharedPreferences;
-import android.os.Build;
 import android.os.Bundle;
 import android.preference.Preference;
 import android.preference.PreferenceGroup;
@@ -54,17 +53,17 @@ public class PreferenceSubGUI extends PreferenceSubScreen {
         if( MyDebug.LOG )
             Log.d(TAG, "supports_exposure_lock: " + supports_exposure_lock);
 
+        final boolean supports_preshots = bundle.getBoolean("supports_preshots");
+        if( MyDebug.LOG )
+            Log.d(TAG, "supports_preshots: " + supports_preshots);
+
         final boolean is_multi_cam = bundle.getBoolean("is_multi_cam");
         if( MyDebug.LOG )
             Log.d(TAG, "is_multi_cam: " + is_multi_cam);
 
-        if( Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT ) {
-            // Some immersive modes require KITKAT - simpler to require Kitkat for any of the menu options
-            Preference pref = findPreference("preference_immersive_mode");
-            //PreferenceGroup pg = (PreferenceGroup)this.findPreference("preference_screen_gui");
-            PreferenceGroup pg = (PreferenceGroup)this.findPreference("preferences_root");
-            pg.removePreference(pref);
-        }
+        final boolean has_physical_cameras = bundle.getBoolean("has_physical_cameras");
+        if( MyDebug.LOG )
+            Log.d(TAG, "has_physical_cameras: " + has_physical_cameras);
 
         if( !supports_face_detection  && ( camera_open || sharedPreferences.getBoolean(PreferenceKeys.FaceDetectionPreferenceKey, false) == false ) ) {
             // if camera not open, we'll think this setting isn't supported - but should only remove
@@ -119,7 +118,13 @@ public class PreferenceSubGUI extends PreferenceSubScreen {
             pg.removePreference(pref);
         }
 
-        if( !is_multi_cam ) {
+        if( !supports_preshots ) {
+            PreferenceGroup pg = (PreferenceGroup)this.findPreference("preferences_root");
+            Preference pref = findPreference("preference_show_preview_shots");
+            pg.removePreference(pref);
+        }
+
+        if( !is_multi_cam && !has_physical_cameras ) {
             Preference pref = findPreference("preference_multi_cam_button");
             //PreferenceGroup pg = (PreferenceGroup)this.findPreference("preference_screen_gui");
             PreferenceGroup pg = (PreferenceGroup)this.findPreference("preferences_root");

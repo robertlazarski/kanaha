@@ -103,9 +103,9 @@ public class TextFormatter {
                 }
                 if( MyDebug.LOG )
                     Log.d(TAG, "geo_angle: " + geo_angle);
-                if( gps_stamp.length() > 0 )
+                if( !gps_stamp.isEmpty() )
                     gps_stamp += ", ";
-                gps_stamp += "" + Math.round(geo_angle) + (char)0x00B0;
+                gps_stamp += String.valueOf(Math.round(geo_angle)) + (char)0x00B0;
             }
         }
         // don't log gps_stamp, in case of privacy!

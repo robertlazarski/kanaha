@@ -99,7 +99,7 @@
     <string name="preference_burst_interval">Διάστημα λειτουργίας ριπής</string>
     <string name="preference_screen_camera_controls_more">Περισσότερα στοιχεία ελέγχου της κάμερας…</string>
     <string name="preference_touch_capture">Αγγιγμα για λήψη</string>
-    <string name="preference_touch_capture_summary">Λήψη μιας φωτογραφίας, απλά αγγίζοντας η με διπλό άγγιγμα της προεπισκόπησης</string>
+    <string name="preference_touch_capture_summary">Λήψη μιας φωτογραφίας, απλά αγγίζοντας η με διπλό άγγιγμα της προεπισκόπησης\n%s</string>
     <string name="preference_pause_preview">Παύση μετά τη λήψη φωτογραφιών</string>
     <string name="preference_pause_preview_summary">Παύση στην οθόνη μετά την λήψη μιας φωτογραφίας, με την επιλογή για κοινοποίηση η διαγραφή της φωτογραφίας</string>
     <string name="preference_shutter_sound">Ηχος κλείστρου</string>
@@ -107,7 +107,7 @@
     <string name="preference_volume_keys">Πλήκτρα ρύθμισης ήχου</string>
     <string name="preference_audio_control">Ρυθμίσεις ελέγχου του ήχου</string>
     <string name="preference_audio_noise_control_sensitivity">Ευαισθησία ελέγχου του ήχου</string>
-    <string name="preference_audio_noise_control_sensitivity_summary">Επίπεδο θορύβου ευαισθησίας για τον ήχο</string>
+    <string name="preference_audio_noise_control_sensitivity_summary">Επίπεδο θορύβου ευαισθησίας για τον ήχο\n%s</string>
     <string name="preference_save_location">Χώρος αποθήκευσης</string>
     <string name="preference_save_location_summary">Φάκελος για αποθήκευση φωτογραφίας/βίντεο</string>
     <string name="preference_using_saf_summary">Αν θέλετε χρησιμοποιήστε την Πρόσβαση αποθήκευσης πλαισίου για την αποθήκευση φωτογραφιών και βίντεο</string>
@@ -130,8 +130,6 @@
     <string name="preference_immersive_mode">Μοναδική λειτουργία</string>
     <string name="preference_show_zoom">Εμφάνιση μεγέθυνσης</string>
     <string name="preference_show_zoom_summary">Εμφανίζει το τρέχον επίπεδο μεγέθυνσης</string>
-    <string name="preference_show_zoom_controls">Ελεγχος μεγέθυνσης με -/+</string>
-    <string name="preference_show_zoom_controls_summary">Εμφάνιση των πλήκτρων -/+ για τον έλεγχο της μεγέθυνσης</string>
     <string name="preference_show_zoom_slider_controls">Εμφάνιση ρυθμιστικού ελέγχου μεγέθυνσης</string>
     <string name="preference_show_zoom_slider_controls_summary">Εμφάνιση ρυθμιστικού ελέγχου μεγέθυνσης</string>
     <string name="preference_show_iso">Εμφάνιση ISO επιπέδου</string>
@@ -143,7 +141,7 @@
     <string name="preference_show_angle_line">Εμφάνιση γωνιαίας γραμμής</string>
     <string name="preference_show_angle_line_summary">Εμφάνιση οριζόντιας επίπεδης γραμμής</string>
     <string name="preference_angle_highlight_color">Χρώμα Γωνίας/Υψόμετρου</string>
-    <string name="preference_angle_highlight_color_summary">Χρώμα επισήμανσης όταν η κάμερα είναι σχεδόν επίπεδη</string>
+    <string name="preference_angle_highlight_color_summary">Χρώμα επισήμανσης όταν η κάμερα είναι σχεδόν επίπεδη\n%s</string>
     <string name="preference_show_geo_direction">Εμφάνιση κατεύθυνσης πυξίδας</string>
     <string name="preference_show_geo_direction_summary">Εμφάνιση κατεύθυνσης πυξίδας στην οθόνη</string>
     <string name="preference_show_time">Εμφάνιση ώρας</string>
@@ -223,8 +221,6 @@
     <string name="preference_category_online">Διάφορα</string>
     <string name="preference_online_help">Διαδικτυακή Βοήθεια</string>
     <string name="preference_online_help_summary">Ανοιγμα της Open Camera ιστοσελίδας στο πρόγραμμα περιηγησής σας</string>
-    <string name="preference_donate">Δωρεά για υποστήριξη της ανάπτυξης</string>
-    <string name="preference_donate_summary">Αν σας αρέσει αυτή η εφαρμογή, παρακαλούμε κάντε μια δωρεά για υποστήριξη της ανάπτυξης. Μπορείτε να το κάνετε αυτό μέσω της επιλογής "Δωρεά" - κάντε αυτή την επιλογή για να ανοίξει η σελίδα δωρεών. Ευχαριστούμε!</string>
     <string name="preference_use_camera2">Χρήση τού Camera2 API</string>
     <string name="preference_use_camera2_summary">Ενεργοποίηση του Camera2 API - προσφέρει επιπλέον χαρακτηριστικά, αλλά ενδέχεται να μην λειτουργούν σωστά σε όλες τις συσκευές (θα προκαλέσει μια επανεκκίνηση)</string>
     <string name="preference_about">Σχετικά με</string>
@@ -279,7 +275,7 @@
     <string name="audio_listener_started">Κάντε έναν δυνατό θόρυβο</string>
 
     <string name="auto_stabilise_info">Το αυτόματο επίπεδο θα περιστρέφει αυτόματα τις φωτογραφίες ώστε να εμφανίζονται επίπεδες.\n\nΣημειώστε ότι αυτό σημαίνει ότι οι εικόνες θα έχουν ελαφρώς χαμηλότερη ανάλυση (λόγω της περιστροφής και της περικοπής\'s που απαιτείται).</string>
-    <string name="raw_info">DNG αρχεία περιέχουν πλήρες ασυμπίεστα και μη επεξεργασμένα στοιχεία από την φωτογραφική μηχανή σας.\n\nΟι περισσότερες εφαρμογές δεν\'t αναγνωρίζουν αρχείαDNG, αντίθετα θα πρέπει να χρησιμοποιείται εξειδικευμένες εφαρμογές.\n\nΣημειώστε ότι οι διάφορες επιλογές επεξεργασίας όπως η "Σφραγίδα φωτογραφιών" και "Αυτόματο επίπεδο" ισχύουν μόνο για εικόνες JPEG, και όχι DNG.\n\nΤα DNG αρχεία καταλαμβάνουν πολύ χώρο, ένα αρχείο εξερευνητής μπορεί να είναι χρήσιμο για τη μεταφορά ή τη διαγραφή τους.\n\nΤα DNG αρχεία αποθηκεύονται μόνο στο πρότυπο.</string>
+    <string name="raw_info">DNG αρχεία περιέχουν πλήρες ασυμπίεστα και μη επεξεργασμένα στοιχεία από την φωτογραφική μηχανή σας.\n\nΟι περισσότερες εφαρμογές δεν\'t αναγνωρίζουν αρχείαDNG, αντίθετα θα πρέπει να χρησιμοποιείται εξειδικευμένες εφαρμογές.\n\nΣημειώστε ότι οι διάφορες επιλογές επεξεργασίας όπως η \"Σφραγίδα φωτογραφιών\" και \"Αυτόματο επίπεδο\" ισχύουν μόνο για εικόνες JPEG, και όχι DNG.\n\nΤα DNG αρχεία καταλαμβάνουν πολύ χώρο, ένα αρχείο εξερευνητής μπορεί να είναι χρήσιμο για τη μεταφορά ή τη διαγραφή τους.\n\nΤα DNG αρχεία αποθηκεύονται μόνο στο πρότυπο.</string>
     <string name="hdr_info">Η λειτουργία HDR είναι χρήσιμη για λήψεις με μεγάλες διαφορές στην φωτεινότητα. Λειτουργεί με πολλαπλές λήψεις σε διαφορετικές εκθέσεις, και τις συνδυάζει για να δημιουργήσει την τελική εικόνα.\n\nΣημειώστε ότι το HDR δεν είναι κατάλληλο για σκηνές με γρήγορη κίνηση, και μπορεί να οδηγήσει σε λιγότερο ακριβή αναπαραγωγή των χρωμάτων.\n\nΗ λήψη φωτογραφιών σε λειτουργία HDR θα είναι πιο αργή.</string>
 
     <string name="dont_show_again">Καμμία εμφάνιση ξανά</string>
@@ -298,8 +294,7 @@
     <string name="permission_rationale_title">Απαιτείται άδεια χρήσης</string>
     <string name="permission_rationale_camera">Απαιτείται άδεια χρήσης για ενεργοποίηση της κάμερας</string>
 
-    <string name="preference_category_photo_debugging">Επιλογές εντοπισμού σφαλμάτων</string>
-    <string name="preference_category_video_debugging">Επιλογές εντοπισμού σφαλμάτων</string>
+    <string name="preference_category_debugging">Επιλογές εντοπισμού σφαλμάτων</string>
     <string name="preference_camera2_fake_flash">Χρήση εναλλακτικής μεθόδου φλας</string>
     <string name="preference_camera2_fake_flash_summary">Ενεργοποιήστε αυτό αν η συσκευή σας έχει λανθασμένη συμπεριφορά σε σχέση με το Camera2 API</string>
 
@@ -431,7 +426,6 @@
     <string name="color_effect_whiteboard">Λευκός πίνακας</string>
 
     <string name="whats_new">Τι Νέα:</string>
-    <string name="donate">Δωρεά</string>
 
     <!-- for accessibility, these strings for face detection will typically be spoken, e.g., through Google Talkback -->
     <string name="face_detected">πρόσωπο</string>

@@ -50,8 +50,7 @@ class AudioListener {
             }
         }
         catch(Exception e) {
-            e.printStackTrace();
-            Log.e(TAG, "failed to create audiorecord");
+            MyDebug.logStackTrace(TAG, "failed to create audiorecord", e);
             return;
         }
 
@@ -85,7 +84,7 @@ class AudioListener {
                         Thread.sleep(sample_delay);
                     }
                     catch(InterruptedException e) {
-                        e.printStackTrace();
+                        MyDebug.logStackTrace(TAG, "InterruptedException from sleep", e);
                     }*/
                     try {
                         int n_read = ar.read(buffer, 0, buffer_size);
@@ -116,9 +115,7 @@ class AudioListener {
                         }
                     }
                     catch(Exception e) {
-                        e.printStackTrace();
-                        if( MyDebug.LOG )
-                            Log.e(TAG, "failed to read from audiorecord");
+                        MyDebug.logStackTrace(TAG, "failed to read from audiorecord", e);
                     }
                 }
                 if( MyDebug.LOG )
@@ -177,9 +174,7 @@ class AudioListener {
                         AudioListener.this.wait();
                     }
                     catch(InterruptedException e) {
-                        e.printStackTrace();
-                        if( MyDebug.LOG )
-                            Log.e(TAG, "interrupted while waiting for audio recorder to be freed");
+                        MyDebug.logStackTrace(TAG, "interrupted while waiting for audio recorder to be freed", e);
                     }
                 }
             }
