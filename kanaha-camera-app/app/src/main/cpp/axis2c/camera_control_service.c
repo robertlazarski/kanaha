@@ -249,6 +249,24 @@ static int send_intent_and_wait_for_response(
 }
 
 /* Unescape JSON string in place */
+/* Escape a caller-supplied string for inclusion inside a JSON string literal.
+ * Writes into out (>= 2*strlen+1); drops control chars. Caller strings such as
+ * clip_name are echoed into responses, and json_unescape() turns a trailing "\\"
+ * into a lone backslash that would otherwise escape the response's closing quote. */
+static const char* json_escape(const char* in, char* out, size_t out_size) {
+    size_t j = 0;
+    for (size_t i = 0; in && in[i] && j + 2 < out_size; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (c == '"' || c == '\\') { out[j++] = '\\'; out[j++] = c; }
+        else if (c == '\n') { out[j++] = '\\'; out[j++] = 'n'; }
+        else if (c == '\r') { out[j++] = '\\'; out[j++] = 'r'; }
+        else if (c == '\t') { out[j++] = '\\'; out[j++] = 't'; }
+        else if (c >= 0x20) { out[j++] = (char)c; }
+    }
+    out[j] = '\0';
+    return out;
+}
+
 static void json_unescape(char* str) {
     char* src = str;
     char* dst = str;
@@ -422,9 +440,11 @@ int camera_control_service_invoke_json_impl(
         int result = camera_device_start_recording_impl(clip_name, quality, duration, format, start_at, open_gate);
 
         if (result == 0) {
+            char esc_clip[520], esc_quality[64];
             snprintf(json_response, response_size,
                 "{\"success\":true,\"message\":\"Recording started\",\"clip_name\":\"%s\",\"quality\":\"%s\"}",
-                clip_name, quality);
+                json_escape(clip_name, esc_clip, sizeof(esc_clip)),
+                json_escape(quality, esc_quality, sizeof(esc_quality)));
         } else {
             create_error_response(json_response, response_size, "Failed to start recording");
         }
@@ -462,9 +482,12 @@ int camera_control_service_invoke_json_impl(
         int result = camera_device_configure_impl(resolution, fps, codec);
 
         if (result == 0) {
+            char esc_res[64], esc_fps[32], esc_codec[64];
             snprintf(json_response, response_size,
                 "{\"success\":true,\"message\":\"Camera configured\",\"resolution\":\"%s\",\"fps\":\"%s\",\"codec\":\"%s\"}",
-                resolution, fps, codec);
+                json_escape(resolution, esc_res, sizeof(esc_res)),
+                json_escape(fps, esc_fps, sizeof(esc_fps)),
+                json_escape(codec, esc_codec, sizeof(esc_codec)));
         } else {
             create_error_response(json_response, response_size, "Failed to configure camera");
         }
@@ -543,8 +566,10 @@ int camera_control_service_invoke_json_impl(
         }
     }
     else {
+        char esc_action[128];
         char error_msg[256];
-        snprintf(error_msg, sizeof(error_msg), "Unknown action: %s", action);
+        snprintf(error_msg, sizeof(error_msg), "Unknown action: %s",
+                 json_escape(action, esc_action, sizeof(esc_action)));
         create_error_response(json_response, response_size, error_msg);
         return -1;
     }
