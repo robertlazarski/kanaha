@@ -1166,14 +1166,14 @@ public class CameraControlReceiver extends BroadcastReceiver {
             session = jsch.getSession(config.username, config.host, config.port);
 
             java.util.Properties sessionConfig = new java.util.Properties();
-            if (config.knownHostsPath != null) {
-                // Strict host key checking when known_hosts is available
-                sessionConfig.put("StrictHostKeyChecking", "yes");
-            } else {
-                // Warn but allow connection without known_hosts (first-time setup)
-                Log.w(TAG, "No known_hosts file - host key verification disabled");
-                sessionConfig.put("StrictHostKeyChecking", "no");
+            // Fail closed: without a known_hosts entry we cannot verify the
+            // server, and proceeding would let a LAN attacker MITM the transfer.
+            // Provision known_hosts during setup rather than skipping the check.
+            if (config.knownHostsPath == null) {
+                throw new com.jcraft.jsch.JSchException(
+                    "known_hosts not provisioned; refusing to connect without host key verification");
             }
+            sessionConfig.put("StrictHostKeyChecking", "yes");
             // Prefer ed25519 keys
             sessionConfig.put("PreferredAuthentications", "publickey");
             session.setConfig(sessionConfig);
