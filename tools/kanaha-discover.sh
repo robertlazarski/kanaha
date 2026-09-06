@@ -33,6 +33,9 @@ done
 # Check single camera via API
 check_camera() {
     local ip="$1"
+    # WARNING: -k disables TLS verification (--cacert is inert with it); a LAN
+    # peer can impersonate a camera to this discovery tool. Known gap: server
+    # certs need an IP subjectAltName before -k can be dropped. See SECURITY.
     curl -sk --connect-timeout 2 --max-time 3 \
         --cert "$SSL_DIR/client.crt" \
         --key "$SSL_DIR/client.key" \
