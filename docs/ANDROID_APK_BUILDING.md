@@ -1070,11 +1070,16 @@ grows. Measured on the X4 over 200 authenticated JSON requests:
 | Requests to grow 256 MB | ~37,600 |
 | At 1 request/second, continuously | ~10.5 hours |
 
-For camera control — dozens of commands per shoot — this never matters. Set
-`MaxConnectionsPerChild 500` in `assets/apache/httpd.conf` only if you intend to
-poll continuously for many hours. On loopback with four threads the recycle cost
-is negligible. Note this figure is a **floor, not a worst case**: it was measured
-on lightweight status calls, and heavier operations allocate more.
+For camera control — dozens of commands per shoot — this never matters. Note
+this figure is a **floor, not a worst case**: it was measured on lightweight
+status calls, and heavier operations allocate more.
+
+**Do not "fix" this with `MaxConnectionsPerChild`.** The app launches httpd with
+`-X` (single-process mode), so there is no parent to recycle the child: on
+reaching a non-zero connection limit the one process simply exits and the service
+dies with no replacement. Leave it at `0`. The real mitigation for a genuinely
+long-running session is to restart the app, which is why the value is kept
+identical across every device rather than tuned per phone.
 
 **Storage is the real constraint.** The X4 under test had 2174 MB free and
 records 4K. That is roughly four minutes of 4K footage. Check
