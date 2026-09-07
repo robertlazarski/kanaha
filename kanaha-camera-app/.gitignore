@@ -22,3 +22,8 @@ captures/
 # Build backup artifacts
 *.bak
 *.bak.*
+
+# Cross-compiled native library (Apache/Axis2/C service): built by
+# build-android.sh at release time, not tracked. Tracking the ~10 MB binary
+# let it silently drift from the source it is compiled from.
+*.so
