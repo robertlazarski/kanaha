@@ -440,7 +440,7 @@ int camera_control_service_invoke_json_impl(
         int result = camera_device_start_recording_impl(clip_name, quality, duration, format, start_at, open_gate);
 
         if (result == 0) {
-            char esc_clip[520], esc_quality[64];
+            char esc_clip[513], esc_quality[129];   /* 2*src+1 worst-case escaping */
             snprintf(json_response, response_size,
                 "{\"success\":true,\"message\":\"Recording started\",\"clip_name\":\"%s\",\"quality\":\"%s\"}",
                 json_escape(clip_name, esc_clip, sizeof(esc_clip)),
@@ -482,7 +482,7 @@ int camera_control_service_invoke_json_impl(
         int result = camera_device_configure_impl(resolution, fps, codec);
 
         if (result == 0) {
-            char esc_res[64], esc_fps[32], esc_codec[64];
+            char esc_res[129], esc_fps[33], esc_codec[65];  /* 2*src+1 worst-case escaping */
             snprintf(json_response, response_size,
                 "{\"success\":true,\"message\":\"Camera configured\",\"resolution\":\"%s\",\"fps\":\"%s\",\"codec\":\"%s\"}",
                 json_escape(resolution, esc_res, sizeof(esc_res)),
