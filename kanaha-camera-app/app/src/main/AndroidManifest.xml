@@ -183,13 +183,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- Certificate Management Service for mTLS -->
-        <service
-            android:name="org.kanaha.camera.CertificateService"
-            android:enabled="true"
-            android:exported="false"
-            android:permission="android.permission.BIND_JOB_SERVICE" />
-
         <!-- Performance Testing Service for HTTP/2+mTLS optimization -->
         <service
             android:name="org.kanaha.camera.PerformanceTestService"

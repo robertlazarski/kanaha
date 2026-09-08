@@ -56,6 +56,7 @@ public class ApacheService extends Service {
     private String documentRoot;
     private Process apacheProcess;
     private NetworkDiscoveryService networkDiscovery;
+    private CertProvisioning provisioning;
 
     /**
      * Service binder for client communication
@@ -83,6 +84,7 @@ public class ApacheService extends Service {
      */
     private void initializeNetworkDiscovery() {
         networkDiscovery = new NetworkDiscoveryService(this);
+        provisioning = new CertProvisioning(getFilesDir());
         networkDiscovery.setCallback(new NetworkDiscoveryService.DiscoveryCallback() {
             @Override
             public void onServiceRegistered(String serviceName, String hostname, int port) {
@@ -106,19 +108,21 @@ public class ApacheService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(TAG, "Apache service start command received");
 
+        // Start foreground immediately (before any heavy work) so we meet the
+        // startForegroundService deadline; the httpd start does on-device keypair
+        // generation on first run, so run start/restart off the main thread.
+        startForeground(NOTIFICATION_ID, createServiceNotification());
+
         if (intent != null) {
             String action = intent.getAction();
             if ("org.kanaha.camera.START_APACHE_HTTPD".equals(action)) {
-                startHttpdServer();
+                new Thread(this::startHttpdServer, "camera-httpd-start").start();
             } else if ("org.kanaha.camera.STOP_APACHE_HTTPD".equals(action)) {
                 stopHttpdServer();
             } else if ("org.kanaha.camera.RESTART_APACHE_HTTPD".equals(action)) {
-                restartHttpdServer();
+                new Thread(this::restartHttpdServer, "camera-httpd-restart").start();
             }
         }
-
-        // Start foreground service with notification
-        startForeground(NOTIFICATION_ID, createServiceNotification());
 
         // Return START_STICKY to restart service if killed
         return START_STICKY;
@@ -162,8 +166,18 @@ public class ApacheService extends Service {
         }
 
         try {
-            // Deploy SSL certificates first (before validation checks them)
-            deployCertificates();
+            // Mint the device keypair + CSR (private key never leaves). Serve only
+            // once an operator has provisioned a CA-signed cert (milestone B).
+            try {
+                provisioning.ensureKeypairAndCsr();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to generate device keypair/CSR", e);
+            }
+            if (!provisioning.isProvisioned()) {
+                updateNotification("Awaiting provisioning \u2014 sign files/csr/camera.csr with the Kanaha CA");
+                Log.w(TAG, "Not provisioned; server not started. Run: kanaha-provision.sh <serial> camera");
+                return false;
+            }
 
             // Deploy the MCP stdio binary (run as a subprocess, not via JNI)
             deployMcpBinary(getFilesDir());
@@ -449,25 +463,6 @@ public class ApacheService extends Service {
         }
     }
 
-    /**
-     * Deploy SSL certificates from assets to filesystem
-     */
-    private void deployCertificates() {
-        try {
-            File sslDir = new File(getFilesDir(), "apache/ssl");
-            sslDir.mkdirs();
-
-            // Deploy certificates from assets/ssl/
-            deployAssetToFile("ssl/ca.crt", new File(sslDir, "ca.crt"));
-            deployAssetToFile("ssl/server.crt", new File(sslDir, "server.crt"));
-            deployAssetToFile("ssl/server.key", new File(sslDir, "server.key"));
-            deployAssetToFile("ssl/ca.crl", new File(sslDir, "ca.crl"));
-
-            Log.i(TAG, "SSL certificates deployed to: " + sslDir.getAbsolutePath());
-        } catch (Exception e) {
-            Log.e(TAG, "Error deploying certificates", e);
-        }
-    }
 
     /**
      * Deploy the MCP stdio binary from nativeLibraryDir to files/ as an executable.
@@ -767,15 +762,8 @@ public class ApacheService extends Service {
 
             // Check that certificate files exist and are valid
             if (!validateCertificates()) {
-                Log.w(TAG, "SSL certificate validation failed - attempting auto-deployment");
-
-                // Try to auto-deploy certificates using CertificateService
-                if (!triggerCertificateDeployment()) {
-                    // For initial testing, allow server to start without mTLS
-                    // HTTP server will run on port 8443 without TLS
-                    Log.w(TAG, "Failed to auto-deploy certificates - running WITHOUT mTLS for testing");
-                    Log.w(TAG, "SECURITY WARNING: mTLS is disabled - not suitable for production");
-                }
+                Log.e(TAG, "SSL certificate validation failed \u2014 refusing to start (fail-closed)");
+                return false;
             }
 
             return true;
@@ -928,29 +916,4 @@ public class ApacheService extends Service {
         }
     }
 
-    /**
-     * Trigger certificate deployment via CertificateService
-     */
-    private boolean triggerCertificateDeployment() {
-        try {
-            Log.i(TAG, "Triggering automatic certificate deployment");
-
-            // Send Intent to CertificateService to deploy certificates
-            Intent deployIntent = new Intent("org.kanaha.camera.DEPLOY_CERTIFICATES");
-            deployIntent.setPackage(getPackageName());
-
-            // Use sendBroadcast for internal communication
-            sendBroadcast(deployIntent);
-
-            // Give some time for certificate deployment
-            Thread.sleep(5000);
-
-            // Re-validate certificates after deployment
-            return validateCertificates();
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error triggering certificate deployment", e);
-            return false;
-        }
-    }
 }

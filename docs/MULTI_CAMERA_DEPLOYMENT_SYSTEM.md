@@ -261,7 +261,7 @@ Process apacheProcess = processBuilder.start();
 
 **Ubuntu 25.10 Issue**: The default Ubuntu 25.10 Apache package (apache2 2.4.64) **does NOT include mod_h2**. You cannot use system Apache for building Kanaha. See "Step 3: Build Apache httpd with HTTP/2 for Android" in the installation section for detailed build instructions.
 
-**What ships in the APK**: The final APK includes Apache httpd with mod_h2, mod_ssl, and mod_axis2 statically linked into `libkanaha-camera-control.so` (~15-20MB). Android devices do **not** need Apache installed - everything is self-contained in the APK.
+**What ships in the APK**: the native binaries `libhttpd.so` (Apache httpd with mod_h2, mod_ssl and mod_axis2 statically linked, ~9.8 MB) and `libkanaha_mcp.so` (the MCP stdio server). Android devices do **not** need Apache installed - everything is self-contained in the APK.
 
 **2. SSL Certificate Configuration:**
 
@@ -282,41 +282,31 @@ private void deployProductionCertificates() {
 }
 ```
 
-**Certificate Generation (one-time setup, same certs work on all devices):**
+**Certificate setup — per-device provisioning:**
 
-Kanaha uses **generic certificate names** - the same certificates work on any Android device regardless of IP address. No per-device certificate generation is needed.
+Each device mints its **own** key + CSR on first run; the private key never leaves
+the device and nothing is bundled in `assets/ssl/`. You run a private CA off-device
+and sign each device's CSR once (see
+[SECURITY.md](SECURITY.md#certificate-model-per-device-provisioning) for the full flow):
 
 ```bash
-# Generate CA certificate (one-time setup)
-openssl req -x509 -nodes -days 365 -newkey rsa:4096 \
-  -keyout ca.key \
-  -out ca.crt \
-  -subj "/C=US/O=Kanaha Production/CN=Kanaha Camera CA"
+# One-time: create the CA (its key stays on your machine, never ships)
+openssl genrsa -out ca.key 4096
+openssl req -new -x509 -days 3650 -key ca.key -out ca.crt -subj "/CN=Kanaha CA"
 
-# Generate server certificate (used by ALL camera devices)
-openssl req -new -nodes -newkey rsa:2048 \
-  -keyout server.key \
-  -out server.csr \
-  -subj "/C=US/O=Kanaha Production/CN=Android Camera Server"
-
-openssl x509 -req -in server.csr \
-  -CA ca.crt -CAkey ca.key -CAcreateserial \
-  -out server.crt -days 365
-
-# Generate client certificate (used by control station)
-openssl req -new -nodes -newkey rsa:2048 \
-  -keyout client.key \
-  -out client.csr \
-  -subj "/C=US/O=Kanaha Production/CN=Camera Control Client"
-
-openssl x509 -req -in client.csr \
-  -CA ca.crt -CAkey ca.key -CAcreateserial \
-  -out client.crt -days 365
-
-# Certificates are bundled in app/src/main/assets/ssl/ - no manual deployment needed
+# Per device: sign the CSR it generated on first run, push the cert back, restart
+adb shell "run-as org.kanaha.camera cat files/csr/camera.csr" > camera.csr
+openssl x509 -req -in camera.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out camera.crt -days 365 \
+  -extfile <(printf "subjectAltName=IP:<ip>,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth")
+adb push camera.crt /data/local/tmp/server.crt && adb push ca.crt /data/local/tmp/ca.crt
+adb shell "run-as org.kanaha.camera sh -c 'cp /data/local/tmp/server.crt files/apache/ssl/server.crt && cp /data/local/tmp/ca.crt files/apache/ssl/ca.crt'"
 ```
 
-**Key Point:** The same `server.crt` works on Pixel 9 Pro, Moto X4, or any other Android device. Certificate validation uses the CA trust chain, not hostname/IP matching. This is why curl uses `-k` flag (skip hostname verification) since we authenticate via mTLS client certificates instead.
+**Key point:** each device cert carries the device's IP / `.local` in its SANs and a
+per-device CN; clients trust the single CA. curl uses `-k` only to skip hostname
+matching on the loopback / `adb forward` path — authentication is via the mTLS
+client certificate.
 
 **Why use a self-signed CA with PKI instead of individual self-signed certificates:**
 
@@ -722,38 +712,19 @@ Supported patterns:
 
 ### mTLS Certificate System
 
-**Production-Grade PKI:**
+**Per-device PKI (provisioned on-device):**
 
-Kanaha uses a **private Certificate Authority (CA)** for mutual TLS authentication:
+Kanaha uses a private Certificate Authority for mutual TLS. Each device generates
+its own key + CSR on first run and is provisioned with a CA-signed cert — the
+private key never leaves the device and none ships in the APK; the CA key lives
+off-device. See [SECURITY.md](SECURITY.md#certificate-model-per-device-provisioning)
+for the signing/provisioning commands. Once provisioned, clients connect with a
+CA-issued client cert:
 
-**Certificate Setup:**
 ```bash
-# Certificate Authority (CA) system
-openssl genrsa -out ca-key.pem 4096
-openssl req -new -x509 -days 365 -key ca-key.pem -out ca.pem \
-  -subj "/C=US/ST=CA/L=Production/O=Kanaha/CN=Kanaha-CA"
-
-# Server certificate signed by CA
-openssl genrsa -out server-key.pem 4096
-openssl req -new -key server-key.pem -out server.csr \
-  -subj "/C=US/ST=CA/L=Production/O=Kanaha/CN=camera-01"
-openssl x509 -req -days 365 -in server.csr -CA ca.pem -CAkey ca-key.pem \
-  -out server.pem -CAcreateserial
-
-# Client certificate signed by same CA
-openssl genrsa -out client-key.pem 4096
-openssl req -new -key client-key.pem -out client.csr \
-  -subj "/C=US/ST=CA/L=Production/O=Kanaha/CN=control-station"
-openssl x509 -req -days 365 -in client.csr -CA ca.pem -CAkey ca-key.pem \
-  -out client.pem -CAcreateserial
-
-# Use mTLS connection with certificates
-curl --http2 \
-     --cert client.pem \
-     --key client-key.pem \
-     --cacert ca.pem \
+curl --http2 --cert client.crt --key client.key --cacert ca.crt \
      -H "Content-Type: application/json" \
-     -d '{"action":"get_status"}' \
+     -d '{"action":"getStatus"}' \
      https://192.168.1.10:8443/services/CameraControlService/getStatus
 ```
 

@@ -16,8 +16,10 @@ request, then forwards the action to a Java `CameraControlReceiver` via an
 Android `am broadcast` intent; the Java side does the Camera2 work and file I/O.
 SFTP is Java (JSch), not native. There is **no** WAV/media parser here.
 
-Trust model: a client certificate is a full-access credential. Any holder of the
-mTLS client cert — which currently ships in the APK — can invoke every operation.
+Trust model: a client certificate is a full-access credential. The device mints
+its own key on-device and is provisioned with a CA-signed cert (no private key
+ships in the APK); any holder of a client cert issued by the CA can invoke every
+operation.
 
 ## Operation modes
 
@@ -76,11 +78,12 @@ stub. Check every writer respects the buffer size, and the returned
 wrapped in `<IfModule>` — a binary missing mod_ssl must fail to start, not serve
 cleartext on 8443. `server-status` at `/status` is gated behind mTLS; keep it so.
 
-### 7. Keys in the APK (deployment)
-`assets/ssl/` bundles the server key (and historically the CA/client keys). Any
-APK holder can extract them. Treat a private key added to `assets/ssl/` or
-committed to git as a finding. `allowBackup` must be `false` so keys under the
-files dir are not in the backup set.
+### 7. Keys are minted on-device, not shipped (deployment)
+Nothing under `assets/ssl/` ships a private key any more: on first run the app
+generates its own RSA key + CSR and is provisioned with a CA-signed cert (the CA
+key lives off-device, never in the APK). Treat any private key committed to git
+or added to `assets/ssl/` as a finding. `allowBackup` must be `false` so keys
+under the files dir are not in the backup set.
 
 ## Testing
 - On-device only: needs Camera2, mTLS, and the httpd child.

@@ -162,124 +162,56 @@ For certificate setup and mTLS configuration, see:
 - [MULTI_CAMERA_DEPLOYMENT_SYSTEM.md](MULTI_CAMERA_DEPLOYMENT_SYSTEM.md) - Section "mTLS Certificate System"
 - [SFTP-FILE-TRANSFER.md](SFTP-FILE-TRANSFER.md) - SSH PKI for file transfers
 
-## Certificate Model: Shared Client Certificate
+## Certificate Model: Per-Device Provisioning
 
-Location: `app/src/main/assets/ssl/`
+Each device holds a **unique** certificate it provisions on first run. **No private
+key ships in the APK**, and there is no shared client certificate.
 
-Kanaha uses a **shared client certificate** model where all devices use the same `client.crt` and `client.key`:
+### How it works
 
-```
-ssl/
-├── ca.crt          # Certificate Authority
-├── ca.key          # CA private key (keep secure!)
-├── client.crt      # Shared by ALL devices (cameras + control station)
-├── client.key      # Shared by ALL devices
-├── server.crt      # Server certificate
-└── server.key      # Server private key
-```
+1. On first run the app generates its own RSA-2048 keypair and a PKCS#10 CSR
+   (`files/csr/camera.csr`). **The private key never leaves the device.**
+2. The httpd refuses to serve until provisioned — the notification shows
+   "Awaiting provisioning" and port 8443 stays closed.
+3. An operator signs the CSR with the **off-device** Kanaha CA (whose key never
+   ships anywhere) and pushes back the signed cert + CA cert:
 
-### Why Shared Certificates?
+   ```bash
+   adb shell "run-as org.kanaha.camera cat files/csr/camera.csr" > camera.csr
+   openssl x509 -req -in camera.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+     -out camera.crt -days 365 \
+     -extfile <(printf "subjectAltName=IP:<ip>,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth")
+   adb push camera.crt /data/local/tmp/server.crt && adb push ca.crt /data/local/tmp/ca.crt
+   adb shell "run-as org.kanaha.camera sh -c 'cp /data/local/tmp/server.crt files/apache/ssl/server.crt && cp /data/local/tmp/ca.crt files/apache/ssl/ca.crt'"
+   ```
 
-| Factor | Shared Cert | Per-Device Certs |
-|--------|-------------|------------------|
-| **Complexity** | Simple - one cert to manage | Complex - track cert-to-device mapping |
-| **Setup time** | Minutes | Longer initial setup |
-| **Device lost** | Regenerate all certs (~5 min) | Revoke one, deploy CRL (~3 min) |
-| **Audit trail** | Shows "a client" did X | Shows "pixel9pro" did X |
-| **Best for** | Small deployments (2-5 devices) | Large fleets, untrusted locations |
+4. Restart the app; the server starts with mTLS. Provisioning is durable (survives
+   reboot / app update; redo only after a fresh install or data clear).
 
-**For a small camera network (2-3 cameras + control station), shared certificates provide adequate security with minimal complexity.**
-
-### Security Considerations
-
-The shared certificate model is **not a vulnerability**:
-
-- mTLS still blocks all unauthorized clients (no cert = no connection)
-- Attacker must physically access a device to extract the certificate
-- Common in IoT, embedded systems, and mobile apps
-- Would not be considered a CVE by security researchers
-
-**Trade-off acknowledged:** If a device is lost, you must regenerate and redeploy certificates to all devices rather than revoking just one.
-
-### Handling a Lost Device (Moto X4 lost at airport)
-
-When a device with the shared certificate is lost or stolen, regenerate all certificates:
-
-**Step 1: Generate new client certificate**
+Control-station clients present a client cert issued from the same CA:
 
 ```bash
-cd /path/to/ssl
-
-# Generate new client key and certificate
 openssl genrsa -out client.key 2048
-openssl req -new -key client.key -out client.csr \
-    -subj "/CN=kanaha-client/O=Kanaha Production/C=US"
-openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key \
-    -CAcreateserial -out client.crt -days 365 -sha256
-
-rm client.csr  # Clean up
+openssl req -new -key client.key -out client.csr -subj "/CN=kanaha-control"
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out client.crt -days 365 -extfile <(printf "extendedKeyUsage=clientAuth")
 ```
 
-**Step 2: Deploy to all remaining devices**
+### Why per-device
 
-```bash
-ADB=$HOME/Android/Sdk/platform-tools/adb
+- **The private key never travels** — the device makes it; only the CSR and the
+  signed cert move. An extracted APK yields no usable key.
+- **Per-device identity** — each cert's CN is the device, so audit logs show which
+  device acted, not just "a client".
+- **One CA, one trust anchor** — clients trust the single CA; adding a device or a
+  client needs no server-side change. This mirrors the production RAPI mTLS model.
 
-# Deploy to Pixel 9 Pro (still have this one)
-$ADB -s 192.168.8.168:5555 push client.crt /data/local/tmp/
-$ADB -s 192.168.8.168:5555 push client.key /data/local/tmp/
-$ADB -s 192.168.8.168:5555 shell "run-as org.kanaha.camera cp /data/local/tmp/client.crt files/apache/ssl/"
-$ADB -s 192.168.8.168:5555 shell "run-as org.kanaha.camera cp /data/local/tmp/client.key files/apache/ssl/"
-$ADB -s 192.168.8.168:5555 shell "run-as org.kanaha.camera chmod 600 files/apache/ssl/client.key"
+### Revocation (deferred)
 
-# Restart the app or reboot device to pick up new cert
-$ADB -s 192.168.8.168:5555 shell am force-stop org.kanaha.camera
-
-# Update control station
-cp client.crt client.key ~/kanaha-control/ssl/
-```
-
-**Step 3: Update your curl/test commands**
-
-```bash
-# Test with new certificate
-SSL=/path/to/ssl
-curl -sk --http2 \
-    --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    https://192.168.8.168:8443/services/CameraControlService/getStatus
-```
-
-**Result:** The lost Moto X4's copy of the old certificate no longer works. All your remaining devices have the new certificate.
-
-**Total time:** ~5 minutes for a 3-device network.
-
-### When to Consider Per-Device Certificates
-
-Switch to per-device certificates if:
-
-- You have **5+ devices** where redeployment becomes cumbersome
-- Devices are in **remote locations** difficult to access for redeployment
-- You need **audit trails** showing exactly which device performed each action
-- Devices are in **untrusted physical locations** where loss is expected
-
-For per-device certificate setup, generate unique certs with device-specific CNs:
-
-```bash
-# Example: generate cert for specific device
-openssl req -new -key pixel9pro.key -out pixel9pro.csr \
-    -subj "/CN=pixel9pro.local/O=Kanaha Production/C=US"
-```
-
-### CRL Infrastructure (Optional)
-
-The CRL configuration remains in `ssl.conf` for future use if you switch to per-device certificates:
-
-```apache
-SSLCARevocationFile     "ssl/ca.crl"
-SSLCARevocationCheck    chain
-```
-
-With shared certificates, the CRL is not used for individual device revocation - you simply regenerate the shared certificate instead.
+Device and client certs are **one-year**. CRL/OCSP revocation is a pre-production
+item — `ssl.conf`'s `SSLCARevocation*` lines are commented out for now. Until then,
+handle a compromised device by reissuing the CA and re-provisioning, or by letting
+the one-year cert expire. Add CRL or OCSP before any public/production use.
 
 ## Security Audit Logging
 
@@ -298,7 +230,7 @@ CustomLog "logs/audit.log" mtls_audit
 |-------|-------------|---------|
 | `%t` | Timestamp | `[06/Jan/2026:12:30:45 +0000]` |
 | `%h` | Client IP | `192.168.8.168` |
-| `%{SSL_CLIENT_S_DN}x` | Certificate Subject | `CN=kanaha-client,O=Kanaha Production` |
+| `%{SSL_CLIENT_S_DN}x` | Certificate Subject | `CN=pixel10proxl,O=Kanaha` |
 | `%{SSL_CLIENT_VERIFY}x` | Verification Status | `SUCCESS` or `FAILED:reason` |
 | `%r` | Request | `POST /services/CameraControlService/startRecording` |
 | `%>s` | HTTP Status | `200` |
@@ -307,12 +239,12 @@ CustomLog "logs/audit.log" mtls_audit
 ### Example Log Entry
 
 ```
-[06/Jan/2026:12:30:45 +0000]|192.168.8.100|CN=kanaha-client,O=Kanaha Production|SUCCESS|"POST /services/CameraControlService/startRecording HTTP/2"|200|156
+[06/Jan/2026:12:30:45 +0000]|192.168.8.100|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/startRecording HTTP/2"|200|156
 ```
 
-### Shared Certificate Impact on Audit Logs
+### Per-Device Certificate Identity in Audit Logs
 
-With the shared client certificate model, all devices show the same certificate subject (`CN=kanaha-client`). Device identification relies on **IP address**:
+With per-device certificates each cert's subject `CN` is the device, so audit logs identify the acting device by CN (cross-referenced with IP):
 
 | IP Address | Device | Location |
 |------------|--------|----------|
@@ -521,9 +453,9 @@ $ADB -s 192.168.8.126:5555 shell "run-as org.kanaha.camera cat files/apache/logs
 ```bash
 $ grep "deleteFiles" motox4-audit.log
 
-[05/Jan/2026:14:22:01 +0000]|192.168.8.100|CN=kanaha-client,O=Kanaha Production|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
-[05/Jan/2026:23:47:33 +0000]|192.168.8.168|CN=kanaha-client,O=Kanaha Production|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
-[06/Jan/2026:03:15:22 +0000]|10.0.0.99|CN=kanaha-client,O=Kanaha Production|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
+[05/Jan/2026:14:22:01 +0000]|192.168.8.100|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
+[05/Jan/2026:23:47:33 +0000]|192.168.8.168|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
+[06/Jan/2026:03:15:22 +0000]|10.0.0.99|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
 ```
 
 **Step 3: Identify the anomaly**
@@ -541,9 +473,9 @@ With shared certificates, all entries show the same CN. The key identifier is th
 # Find all activity from the unknown IP
 $ grep "|10.0.0.99|" motox4-audit.log
 
-[06/Jan/2026:03:12:45 +0000]|10.0.0.99|CN=kanaha-client,O=Kanaha Production|SUCCESS|"POST /services/CameraControlService/listFiles HTTP/2"|200|1847
-[06/Jan/2026:03:14:01 +0000]|10.0.0.99|CN=kanaha-client,O=Kanaha Production|SUCCESS|"POST /services/CameraControlService/sftpTransfer HTTP/2"|200|203
-[06/Jan/2026:03:15:22 +0000]|10.0.0.99|CN=kanaha-client,O=Kanaha Production|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
+[06/Jan/2026:03:12:45 +0000]|10.0.0.99|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/listFiles HTTP/2"|200|1847
+[06/Jan/2026:03:14:01 +0000]|10.0.0.99|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/sftpTransfer HTTP/2"|200|203
+[06/Jan/2026:03:15:22 +0000]|10.0.0.99|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
 ```
 
 **Step 5: Reconstruct the attack timeline**
@@ -977,8 +909,8 @@ Kanaha uses **OWASP Dependency-Check** via GitHub Actions (`.github/workflows/ow
 ### For Deployment
 
 - [ ] mTLS certificates properly configured
-- [ ] Shared client certificate (`client.crt`, `client.key`) deployed to all devices
-- [ ] CA private key (`ca.key`) stored securely offline
+- [ ] Each device provisioned with its own CA-signed cert (no shared client cert)
+- [ ] CA private key (`ca.key`) kept off-device, never shipped in the APK
 - [ ] SSH keys for SFTP use ed25519
 - [ ] `known_hosts` file includes server fingerprints
 - [ ] Apache user-agent filtering enabled
@@ -1182,7 +1114,7 @@ These security measures are implemented via **configuration only** (no code chan
 | TLS 1.2+ only | `SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1` | ssl.conf |
 | Modern ciphers | `SSLCipherSuite ECDHE-...` | ssl.conf |
 | Client cert required | `SSLVerifyClient require` | ssl.conf |
-| Shared client cert | All devices use same `client.crt` | ssl/ directory |
+| Per-device certs | Each device provisions its own CA-signed cert | files/apache/ssl |
 | Session ticket disabled | `SSLSessionTickets off` | ssl.conf |
 | Compression disabled | `SSLCompression off` | ssl.conf |
 | HSTS header | `Header always set Strict-Transport-Security` | httpd.conf |

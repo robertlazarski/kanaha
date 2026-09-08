@@ -54,7 +54,7 @@ adb install app-debug.apk
 
 ### Verify Installation
 
-From a computer on the same WiFi network (requires [certificates](#1-generate-certificates)):
+From a computer on the same WiFi network (requires an mTLS client cert — see [Set up mTLS](#1-set-up-mtls-ca)):
 
 ```bash
 curl -sk https://<phone-ip>:8443/services/CameraControlService/getStatus \
@@ -63,41 +63,47 @@ curl -sk https://<phone-ip>:8443/services/CameraControlService/getStatus \
 
 ## Quick Start
 
-### 1. Generate Certificates
+### 1. Set up mTLS (CA)
 
-Kanaha requires mutual TLS (mTLS) - both server and client authenticate with certificates:
+Kanaha uses mutual TLS. You run a small private CA; **its key never leaves your
+machine and is never shipped in the app.** The device generates its own server
+key on-device (below) — you only ever sign a CSR.
 
 ```bash
-# Create certificate directory
 mkdir -p ~/kanaha-certs && cd ~/kanaha-certs
-
-# Generate CA (Certificate Authority)
 openssl genrsa -out ca.key 4096
-openssl req -new -x509 -days 3650 -key ca.key -out ca.crt \
-  -subj "/CN=Kanaha CA"
+openssl req -new -x509 -days 3650 -key ca.key -out ca.crt -subj "/CN=Kanaha CA"
 
-# Generate server certificate (for the Android device)
-openssl genrsa -out server.key 2048
-openssl req -new -key server.key -out server.csr -subj "/CN=kanaha-camera"
-openssl x509 -req -days 365 -in server.csr -CA ca.crt -CAkey ca.key \
-  -CAcreateserial -out server.crt
-
-# Generate client certificate (for your control station)
+# A client certificate for your control station (curl / MCP):
 openssl genrsa -out client.key 2048
 openssl req -new -key client.key -out client.csr -subj "/CN=kanaha-control"
 openssl x509 -req -days 365 -in client.csr -CA ca.crt -CAkey ca.key \
-  -CAcreateserial -out client.crt
+  -CAcreateserial -out client.crt \
+  -extfile <(printf "extendedKeyUsage=clientAuth")
 ```
 
-### 2. Deploy Certificates to Phone
+### 2. Provision the device
 
-Copy certificates to the Android device:
+On first run the app **mints its own private key and a CSR** (the key never
+leaves the device) and refuses to serve until you sign that CSR with your CA and
+push the signed cert back:
 
 ```bash
-adb push ca.crt server.crt server.key /sdcard/Download/
+# After installing + launching the app once (it writes files/csr/camera.csr):
+adb shell "run-as org.kanaha.camera cat files/csr/camera.csr" > camera.csr
 
-# Or use the Kanaha app: Settings → Security → Import Certificates
+# Sign it with your CA (add the phone's IP / mDNS name as SANs):
+openssl x509 -req -days 365 -in camera.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out camera.crt \
+  -extfile <(printf "subjectAltName=IP:<phone-ip>,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth")
+
+# Push the signed cert + CA back into the app, then restart it:
+adb push camera.crt /data/local/tmp/server.crt && adb push ca.crt /data/local/tmp/ca.crt
+adb shell "run-as org.kanaha.camera sh -c 'cp /data/local/tmp/server.crt files/apache/ssl/server.crt && cp /data/local/tmp/ca.crt files/apache/ssl/ca.crt'"
 ```
+
+The server now starts with mTLS. Provisioning is durable — redo it only after a
+fresh install / data clear.
 
 ### 3. Start the Camera
 
