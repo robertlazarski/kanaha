@@ -251,7 +251,7 @@ $CURL -H "Content-Type: application/json" \
 {
   "mcpServers": {
     "kanaha-camera": {
-      "command": "/data/data/org.kanaha.camera/files/kanaha-mcp",
+      "command": "/data/data/org.kanaha.camera/files/kanaha-camera-mcp",
       "args": []
     }
   }
@@ -266,7 +266,7 @@ pointing at the camera's HTTPS endpoint:
   "mcpServers": {
     "kanaha-camera-remote": {
       "command": "java",
-      "args": ["-jar", "axis2-mcp-bridge-2.0.1-SNAPSHOT-exe.jar",
+      "args": ["-jar", "axis2-mcp-bridge-2.0.2-SNAPSHOT-exe.jar",
                "--base-url", "https://192.168.1.100:8443/axis2-json-api",
                "--keystore", "client-keystore.p12",
                "--truststore", "ca-truststore.p12"]

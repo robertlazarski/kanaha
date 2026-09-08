@@ -268,7 +268,7 @@ parameter schemas — this is what Claude Desktop reads to discover your camera:
 ```bash
 # Via the MCP stdio binary on the phone (over ADB)
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
-  adb shell /data/app/.../org.kanaha.camera-.../lib/arm64/libkanaha_mcp.so
+  adb shell run-as org.kanaha.camera ./files/kanaha-camera-mcp
 ```
 
 Response (9 tools with full inputSchema):

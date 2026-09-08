@@ -19,6 +19,16 @@ SFTP is Java (JSch), not native. There is **no** WAV/media parser here.
 Trust model: a client certificate is a full-access credential. Any holder of the
 mTLS client cert — which currently ships in the APK — can invoke every operation.
 
+## Operation modes
+
+Unlike kanaha-audio / kanaha-calcs, the camera **cannot** run headless: Camera2
+needs the foreground activity (`camera_available` is false while the app is
+backgrounded), so the app must be foregrounded before use. `ApacheService` starts
+the httpd with the app and stays `exported="false"`; remote control arrives via
+the exported `CameraControlReceiver` (`am broadcast`), not a service start. Like
+every Kanaha server app it advertises **mDNS/DNS-SD** (`_https._tcp`, TXT
+`api=kanaha-camera-control`) so clients discover it without a static IP.
+
 ## Highest-value scan areas
 
 Ranked by exploitability. The C service is a thin dispatch+IPC layer; the real

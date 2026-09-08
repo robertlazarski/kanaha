@@ -165,6 +165,9 @@ public class ApacheService extends Service {
             // Deploy SSL certificates first (before validation checks them)
             deployCertificates();
 
+            // Deploy the MCP stdio binary (run as a subprocess, not via JNI)
+            deployMcpBinary(getFilesDir());
+
             // Validate configuration
             if (!validateConfiguration()) {
                 Log.e(TAG, "Configuration validation failed");
@@ -464,6 +467,37 @@ public class ApacheService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "Error deploying certificates", e);
         }
+    }
+
+    /**
+     * Deploy the MCP stdio binary from nativeLibraryDir to files/ as an executable.
+     * Packaged as libkanaha_mcp.so (jniLibs naming) purely so Android extracts it as a
+     * real file; it is never loaded via JNI -- it is run as a subprocess over stdio.
+     */
+    private void deployMcpBinary(File filesDir) {
+        File src = new File(getApplicationInfo().nativeLibraryDir, "libkanaha_mcp.so");
+        File dst = new File(filesDir, "kanaha-camera-mcp");
+        if (!src.exists()) {
+            Log.w(TAG, "MCP binary not packaged: " + src);
+            return;
+        }
+        if (dst.exists() && dst.length() == src.length()) {
+            return;  // already current
+        }
+        try (java.io.InputStream in = new java.io.FileInputStream(src);
+             java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        }
+        catch (java.io.IOException e) {
+            Log.e(TAG, "Failed to deploy MCP binary", e);
+            return;
+        }
+        if (!dst.setExecutable(true, true)) {
+            Log.w(TAG, "Could not mark MCP binary executable: " + dst);
+        }
+        Log.i(TAG, "MCP binary deployed: " + dst.getAbsolutePath());
     }
 
     /**
