@@ -1137,9 +1137,9 @@ Create `~/android-cross-builds/link-httpd-axis2.sh`:
 #!/bin/bash
 set -e
 
-cd /home/robert/android-cross-builds/httpd-2.4.66
-DEPS=/home/robert/android-cross-builds/deps/arm64-v8a
-CC=/home/robert/Android/Sdk/ndk/28.0.12916984/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+cd ~/android-cross-builds/httpd-2.4.66
+DEPS=~/android-cross-builds/deps/arm64-v8a
+CC=~/Android/Sdk/ndk/28.0.12916984/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
 
 # Direct link without libtool to preserve --whole-archive flags
 # Note: libaxis2_engine.a contains updated receivers with Android static service support
@@ -1212,8 +1212,8 @@ file httpd
 When adding new statically-linked services, update the archive:
 
 ```bash
-DEPS=/home/robert/android-cross-builds/deps/arm64-v8a/lib
-SRC=/home/robert/repos/axis-axis2-c-core/src/core/receivers
+DEPS=~/android-cross-builds/deps/arm64-v8a/lib
+SRC=~/repos/axis-axis2-c-core/src/core/receivers
 
 # Remove old receiver objects
 ar d $DEPS/libaxis2_engine.a \

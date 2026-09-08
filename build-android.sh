@@ -9,7 +9,7 @@
 #
 # Output: kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so
 #
-# Usage: cd /home/robert/repos/kanaha && bash build-android.sh
+# Usage: cd $HOME/repos/kanaha && bash build-android.sh
 #
 # Lived at ~/android-cross-builds/link-httpd-axis2.sh until September 2026.
 # Outside the repo it was unversioned, which is how an Axis2/C service registry
@@ -19,14 +19,14 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-NDK=/home/robert/Android/Sdk/ndk/28.0.12916984
+NDK=$HOME/Android/Sdk/ndk/28.0.12916984
 CC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
 AR=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
 STRIP=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
 
-DEPS=/home/robert/android-cross-builds/deps/arm64-v8a
-HTTPD_DIR=/home/robert/android-cross-builds/httpd-2.4.66
-AXIS2_SRC=/home/robert/repos/axis-axis2-c-core
+DEPS=$HOME/android-cross-builds/deps/arm64-v8a
+HTTPD_DIR=$HOME/android-cross-builds/httpd-2.4.66
+AXIS2_SRC=$HOME/repos/axis-axis2-c-core
 
 KANAHA_APP=$SCRIPT_DIR/kanaha-camera-app/app/src/main/cpp
 AXIS2_INCLUDE=$AXIS2_SRC/include

@@ -2,8 +2,8 @@
 
 **Project**: OpenCamera Remote Control via Apache Axis2/C HTTP/2 JSON
 **Target Device**: Google Pixel 9 Pro
-**Development Branch**: `/home/robert/repos/oco/opencamerasrc`
-**Axis2/C Source**: `/home/robert/repos/axis-axis2-c-core` (Revolutionary HTTP/2 Implementation)
+**Development Branch**: `~/repos/oco/opencamerasrc`
+**Axis2/C Source**: `~/repos/axis-axis2-c-core` (Revolutionary HTTP/2 Implementation)
 **Document Date**: December 11, 2025
 
 ## 🎯 **Project Objective**

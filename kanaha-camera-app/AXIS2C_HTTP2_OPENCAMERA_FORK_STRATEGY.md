@@ -147,7 +147,7 @@ cd axis2c-mobile-camera
 find . -name "*.c" -o -name "*.h" | xargs sed -i 's/Apache License 2.0/GPL v3 or later/g'
 
 # Add GPL v3+ license file
-cp /home/robert/repos/oco/opencamerasrc/gpl-3.0.txt LICENSE
+cp ~/repos/oco/opencamerasrc/gpl-3.0.txt LICENSE
 
 # Update README with fork attribution
 cat >> README.md << 'EOF'

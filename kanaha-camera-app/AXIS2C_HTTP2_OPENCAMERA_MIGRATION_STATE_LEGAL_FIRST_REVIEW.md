@@ -18,7 +18,7 @@
 
 **Source Evidence:**
 - OpenCamera: `opencamera_source.txt:52` - "This source is released under the GPL v3 or later"
-- Axis2/C: All HTTP/2 code under Apache 2.0 per `/home/robert/repos/axis-axis2-c-core/docs/HTTP2_LEGAL.md`
+- Axis2/C: All HTTP/2 code under Apache 2.0 per `~/repos/axis-axis2-c-core/docs/HTTP2_LEGAL.md`
 
 ---
 

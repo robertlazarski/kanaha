@@ -501,7 +501,7 @@ export DEPS_DIR=$HOME/android-cross-builds/deps/arm64-v8a
 export APACHE_DIR=$HOME/android-cross-builds/apache/arm64-v8a
 
 # Navigate to Kanaha native code directory
-cd /home/robert/repos/kanaha/kanaha-camera-app/app/src/main/cpp
+cd ~/repos/kanaha/kanaha-camera-app/app/src/main/cpp
 
 # Configure Axis2/C with HTTP/2 support
 ./configure \
