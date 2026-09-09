@@ -476,21 +476,30 @@ public class ApacheService extends Service {
             Log.w(TAG, "MCP binary not packaged: " + src);
             return;
         }
-        if (dst.exists() && dst.length() == src.length()) {
-            return;  // already current
-        }
+        // Write to a temp file then atomically rename over dst. rename()
+        // replaces the file even while an older copy is executing (a running
+        // MCP session keeps its now-unlinked inode), which avoids ETXTBSY on
+        // overwrite and guarantees the deployed binary matches the packaged
+        // one -- a length comparison would silently skip a same-size patch.
+        File tmp = new File(filesDir, "kanaha-camera-mcp.tmp");
         try (java.io.InputStream in = new java.io.FileInputStream(src);
-             java.io.OutputStream out = new java.io.FileOutputStream(dst)) {
+             java.io.OutputStream out = new java.io.FileOutputStream(tmp)) {
             byte[] buf = new byte[65536];
             int n;
             while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
         }
         catch (java.io.IOException e) {
             Log.e(TAG, "Failed to deploy MCP binary", e);
+            tmp.delete();
             return;
         }
-        if (!dst.setExecutable(true, true)) {
-            Log.w(TAG, "Could not mark MCP binary executable: " + dst);
+        if (!tmp.setExecutable(true, true)) {
+            Log.w(TAG, "Could not mark MCP binary executable: " + tmp);
+        }
+        if (!tmp.renameTo(dst)) {
+            Log.e(TAG, "Failed to rename MCP binary into place: " + dst);
+            tmp.delete();
+            return;
         }
         Log.i(TAG, "MCP binary deployed: " + dst.getAbsolutePath());
     }
