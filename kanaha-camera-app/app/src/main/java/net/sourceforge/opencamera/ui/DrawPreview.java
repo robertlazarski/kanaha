@@ -753,8 +753,20 @@ public class DrawPreview {
         }
         ghost_image_alpha = applicationInterface.getGhostImageAlpha();
 
+        // Kanaha: the histogram, zebra stripes, focus peaking and pre-shots all read
+        // the preview back through textureView.getBitmap() into an ARGB_8888
+        // bitmap. During a 10-bit HLG recording the preview surface is HLG10, and
+        // an 8-bit read of it either fails or quietly misreports exposure. Refuse
+        // all four whenever 10-bit is enabled on a camera that supports it. This
+        // keys off the preference rather than the live session so the overlays
+        // cannot flip on between enabling the setting and pressing record.
+        boolean hlg10_blocks_preview_bitmaps = main_activity.getPreview().supportsHlg10()
+                && sharedPreferences.getBoolean(PreferenceKeys.Hlg10PreferenceKey, false);
+        if( MyDebug.LOG && hlg10_blocks_preview_bitmaps )
+            Log.d(TAG, "KANAHA_HLG10: 10-bit enabled, preview-bitmap overlays refused");
+
         String histogram_pref = sharedPreferences.getString(PreferenceKeys.HistogramPreferenceKey, "preference_histogram_off");
-        want_histogram = !histogram_pref.equals("preference_histogram_off") && main_activity.supportsPreviewBitmaps();
+        want_histogram = !histogram_pref.equals("preference_histogram_off") && main_activity.supportsPreviewBitmaps() && !hlg10_blocks_preview_bitmaps;
         histogram_type = Preview.HistogramType.HISTOGRAM_TYPE_VALUE;
         if( want_histogram ) {
             switch( histogram_pref ) {
@@ -784,18 +796,18 @@ public class DrawPreview {
             MyDebug.logStackTrace(TAG, "failed to parse zebra_stripes_value: " + zebra_stripes_value, e);
             zebra_stripes_threshold = 0;
         }
-        want_zebra_stripes = zebra_stripes_threshold != 0 & main_activity.supportsPreviewBitmaps();
+        want_zebra_stripes = zebra_stripes_threshold != 0 & main_activity.supportsPreviewBitmaps() && !hlg10_blocks_preview_bitmaps;
 
         String zebra_stripes_color_foreground_value = sharedPreferences.getString(PreferenceKeys.ZebraStripesForegroundColorPreferenceKey, "#ff000000");
         zebra_stripes_color_foreground = Color.parseColor(zebra_stripes_color_foreground_value);
         String zebra_stripes_color_background_value = sharedPreferences.getString(PreferenceKeys.ZebraStripesBackgroundColorPreferenceKey, "#ffffffff");
         zebra_stripes_color_background = Color.parseColor(zebra_stripes_color_background_value);
 
-        want_focus_peaking = applicationInterface.getFocusPeakingPref();
+        want_focus_peaking = applicationInterface.getFocusPeakingPref() && !hlg10_blocks_preview_bitmaps;
         String focus_peaking_color = sharedPreferences.getString(PreferenceKeys.FocusPeakingColorPreferenceKey, "#ffffff");
         focus_peaking_color_pref = Color.parseColor(focus_peaking_color);
 
-        want_pre_shots = applicationInterface.getPreShotsPref(photoMode);
+        want_pre_shots = applicationInterface.getPreShotsPref(photoMode) && !hlg10_blocks_preview_bitmaps;
 
         last_camera_id_time = 0; // in case camera id changed
         last_view_angles_time = 0; // force view angles to be recomputed

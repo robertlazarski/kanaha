@@ -126,7 +126,8 @@ viewfinder. The commits say otherwise:
 What actually separates the fork from upstream is scope. Kanaha's 10-bit is
 opt-in, forces HEVC, applies only during a recording session, drops video
 snapshots for its duration, and refuses the histogram, zebra, focus-peaking and
-pre-shot overlays because they read the preview back as an 8-bit bitmap.
+pre-shot overlays whenever 10-bit is enabled, because they read the preview
+back as an 8-bit bitmap (`DrawPreview.updateSettings()`; see `OPENGATE.md`).
 Upstream cannot ship a mode that quietly disables half of its viewfinder aids
 and a stills feature. Kanaha can, because it drives the camera headlessly and
 none of those are on. Being headless made the narrowing *free*; it did not

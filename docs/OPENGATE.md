@@ -528,14 +528,20 @@ See "the risk" below before committing.
 - **`capabilities_10bit`** is already computed at `CameraController2:1936-2012`
   from `REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT`. Refuse if absent.
 - **API 33+**, since `DynamicRangeProfiles` does not exist before it.
-- **Refuse if histogram, zebra stripes, focus peaking or pre-shots are on.**
-  `DrawPreview.java:2871` sets
+- **Refuse the histogram, zebra stripes, focus peaking and pre-shots while
+  10-bit is enabled.** `DrawPreview.updateSettings()` sets
   `want_preview_bitmap = want_histogram || want_zebra_stripes || want_focus_peaking || want_pre_shots`,
-  and when that is true `Preview.java:8834` pulls frames with
-  `textureView.getBitmap()` into an `ARGB_8888` bitmap — 8-bit sRGB. On a 10-bit
-  surface those overlays would either fail or, worse, quietly misreport exposure.
-  All four default off and Kanaha drives the camera headlessly, so this guard
-  costs nothing and prevents a viewfinder aid that lies.
+  and when that is true `Preview` pulls frames with `textureView.getBitmap()`
+  into an `ARGB_8888` bitmap — 8-bit sRGB. On a 10-bit surface those overlays
+  would either fail or, worse, quietly misreport exposure. **Implemented:**
+  `updateSettings()` now clears all four `want_*` flags whenever the 10-bit
+  preference is on and the camera supports HLG10. It keys off the preference
+  rather than the live recording session so the overlays cannot switch on in
+  the gap between enabling the setting and pressing record. The refusal runs
+  in this direction — overlays yield to 10-bit, not the reverse — because the
+  alternative would silently record 8-bit after the operator asked for 10-bit,
+  which is the failure this whole section warns about. All four default off
+  and Kanaha drives the camera headlessly, so nothing in normal use trips it.
 
 #### The risk that decides the estimate
 
@@ -632,9 +638,9 @@ were understood, and both are now in the code:
   HLG10 when recording starts and back to 8-bit when it stops. Video snapshots
   are dropped for the duration, since that reader cannot join an HLG10 session.
 
-**Still to do** for the 1-2 days: the HTTP `startRecording` parameter, and the
-histogram/zebra/focus-peaking/pre-shots refusal described above (all four default
-off, so nothing currently trips it).
+**Still to do** for the 1-2 days: the HTTP `startRecording` parameter. The
+histogram/zebra/focus-peaking/pre-shots refusal described above is done
+(`DrawPreview.updateSettings()`).
 
 #### Running it again
 
