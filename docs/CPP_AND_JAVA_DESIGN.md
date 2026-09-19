@@ -4,7 +4,8 @@ Kanaha Camera is the one Kanaha app where Java does the work. About 70,000
 lines of Java inherited from OpenCamera drive the camera, and about 4,000 lines
 of Kanaha's own Java run the server supervisor and the command receiver. The C
 side is about 2,600 lines: an Axis2/C service that turns HTTP/2 and MCP
-requests into commands for that Java, and a stub httpd entry point.
+requests into commands for that Java, plus the earlier hand-rolled server
+kept in the tree as a test target.
 
 This is the mirror image of Kanaha Audio, where C is the program and Java is a
 thousand-line supervisor (see `CPP_AND_JAVA_DESIGN.md` in the kanaha-audio
@@ -76,14 +77,21 @@ a setting added, not a rewrite.
 |---|---|---|
 | `axis2c/camera_control_service.c` | 1,138 | The Axis2/C service. Parses the JSON request, dispatches on `action` (`startRecording`, `stopRecording`, `getStatus`, `listFiles`, `deleteFiles`, `cleanupFiles`, `configure`, `playTone`, `sftpTransfer`), and for each builds an Intent with `fork()`/`execvp()` and waits for the response file. |
 | `axis2c/kanaha_mcp.c`, `kanaha_mcp_main.c` | 633 | The MCP server: nine tools with schemas, JSON-RPC 2.0 over stdio, dispatching to the same service function. |
-| `apache-httpd/apache_httpd_android.c` | 596 | Android specifics for the httpd binary. |
+| `apache-httpd/apache_httpd_android.c` | 596 | The earlier hand-rolled OpenSSL server, superseded by real Apache; still built by CMake as `kanaha_httpd.so` but not the deployed httpd. |
 | `axis2c/axis2_static_service_adapter.c` | 166 | The strong symbol `camera_control_service_invoke_json` that overrides the weak stub in Axis2/C core, converting json-c objects to and from the service's string interface. |
-| `main.c` | 64 | Entry point. |
+| `main.c` | 64 | Entry point of that earlier server. The deployed `libhttpd.so` uses Apache's own `main`. |
 
-The C is C11 with no C++ anywhere, built by CMake through Gradle's
-`externalNativeBuild` against the cross-compiled Axis2/C, APR, OpenSSL, nghttp2
-and json-c static archives. The other two Kanaha apps use a shell script for the
-same link; the camera app predates that convention.
+The C is C11 with no C++ anywhere, and it is built twice, by two tools that do
+not share a link line:
+
+| Build | Produces | Ships as |
+|---|---|---|
+| `build-android.sh` (repo root; lived outside the repo until September 2026) | Apache httpd 2.4 with mod_ssl, mod_http2, mod_axis2 and the camera service statically linked | `jniLibs/arm64-v8a/libhttpd.so`, the deployed server |
+| CMake through Gradle's `externalNativeBuild` (`app/src/main/cpp/CMakeLists.txt`) | `kanaha_mcp.so` (the MCP binary) and `kanaha_httpd.so` (the earlier hand-rolled server, from `main.c`) | `libkanaha_mcp.so`, copied to `files/kanaha-camera-mcp` on service start; the legacy server is packaged but unused |
+
+Both link against the same cross-compiled Axis2/C, APR, OpenSSL, nghttp2 and
+json-c static archives. A library added to one and not the other builds one
+binary and breaks the other.
 
 ## Why Java does the work here
 
