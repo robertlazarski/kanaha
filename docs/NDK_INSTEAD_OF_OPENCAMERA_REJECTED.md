@@ -12,7 +12,7 @@ Kanaha's other apps are C programs with a thin Java supervisor. Kanaha Audio,
 for example, captures the microphone through AAudio and calls whisper.cpp
 directly; its Java is about 1,000 lines and never touches the audio path
 (see `CPP_AND_JAVA_DESIGN.md` in the kanaha-audio repository). Kanaha Camera is
-the exception: roughly 195,000 lines of Java inherited from OpenCamera do the
+the exception: about 70,000 lines of Java inherited from OpenCamera do the
 camera work, and the C service drives them through Intents sent by
 `fork()`/`execvp()` across a process boundary.
 
