@@ -604,6 +604,16 @@ if (!ext || (strcmp(ext, ".mp4") != 0 &&
 | `camera_device_sftp_transfer_impl()` | Path traversal, file extension |
 | `camera_device_delete_files_impl()` | Path traversal |
 | `camera_device_cleanup_files_impl()` | Path traversal, policy whitelist |
+| `describe_clip` dispatch (`describeClip`) | `video_filename`: no `..`, `/` or `\`; `frame_count` clamped 1–8; `max_dimension` clamped 64–4096; `positions`: at most 8 values in [0, 1], count must equal `frame_count`; response passed through from Java unchanged |
+
+`describeClip` is the one operation that decodes a media file inside the app
+process (`FrameSampler`, `MediaMetadataRetriever`) and, in the `nano` build
+flavor only, hands downscaled frames to Google's AICore system service for
+on-device description. Nothing leaves the device; the `foss` flavor has no such
+path and reports `unavailable`. The Java side re-validates `video_filename`
+with `SecurityValidator` (defense in depth). Threat-model notes and the GPL
+distribution rule for the `nano` flavor are in `AGENTS.md` §8 and
+`docs/GOOGLE_NANO_INTEGRATION.md`.
 
 ## Java Layer Security (SecurityValidator)
 

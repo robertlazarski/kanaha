@@ -442,8 +442,10 @@ See [Security Documentation](docs/SECURITY.md) for threat model, certificate man
 | [SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) | iRig Pro I/O + Tentacle Sync hardware timecode setup |
 | [GPS Synchronization](docs/GPS.md) | GPS/NTP soft sync, `start_at` scheduled recording, software slate (`playTone`), sync sidecar — vs. SMPTE/LTC for consumer and security use cases |
 | [Threading Model](docs/THREAD_MODEL.md) | IPC pipeline threading: C Apache/Axis2 worker → Android UI thread → background handler; JMM visibility rules, `CountDownLatch` patterns |
-| [MCP (AI Assistant)](docs/MCP.md) | Model Context Protocol integration — 9 camera tools, Claude Desktop config, live Pixel 9 Pro examples |
-| [Legal Review](docs/LEGAL.md) | License compatibility analysis for Apache httpd, Axis2/C, OpenCamera (GPL v3+) |
+| [MCP (AI Assistant)](docs/MCP.md) | Model Context Protocol integration — 10 camera tools, Claude Desktop config, live Pixel 9 Pro examples |
+| [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md) | `describeClip`: per-clip descriptions from Gemini Nano via ML Kit, the `.kanaha.json` sidecar, the `foss`/`nano` build flavors, and why the `nano` build is private-use only under GPL v3 |
+| [C and Java Design](docs/CPP_AND_JAVA_DESIGN.md) | Where Java starts and ends in this app, the Intent seam, and the licence boundary between OpenCamera (GPL) and the Axis2/C service (Apache 2.0) |
+| [Legal Review](docs/LEGAL.md) | License compatibility analysis for Apache httpd, Axis2/C, OpenCamera (GPL v3+), and the proprietary ML Kit client (`nano` flavor only) |
 
 ## Architecture
 
@@ -473,6 +475,12 @@ Control Station                    Android Device
 GPL v3+ (GNU General Public License version 3 or later)
 
 This license is required because Kanaha incorporates OpenCamera, which is GPL v3+ licensed.
+
+The optional `nano` build flavor links Google's proprietary ML Kit client for
+`describeClip`. A GPL program may not be distributed with a proprietary library
+compiled into it, so `nano` builds are for private use only and are never
+published; the default `foss` flavor is the distributable one. See
+[docs/GOOGLE_NANO_INTEGRATION.md](docs/GOOGLE_NANO_INTEGRATION.md).
 
 ## Acknowledgments
 

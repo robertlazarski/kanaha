@@ -85,6 +85,33 @@ key lives off-device, never in the APK). Treat any private key committed to git
 or added to `assets/ssl/` as a finding. `allowBackup` must be `false` so keys
 under the files dir are not in the backup set.
 
+### 8. `describeClip`: untrusted media decoded in-process, frames handed to a system service
+`describeClip` (`docs/GOOGLE_NANO_INTEGRATION.md`) is the one operation that
+decodes a media file inside the app process and, in the `nano` flavor, hands
+bitmaps to Google's AICore service. Three things to check:
+
+- **Input validation on both sides.** `video_filename` must pass
+  `SecurityValidator.validateFilenameOrPattern()` in Java and the C-side
+  traversal check; it is an exact name in the video directory, never a path.
+  `frame_count` is clamped to 1–8 and every `positions` value to [0, 1] in
+  both C and Java. A request that reaches `MediaMetadataRetriever` with an
+  unvalidated name is a finding.
+- **Decoding an untrusted file.** `FrameSampler` runs `MediaMetadataRetriever`
+  on a recording in the app's own process. The files it opens are ones this app
+  recorded, but the name is caller-chosen; a malformed or oversized file must
+  fail with `frame_extract_failed`, never crash the receiver. Bitmaps are
+  downscaled to `max_dimension` before inference and recycled after.
+- **The `nano` flavor's trust relationship.** `ClipDescriber` binds to AICore
+  with the application context and sends frames to it. Nothing leaves the
+  device, but this is the only place app data crosses to a service the app
+  does not own. The `foss` flavor has no such path and must not gain one by
+  accident: verify the ML Kit dependency is `nanoImplementation` only and that
+  `src/foss/.../ClipDescriber.java` never references `com.google.mlkit`.
+
+The sidecar `<basename>.kanaha.json` is derived data about the recording;
+`listFiles`, `deleteFiles` and `sftpTransfer` must treat it like the clip it
+belongs to (carry it, delete it, never expose it on a path the clip is not on).
+
 ## Testing
 - On-device only: needs Camera2, mTLS, and the httpd child.
 - Confirm HTTP/2 is genuinely negotiated (silent fallback is the failure mode):
