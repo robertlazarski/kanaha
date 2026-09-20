@@ -2,6 +2,19 @@
 
 All notable changes to Kanaha are documented here.
 
+## [Unreleased]
+
+### Bug Fixes
+
+- **HTTP requests reach the service again** — The engine now names the
+  operation from the URL as `"operation"` in the request, while this service
+  read only `"action"`, so every HTTPS call failed with `Service error`. The
+  service accepts either spelling.
+- **Rejection reasons reach HTTP clients** — When an operation rejected a
+  request, the static-service adapter replaced the service's own message with
+  a generic `Service error`. The service's JSON is now passed through, as it
+  already was on the MCP path.
+
 ## [v1.3.0] — 2026-03-08
 
 ### New Features

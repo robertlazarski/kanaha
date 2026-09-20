@@ -127,7 +127,17 @@ json_object* camera_control_service_invoke_json(
             AXIS2_LOG_ERROR(env->log, AXIS2_LOG_SI,
                 "[Axis2/C Adapter] Kanaha service returned error: %d", result);
         }
+        /* The service writes a JSON error of its own before returning non-zero
+         * - which file was not found, which field was out of range. Hand that
+         * to the client rather than replacing it with "Service error": the
+         * MCP path already shows it, and an HTTP caller that cannot see why a
+         * request was rejected has nothing to act on. Only a buffer that does
+         * not parse falls through to the generic error below. */
+        response_obj = json_tokener_parse(response_buffer);
         free(response_buffer);
+        if (response_obj) {
+            return response_obj;
+        }
         response_obj = json_object_new_object();
         json_object *error = json_object_new_object();
         json_object_object_add(error, "code", json_object_new_int(-32603));

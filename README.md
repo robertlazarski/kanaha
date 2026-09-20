@@ -345,6 +345,11 @@ All endpoints are under `/services/CameraControlService/`. All requests require 
 Every curl command below has an MCP equivalent — see [MCP docs](docs/MCP.md) for
 the JSON-RPC 2.0 format.
 
+The URL decides which operation runs. The `"action"` field the examples below
+send is optional on this path and, when present, must name the same operation
+as the URL; a request that names a different one is refused. MCP clients send
+no URL, so for them `"action"` is what selects the tool.
+
 | Endpoint | Method | Key Parameters | Description |
 |----------|--------|----------------|-------------|
 | `/getStatus` | GET/POST | — | Camera state, battery, storage, `timestamp`, `gps_time`, `gps_age_ms` |
