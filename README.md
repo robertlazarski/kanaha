@@ -277,7 +277,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
   adb shell run-as org.kanaha.camera ./files/kanaha-camera-mcp
 ```
 
-Response (9 tools with full inputSchema):
+Response (10 tools with full inputSchema):
 ```json
 {
   "jsonrpc": "2.0",
@@ -296,7 +296,8 @@ Response (9 tools with full inputSchema):
       {"name": "deleteFiles",    "description": "Delete files matching a glob pattern.", "...": "..."},
       {"name": "sftpTransfer",   "description": "Transfer file via SFTP with Ed25519 SSH key auth.", "...": "..."},
       {"name": "configure",      "description": "Set camera resolution, fps, codec.", "...": "..."},
-      {"name": "cleanupFiles",   "description": "Clean up transferred files.", "...": "..."}
+      {"name": "cleanupFiles",   "description": "Clean up transferred files.", "...": "..."},
+      {"name": "describeClip",   "description": "Describe a recording with the on-device model (nano flavor).", "...": "..."}
     ]
   }
 }
@@ -358,6 +359,7 @@ no URL, so for them `"action"` is what selects the tool.
 | `/listFiles` | GET/POST | — | List recorded video files with sizes and timestamps |
 | `/deleteFiles` | POST | `pattern` | Delete files matching glob pattern |
 | `/sftpTransfer` | POST | `storage_server_id`, `video_filename`, `destination_folder` | Push files to remote host via SFTP |
+| `/describeClip` | POST | `video_filename`, `frame_count`, `positions`, `write_sidecar`, `max_dimension` | Describe a recording with the on-device model (Gemini Nano, `nano` flavor only); writes `<basename>.kanaha.json` |
 | `/playTone` | POST | `frequency`, `duration_ms`, `start_at` | Play synthesized sine wave for software sync slate |
 
 **`start_at` parameter** (on `startRecording` and `playTone`): Pass a future UTC epoch millisecond timestamp. The camera schedules the action internally and returns immediately. Send to multiple cameras simultaneously — each fires at the same wall-clock time regardless of network delivery timing. See [Quick Start](#5-control-via-api) for curl examples.

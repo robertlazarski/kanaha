@@ -47,6 +47,23 @@ android {
         }
     }
 
+    // Two flavors, one difference: whether the proprietary ML Kit GenAI client
+    // (Gemini Nano image description) is in the APK. Everything else, including
+    // the describeClip operation, is identical; foss reports "unavailable".
+    // See docs/GOOGLE_NANO_INTEGRATION.md.
+    flavorDimensions "model"
+    productFlavors {
+        foss {
+            dimension "model"
+            isDefault = true
+        }
+        nano {
+            dimension "model"
+            // The ML Kit GenAI client declares minSdk 26 and the model needs
+            // Android 8+ anyway; the foss flavor keeps the app's floor of 23.
+            minSdkVersion 26
+        }
+    }
     buildTypes {
         debug {
             // Probe builds install alongside the working app rather than over it.
@@ -135,6 +152,11 @@ dependencies {
     // Using mwiede's JSch fork - actively maintained with ed25519 support
     // https://github.com/mwiede/jsch
     implementation 'com.github.mwiede:jsch:0.2.22'
+
+    // nano flavor only: Google's on-device image description client (beta).
+    // Closed source, Google's Maven repository, Google's ML Kit terms. Never
+    // add it to the default (foss) build. See docs/GOOGLE_NANO_INTEGRATION.md.
+    nanoImplementation 'com.google.mlkit:genai-image-description:1.0.0-beta1'
 
     testImplementation 'junit:junit:4.13.2'
 

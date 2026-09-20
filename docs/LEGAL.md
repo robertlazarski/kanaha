@@ -18,6 +18,7 @@ Kanaha is licensed under GPL v3+ because it incorporates OpenCamera, which is GP
 | nghttp2 | MIT | HTTP/2 protocol |
 | json-c | MIT | JSON parsing |
 | Expat | MIT | XML parsing |
+| ML Kit GenAI Image Description (`com.google.mlkit:genai-image-description`) | Proprietary (Google APIs Terms of Service, ML Kit Terms) | On-device clip description via Gemini Nano; **`nano` build flavor only**, absent from the default `foss` build. Distributed through Google's Maven repository; shipping it inside an app is permitted by Google's terms — **but not by this app's GPL v3+ license**: a GPL program may not be distributed with a proprietary library compiled into it, and no linking exception is possible because the OpenCamera copyright is not ours. The `nano` build is therefore for private use only and is never published or distributed as an APK; only the `foss` build is released. Use is subject to Google's Generative AI Prohibited Use Policy (https://policies.google.com/terms/generative-ai/use-policy); describing the user's own recordings is within it. See `docs/GOOGLE_NANO_INTEGRATION.md`. |
 
 **License Compatibility:** GPL v3 is compatible with Apache 2.0 and MIT licenses for combined works.
 

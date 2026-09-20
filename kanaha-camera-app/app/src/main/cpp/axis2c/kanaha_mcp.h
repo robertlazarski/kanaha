@@ -18,6 +18,7 @@
  *   - sftpTransfer    (transfer files to storage server)
  *   - configure       (set camera resolution, fps, codec)
  *   - cleanupFiles    (clean up transferred files)
+ *   - describeClip    (on-device description of a recording; nano flavor)
  *
  * Usage (Claude Desktop claude_desktop_config.json):
  * {

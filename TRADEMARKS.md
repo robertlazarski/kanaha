@@ -8,6 +8,13 @@ Apache, Apache Axis2/C, Apache HTTP Server, Apache Portable Runtime (APR),
 and the Apache feather logo are trademarks or registered trademarks of
 The Apache Software Foundation in the United States and other countries.
 
+**Google**
+
+Google, Android, Gemini, Gemini Nano and ML Kit are trademarks of Google LLC.
+They are used here nominatively, to name the on-device model and client library
+that the optional `nano` build flavor integrates with, and never as part of an
+app or feature name.
+
 **OpenCamera**
 
 OpenCamera is an open source camera application project by Mark Harman.

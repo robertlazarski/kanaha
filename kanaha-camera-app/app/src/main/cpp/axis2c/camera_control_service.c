@@ -129,7 +129,12 @@ static int send_intent_broadcast_secure(
     }
 
     if (pid == 0) {
-        /* Child process - execute am command */
+        /* Child process - execute am command. Route am's chatter
+         * ("Broadcasting: Intent ...", "Broadcast completed: result=0") to
+         * stderr: the MCP stdio server owns stdout for JSON-RPC, and a strict
+         * client rejects a stream that carries anything else. The exit status
+         * is what the parent consumes. */
+        dup2(STDERR_FILENO, STDOUT_FILENO);
         execvp("/system/bin/am", argv);
         /* If execvp returns, it failed */
         LOGE("execvp() failed: %s", strerror(errno));
@@ -180,10 +185,33 @@ static void generate_operation_id(char* buffer, size_t buffer_size) {
  * @param num_extras    Number of extras
  * @return 0 on success, -1 on failure (including Java-side validation failures)
  */
+static int send_intent_and_wait_for_response_ex(
+    const char* operation_id,
+    const intent_extra_t* extras,
+    int num_extras,
+    int keep_response_file
+);
+
 static int send_intent_and_wait_for_response(
     const char* operation_id,
     const intent_extra_t* extras,
     int num_extras
+) {
+    return send_intent_and_wait_for_response_ex(operation_id, extras, num_extras, 0);
+}
+
+/*
+ * As above, but with keep_response_file set the response file is left in place
+ * even when the Java side reported success:false, so a caller that passes the
+ * Java response through (describe_clip) can hand the client the reason and the
+ * stable error code instead of a generic failure. Such a caller must unlink the
+ * file itself.
+ */
+static int send_intent_and_wait_for_response_ex(
+    const char* operation_id,
+    const intent_extra_t* extras,
+    int num_extras,
+    int keep_response_file
 ) {
     LOGI("send_intent_and_wait_for_response called with operation_id: %s", operation_id);
 
@@ -228,7 +256,7 @@ static int send_intent_and_wait_for_response(
                     if (strstr(response_buffer, "\"success\": false") ||
                         strstr(response_buffer, "\"success\":false")) {
                         LOGE("Java layer returned failure - rejecting: %s", response_buffer);
-                        unlink(response_file);
+                        if (!keep_response_file) unlink(response_file);
                         return -1;
                     }
                     LOGI("Response indicates success, continuing");
@@ -344,6 +372,45 @@ static long long extract_json_long(const char* json, const char* key, long long 
 }
 
 /* Returns 1 for JSON true, 0 for JSON false, default_value if key absent */
+/*
+ * Extract a JSON array of numbers into a comma-separated string for an Intent
+ * extra ("positions":[0.1,0.5,0.9] -> "0.1,0.5,0.9"). Every element must be a
+ * number in [0, 1]; at most max_items. Returns the item count, 0 when the key
+ * is absent, -1 when the array is malformed or a value is out of range.
+ */
+static int extract_json_number_array_csv(const char* json, const char* key,
+                                         char* out, size_t out_size, int max_items) {
+    char search_key[128];
+    snprintf(search_key, sizeof(search_key), "\"%s\":", key);
+    const char* p = strstr(json, search_key);
+    if (!p) { out[0] = '\0'; return 0; }
+    p += strlen(search_key);
+    while (*p == ' ') p++;
+    if (*p != '[') return -1;
+    p++;
+    int count = 0;
+    size_t used = 0;
+    out[0] = '\0';
+    for (;;) {
+        while (*p == ' ') p++;
+        if (*p == ']') break;
+        char* endp;
+        double v = strtod(p, &endp);
+        if (endp == p) return -1;
+        if (!(v >= 0.0 && v <= 1.0)) return -1;
+        if (++count > max_items) return -1;
+        int n = snprintf(out + used, out_size - used, "%s%.6g", used ? "," : "", v);
+        if (n < 0 || (size_t)n >= out_size - used) return -1;
+        used += (size_t)n;
+        p = endp;
+        while (*p == ' ') p++;
+        if (*p == ',') { p++; continue; }
+        if (*p == ']') break;
+        return -1;
+    }
+    return count;
+}
+
 static int extract_json_bool(const char* json, const char* key, int default_value) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\":", key);
@@ -383,6 +450,9 @@ int camera_device_sftp_transfer_impl(const char* storage_server_id, const char* 
 int camera_device_cleanup_files_impl(const char* cleanup_policy, int days_threshold, const char* file_pattern);
 int camera_device_delete_files_impl(const char* pattern);
 int camera_device_list_files_impl(const char* pattern, char* json_response, size_t response_size);
+int camera_device_describe_clip_impl(const char* video_filename, int frame_count, const char* positions_csv,
+                                     int write_sidecar, int max_dimension,
+                                     char* json_response, size_t response_size);
 
 /* ========================================================================
  * SERVICE ENTRY POINT - Matches Axis2/C server-side pattern
@@ -557,6 +627,52 @@ int camera_control_service_invoke_json_impl(
             create_success_response(json_response, response_size, "Cleanup completed");
         } else {
             create_error_response(json_response, response_size, "Failed to cleanup files");
+        }
+    }
+    else if (strcmp(action, "describe_clip") == 0 || strcmp(action, "describeClip") == 0) {
+        /* On-device clip description; the model runs in Java (see
+         * docs/GOOGLE_NANO_INTEGRATION.md). Validation here mirrors the Java
+         * side: exact file name, bounded frame count, positions in [0, 1]. */
+        char video_filename[256] = "";
+        char positions_csv[128] = "";
+        int frame_count = extract_json_int(json_request, "frame_count", 3);
+        int max_dimension = extract_json_int(json_request, "max_dimension", 1280);
+        int write_sidecar = extract_json_bool(json_request, "write_sidecar", 1);
+
+        if (!extract_json_string(json_request, "video_filename", video_filename, sizeof(video_filename)) ||
+            video_filename[0] == '\0') {
+            create_error_response(json_response, response_size, "Missing required field: video_filename");
+            return -1;
+        }
+        if (strstr(video_filename, "..") || strchr(video_filename, '/') || strchr(video_filename, '\\') ||
+            strchr(video_filename, '*')) {
+            create_error_response(json_response, response_size,
+                "video_filename must be an exact file name with no path or pattern");
+            return -1;
+        }
+        if (frame_count < 1) frame_count = 1;
+        if (frame_count > 8) frame_count = 8;
+        if (max_dimension < 64) max_dimension = 64;
+        if (max_dimension > 4096) max_dimension = 4096;
+
+        int n_positions = extract_json_number_array_csv(json_request, "positions",
+                                                        positions_csv, sizeof(positions_csv), 8);
+        if (n_positions < 0) {
+            create_error_response(json_response, response_size,
+                "positions must be an array of at most 8 numbers in [0, 1]");
+            return -1;
+        }
+        if (n_positions > 0 && n_positions != frame_count) {
+            create_error_response(json_response, response_size,
+                "positions length must equal frame_count");
+            return -1;
+        }
+
+        int result = camera_device_describe_clip_impl(video_filename, frame_count, positions_csv,
+                                                      write_sidecar, max_dimension,
+                                                      json_response, response_size);
+        if (result != 0) {
+            create_error_response(json_response, response_size, "Failed to describe clip");
         }
     }
     else if (strcmp(action, "play_tone") == 0 || strcmp(action, "playTone") == 0) {
@@ -1075,6 +1191,51 @@ int camera_device_list_files_impl(const char* pattern, char* json_response, size
 
     LOGI("Files listed successfully via secure IPC");
     return 0;
+}
+
+int camera_device_describe_clip_impl(const char* video_filename, int frame_count, const char* positions_csv,
+                                     int write_sidecar, int max_dimension,
+                                     char* json_response, size_t response_size) {
+    LOGI("camera_device_describe_clip_impl called: file=%s frames=%d", video_filename, frame_count);
+
+    if (!json_response || response_size == 0) return -1;
+
+    char operation_id[64];
+    generate_operation_id(operation_id, sizeof(operation_id));
+
+    char frame_count_str[16], max_dim_str[16];
+    snprintf(frame_count_str, sizeof(frame_count_str), "%d", frame_count);
+    snprintf(max_dim_str, sizeof(max_dim_str), "%d", max_dimension);
+
+    intent_extra_t extras[] = {
+        {"--es", "action", "describe_clip"},
+        {"--es", "operation_id", operation_id},
+        {"--es", "video_filename", video_filename},
+        {"--es", "frame_count", frame_count_str},
+        {"--es", "positions", positions_csv},
+        {"--es", "write_sidecar", write_sidecar ? "1" : "0"},
+        {"--es", "max_dimension", max_dim_str}
+    };
+    /* The Java side answers with the full response (or a failure with a
+     * stable code); a failed status here means the response file said
+     * success:false, and the file still holds the reason. Read it either way. */
+    int result = send_intent_and_wait_for_response_ex(operation_id, extras, 7, 1);
+
+    char response_file[256];
+    snprintf(response_file, sizeof(response_file), "%s%s.json", RESPONSE_FILE_PREFIX, operation_id);
+    FILE* file = fopen(response_file, "r");
+    if (!file) {
+        LOGE("describe_clip: no response file (%s)", response_file);
+        return -1;
+    }
+    size_t bytes_read = fread(json_response, 1, response_size - 1, file);
+    fclose(file);
+    unlink(response_file);
+    if (bytes_read == 0) return -1;
+    json_response[bytes_read] = '\0';
+
+    LOGI("describe_clip: response %s", result == 0 ? "ok" : "reported failure");
+    return 0;   /* the caller passes the JSON through, success or failure */
 }
 
 /*

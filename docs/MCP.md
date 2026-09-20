@@ -41,7 +41,7 @@ language. No curl, no certificates, no URL construction.
 
 ---
 
-## MCP Tools (9 camera operations)
+## MCP Tools (10 camera operations)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -54,6 +54,7 @@ language. No curl, no certificates, no URL construction.
 | `sftpTransfer` | Transfer to storage server | `storage_server_id`, `video_filename` |
 | `configure` | Set resolution, fps, codec | `resolution`, `fps`, `codec` |
 | `cleanupFiles` | Clean up transferred files | `cleanup_policy`, `days_threshold` |
+| `describeClip` | Describe a finished recording from sampled frames with the on-device model (nano flavor; see `GOOGLE_NANO_INTEGRATION.md`); writes `<basename>.kanaha.json` | `video_filename` (required), `frame_count`, `positions`, `write_sidecar`, `max_dimension` |
 
 All tools have full `inputSchema` with parameter types, descriptions, and
 defaults. Claude reads the schema and constructs valid requests without
@@ -328,7 +329,7 @@ Three native binaries are produced:
 | File | Purpose |
 |------|---------|
 | `axis2c/kanaha_mcp.h` | Public API (`kanaha_run_mcp_stdio`) |
-| `axis2c/kanaha_mcp.c` | MCP stdio loop, 9-tool catalog, dispatch |
+| `axis2c/kanaha_mcp.c` | MCP stdio loop, 10-tool catalog, dispatch |
 | `axis2c/kanaha_mcp_main.c` | Standalone binary entry point |
 | `axis2c/camera_control_service.c` | Camera operations (shared with HTTP server) |
 | `services/CameraControlService/services.xml` | Operation definitions with `mcpInputSchema` |

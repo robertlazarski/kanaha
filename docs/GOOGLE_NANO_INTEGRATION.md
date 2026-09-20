@@ -13,12 +13,22 @@ Java because the API is Java/Kotlin only. A second, optional operation,
 kanaha-audio can then match audio cues to visual content across cameras without
 anyone scrubbing footage.
 
-Status: design, ready to implement. API is beta and English-only. Supported
+Status: **phase 1 implemented 2026-09-20** and verified on a Pixel 10 Pro XL
+(Android 17, locked bootloader, AICore present): `describeClip` over MCP and
+over HTTPS/mTLS, three frames of a real 4K clip described in about 11 s,
+sidecar written, `listFiles` flags described clips, `deleteFiles` and
+`sftpTransfer` carry the sidecar, the `foss` flavor reports `unavailable`.
+Three details differ from the design below and are recorded in "Deviations
+from this design" at the end. API is beta and English-only. Supported
 devices are Google's list (Pixel 9, 10 and 11 series plus other manufacturers);
 unsupported devices return a clean `unavailable` status and everything else
 keeps working. The proprietary client library is confined to an opt-in Gradle
-flavor; the default build stays fully open and reports `unavailable`. The
-repository's Apache 2.0 license is unchanged.
+flavor; the default build stays fully open and reports `unavailable`.
+**Licensing:** this app is GPLv3+ because OpenCamera is. A GPL program may not
+be distributed with a proprietary library compiled into it, so the `nano`
+build is for private use only and is never published as an APK; the `foss`
+build is the distributable one. See "Security and privacy" for the rule and
+"What this gives up" for the separate-process design that would lift it.
 
 ## The problem this solves
 
@@ -214,8 +224,10 @@ client cannot tell the flavors apart except by the status code — which is the
 intended contract: the operation exists everywhere, and the model is present
 where the device provides it.
 
-Release artifacts are named by flavor (`kanaha-camera-foss-<ver>.apk`,
-`kanaha-camera-nano-<ver>.apk`). CI builds both; the instrumented tests for
+Only the `foss` APK is a release artifact (`kanaha-camera-foss-<ver>.apk`).
+The `nano` APK is built locally for the developer's own devices and is never
+published — see the license rule under "Security and privacy". CI builds both
+to keep them compiling, but archives only `foss`; the instrumented tests for
 `describeClip` run against `nano` on a supported device and assert
 `unavailable` against `foss` on any device.
 
@@ -331,21 +343,41 @@ operation and can call it after `stopRecording`.
 ## Security and privacy
 
 - Inputs cross the same validated path as every other operation. `video_filename`
-  is validated in both C and Java; `positions` and `frame_count` are clamped.
+  is validated in both C and Java, `frame_count` and `max_dimension` are clamped
+  to their ranges, and `positions` outside [0, 1] or of the wrong length are
+  refused rather than corrected.
 - Frames are handed to the AICore system service on the same device. No network
   permission is used by this feature; the app declares none for it.
 - Descriptions are derived data about video the user already chose to record.
   They live next to the video, move with it over SFTP, and are deleted with it.
   Treat a `.kanaha.json` with the same care as its `.mp4`.
-- The ML Kit client is a closed-source Google library distributed through
-  Google's Maven repository under Google's API and ML Kit terms, which permit
-  shipping it inside an app. It is present only in the `nano` flavor. Record it
-  in `docs/LEGAL.md` as a third-party dependency alongside the existing ones,
-  and add "Gemini", "Gemini Nano" and "ML Kit" to `TRADEMARKS.md` as Google's
-  marks used nominatively, never in an app or feature name. The repository's
-  license does not change: Apache 2.0 permits linking proprietary libraries,
-  and the `NOTICE` file is unaffected because no Apache-licensed third-party
-  code is added.
+- **License: GPLv3+, and it binds here.** Kanaha Camera is GPLv3+ because it
+  incorporates OpenCamera (`LICENSE`, `docs/LEGAL.md`). The ML Kit client is a
+  proprietary Google library compiled into the `nano` APK's process. Google's
+  terms permit shipping it inside an app; the GPL does not permit distributing
+  a GPL program with a non-GPL-compatible library linked into it, and no linking
+  exception can be added because the OpenCamera copyright is not this
+  project's to license. The GPL's system-library exception covers AICore, which
+  is part of the platform, not a client library bundled in the APK. Therefore:
+  - the `foss` APK contains no proprietary code and may be distributed;
+  - the `nano` APK may be **built and used privately** (the GPL restricts
+    distribution, not use) and is **never published, released or handed to a
+    third party** — no store listing, no release artifact;
+  - publishing the `nano` flavor's source and build configuration is fine.
+  Record the client in `docs/LEGAL.md` with this distribution rule, and add
+  "Gemini", "Gemini Nano" and "ML Kit" to `TRADEMARKS.md` as Google's marks
+  used nominatively, never in an app or feature name.
+- **The way to lift the restriction is the repository's own rule.** The
+  Axis2/C service stays a separate program from OpenCamera by talking to it
+  across a process boundary (see `CPP_AND_JAVA_DESIGN.md`, "the licence
+  boundary"). Apply the same rule to the model client: a small separate app,
+  its own process and its own license, holds the ML Kit client and offers one
+  operation, *describe these images*. The camera app extracts frames with
+  framework APIs (`FrameSampler`), hands them over by content URI, and receives
+  the text back through `CameraControlReceiver`. Flavors then disappear; the
+  camera app reports `unavailable` when the helper is not installed. The GPL
+  program contains no proprietary code and the helper is distributable under
+  its own terms. This is the recommended phase 1b.
 - Google's generative AI APIs are subject to Google's Generative AI Prohibited
   Use Policy. Describing the user's own recordings is within it; the maintainer
   should read the current policy once when adding the dependency and link it
@@ -411,6 +443,43 @@ What is kept is the contract: Axis2/C defines the operation, its schema and
 validation, and both front doors. A caller cannot tell which backend produced
 the description.
 
+### Where Nano sits among the models the Kanaha apps run
+
+Two axes matter: what a model does, and how it is deployed. Whisper and llama
+share a deployment (a file you ship, linked through one ggml, called from C on
+the CPU) and differ in task; Nano differs from both in deployment and overlaps
+llama only at the edges of its task.
+
+| Model | App | Task | Whose model | How it runs | Hardware |
+|---|---|---|---|---|---|
+| Whisper | kanaha-audio | speech to text, keyword timestamps | the app's, a file under `files/models` | whisper.cpp, C bridge, in-process | CPU (NEON) |
+| YAMNet | kanaha-audio | audio event classification | the app's, a file | TensorFlow Lite C API, C bridge, in-process | CPU |
+| llama (planned) | kanaha-audio | language; grammar-constrained tool calls | the app's, a file | llama.cpp, C bridge, same ggml as Whisper | CPU |
+| Gemini Nano | kanaha-camera | image description (this document); text tasks available | Google's, inside the AICore system service | ML Kit Java client, across the Intent boundary | the device's ML accelerator |
+| vision-language model (candidate) | kanaha-camera | image description, the `foss` backend | the app's, a GGUF file | ggml, C bridge, in-process | CPU |
+
+Consequences that follow from the deployment column, not from the task:
+
+- **Memory.** A model the app ships is resident in the app's process; a
+  multi-billion-parameter model at 4-bit is several gigabytes and Android's
+  low-memory killer treats it as the app's. Nano's weights are loaded and
+  shared by the system; the app pays for a client library.
+- **Thermal.** In-process models run on the CPU cores and heat the phone under
+  sustained load. Nano runs on the accelerator with the system pacing it.
+- **Control.** For a model the app ships, the app chooses the weights, the
+  quantization, the prompt, the grammar and the device. For Nano the app
+  chooses none of these; Google decides the model, its size, its languages and
+  which devices have it. That is the trade this document makes for one
+  operation, and the reason the orchestrator model stays the app's own.
+- **Licence.** A model file is data; the ML Kit client is proprietary code
+  linked into the process, which is why the licence rule above exists.
+- **Portability.** Every in-process model builds and runs on a Linux host; Nano
+  exists only on Google's device list.
+
+Numbers Google publishes for Nano's throughput describe Google's own use of the
+model and cannot be measured from a third-party app; they are not repeated
+here. Nano's parameter count is not published.
+
 **The C backend.** ggml runs small vision-language models in-process — the
 same recipe as the whisper bridge and the planned llama bridge (one ggml, a
 `<lib>_bridge.c`, one mutex, models under `files/models`). A ~2B-parameter
@@ -433,6 +502,45 @@ kanaha-audio's `docs/CPP_AND_JAVA_DESIGN.md` recipe, dispatched from the same
 `describe_clip` action before the intent path is tried. The response shape, the
 sidecar and the MCP schema are the same for both; `model` in the response names
 which one answered.
+
+## Verify before coding
+
+Two facts in this document come from Google's documentation as read on
+2026-09-20 and must be re-checked against the current page when
+implementation starts, not trusted from here:
+
+1. **The client artifact version.** `com.google.mlkit:genai-image-description:1.0.0-beta1`
+   is a beta coordinate; Google may have published a newer beta or a stable
+   release. Use the current one and update this document.
+2. **The locked-bootloader requirement.** Google's page states the feature is
+   unsupported on devices with an unlocked bootloader. Confirm it still says so,
+   because it decides whether development phones can exercise the `nano` flavor
+   at all, and therefore how the instrumented tests are run.
+
+## Deviations from this design (as implemented)
+
+- **The sidecar lives in the app's own external files directory**, next to
+  `kanaha_recording_start.json`, not next to the video. OpenCamera records into
+  `DCIM/OpenCamera`, where scoped storage does not let the app write a
+  non-media file. The response and `listFiles` carry the sidecar's path, and
+  `deleteFiles` and `sftpTransfer` match it by basename.
+- **`recording_start_ms` is matched by time, not name.** The start sidecar's
+  `clip_name` is the caller's label; OpenCamera names the file by timestamp.
+  The start is copied when the file's modification time minus its duration is
+  within a minute of `recording_start_ms`, or when the names do match.
+- **The handler runs inline on the receiver's worker thread**, exactly like
+  `sftpTransfer`, rather than finishing the broadcast first. That is the
+  pattern the app already relies on and it stays within the C side's 20-minute
+  poll. Unknown duration (a one-frame capture) describes one frame at time 0
+  and says so in a `note` field instead of describing the same frame n times.
+- **The `nano` flavor sets `minSdkVersion 26`**: the ML Kit client declares
+  it and the manifest merger refuses 23. The `foss` flavor keeps 23.
+- **The model client must be built with the application context.** A
+  `BroadcastReceiver`'s context may not bind to services, and the client binds
+  to AICore; `ClipDescriber` uses `context.getApplicationContext()`.
+- **Found on the way, fixed:** the Intent child process (`am broadcast`)
+  inherited the MCP server's stdout and wrote two lines of chatter before
+  every JSON-RPC reply. The child's stdout is now redirected to stderr.
 
 ## Open questions
 

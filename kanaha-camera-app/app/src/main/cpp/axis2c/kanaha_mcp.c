@@ -164,6 +164,24 @@ static const char SCHEMA_SFTP_TRANSFER[] =
     "\"required\":[\"storage_server_id\",\"video_filename\"]"
     "}";
 
+static const char SCHEMA_DESCRIBE_CLIP[] =
+    "{"
+    "\"type\":\"object\","
+    "\"properties\":{"
+        "\"video_filename\":{\"type\":\"string\","
+            "\"description\":\"Exact file name of a finished recording in the video directory (no path, no pattern)\"},"
+        "\"frame_count\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":8,\"default\":3,"
+            "\"description\":\"How many frames to sample and describe\"},"
+        "\"positions\":{\"type\":\"array\",\"items\":{\"type\":\"number\",\"minimum\":0,\"maximum\":1},"
+            "\"description\":\"Fractions of the clip duration to sample; length must equal frame_count. Default: evenly spaced\"},"
+        "\"write_sidecar\":{\"type\":\"boolean\",\"default\":true,"
+            "\"description\":\"Write <basename>.kanaha.json next to the recording-start sidecar\"},"
+        "\"max_dimension\":{\"type\":\"integer\",\"default\":1280,"
+            "\"description\":\"Longest bitmap side before inference\"}"
+    "},"
+    "\"required\":[\"video_filename\"]"
+    "}";
+
 static const char SCHEMA_CONFIGURE[] =
     "{"
     "\"type\":\"object\","
@@ -248,6 +266,16 @@ static const kanaha_mcp_tool_t kanaha_mcp_tools[] = {
         "Transfer a video file to a remote storage server via SFTP with Ed25519 "
         "SSH key authentication. Also transfers the companion sidecar metadata file.",
         SCHEMA_SFTP_TRANSFER
+    },
+    {
+        "describeClip",
+        "Describe a finished recording from a few sampled frames using the on-device "
+        "model (Gemini Nano through ML Kit, nano build flavor only; English). Nothing "
+        "leaves the device. Writes <basename>.kanaha.json beside the recording-start "
+        "sidecar so an EDL can be cut from metadata. Failure codes: unavailable "
+        "(device, build or API level), downloading (retry later), not_found, "
+        "frame_extract_failed, inference_timeout.",
+        SCHEMA_DESCRIBE_CLIP
     },
     {
         "configure",

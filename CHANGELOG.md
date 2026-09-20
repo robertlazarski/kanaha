@@ -4,8 +4,23 @@ All notable changes to Kanaha are documented here.
 
 ## [Unreleased]
 
+### New Features
+
+- **`describeClip`** — On-device description of a finished recording from a few
+  sampled frames, through Gemini Nano via Google's ML Kit GenAI Image
+  Description API. Writes `<basename>.kanaha.json` beside the recording-start
+  sidecar; `listFiles` flags described clips (`described`), and `deleteFiles`
+  and `sftpTransfer` carry the sidecar with its clip. `getStatus` gains an
+  `on_device_model` block. The proprietary client lives in a new opt-in `nano`
+  build flavor (`minSdkVersion 26`); the default `foss` flavor is unchanged
+  and reports `unavailable`. See [GOOGLE_NANO_INTEGRATION.md](docs/GOOGLE_NANO_INTEGRATION.md).
+
 ### Bug Fixes
 
+- **MCP stdout hygiene** — The `am broadcast` child process inherited the MCP
+  server's stdout and printed two lines of chatter before every JSON-RPC
+  reply; a strict MCP client would reject the stream. The child's stdout now
+  goes to stderr.
 - **HTTP requests reach the service again** — The engine now names the
   operation from the URL as `"operation"` in the request, while this service
   read only `"action"`, so every HTTPS call failed with `Service error`. The

@@ -74,6 +74,15 @@
             <parameter name="contentType">application/json</parameter>
         </operation>
 
+        <operation name="describeClip">
+            <parameter name="mcpDescription">Describe a finished recording from a few sampled frames with the on-device model (Gemini Nano via ML Kit; nano build flavor; English). Nothing leaves the device. Writes a per-clip .kanaha.json sidecar. Returns unavailable on other builds and devices.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"video_filename":{"type":"string","description":"Exact file name in the video directory"},"frame_count":{"type":"integer","minimum":1,"maximum":8,"default":3},"positions":{"type":"array","items":{"type":"number","minimum":0,"maximum":1},"description":"Fractions of duration; length must equal frame_count"},"write_sidecar":{"type":"boolean","default":true},"max_dimension":{"type":"integer","default":1280}},"required":["video_filename"]}</parameter>
+            <messageReceiver class="axis2_json_rpc_msg_recv"/>
+            <parameter name="RESTMethod">POST</parameter>
+            <parameter name="RESTLocation">/describeClip</parameter>
+            <parameter name="contentType">application/json</parameter>
+        </operation>
+
         <operation name="sftpTransfer">
             <parameter name="mcpDescription">Transfer a video file to a remote storage server via SFTP with Ed25519 SSH key auth. Also transfers companion sidecar metadata.</parameter>
             <parameter name="mcpInputSchema">{"type":"object","properties":{"storage_server_id":{"type":"string","description":"Destination server ID"},"video_filename":{"type":"string","description":"Video file to transfer"},"destination_folder":{"type":"string","description":"Remote destination folder"}},"required":["storage_server_id","video_filename"]}</parameter>

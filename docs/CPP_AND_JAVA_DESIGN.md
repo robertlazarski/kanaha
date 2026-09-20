@@ -119,6 +119,18 @@ So Java is not where the Kanaha code *chose* to be; it is where the camera is.
 What Kanaha chose was to keep the C side a control plane rather than a
 reimplementation.
 
+One more thing runs from Java for the same reason: `describeClip`, the
+on-device clip description through Gemini Nano (`docs/GOOGLE_NANO_INTEGRATION.md`).
+Google's ML Kit client has no C surface, so the model call lives in
+`ClipDescriber`, one class per build flavor, and the C side sees one more
+action name and one pass-through response. It is the only model the camera
+app runs, and it is opt-in: the default `foss` build carries no client and
+reports `unavailable`. The flavor split is also a licence line: Google's client
+is proprietary and this app is GPLv3, so the `nano` build is used privately and
+never distributed, and the intended end state moves the client into a separate
+helper app across a process boundary — the same rule that keeps the Axis2/C
+side and OpenCamera separate programs (see "the licence boundary" below).
+
 ## The seam, in detail
 
 The round trip for one `startRecording`:

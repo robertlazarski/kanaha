@@ -352,6 +352,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     case "playTone":
                         response = handlePlayTone(context, intent);
                         break;
+                    case "describe_clip":
+                    case "describeClip":
+                        response = handleDescribeClip(context, intent);
+                        break;
                     default:
                         Log.e(TAG, "Unknown action: " + action);
                         response = createErrorResponse(operationId, "Unknown action: " + action);
@@ -522,6 +526,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
             response.put("device_model", android.os.Build.MODEL);
             response.put("device_manufacturer", android.os.Build.MANUFACTURER);
 
+            // On-device model status: present in every build; the foss flavor
+            // and unsupported devices report "unavailable".
+            response.put("on_device_model", onDeviceModelStatus(context));
+
             if (mainActivity == null) {
                 response.put("success", false);
                 response.put("error", "MainActivity not available");
@@ -633,12 +641,15 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
         // Find video files to transfer
         File videoDir = getVideoDirectory(context);
-        final File[] filesToTransfer = findFilesToTransfer(videoDir, videoFilename);
+        final File[] videosToTransfer = findFilesToTransfer(videoDir, videoFilename);
 
-        if (filesToTransfer == null || filesToTransfer.length == 0) {
+        if (videosToTransfer == null || videosToTransfer.length == 0) {
             return createErrorResponse(operationId,
                     "No files found matching: " + videoFilename);
         }
+
+        // A clip's description sidecar (<basename>.kanaha.json) travels with it.
+        final File[] filesToTransfer = withDescriptionSidecars(context, videosToTransfer);
 
         // Execute SFTP transfer in background thread
         java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -710,7 +721,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
         try {
             File videoDir = getVideoDirectory(context);
-            File[] filesToDelete = findFilesToDelete(videoDir, pattern);
+            File[] filesToDelete = withDescriptionSidecars(context, findFilesToDelete(videoDir, pattern));
 
             if (filesToDelete == null || filesToDelete.length == 0) {
                 JSONObject response = new JSONObject();
@@ -799,6 +810,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     fileInfo.put("size", file.length());
                     fileInfo.put("modified", sdf.format(new java.util.Date(file.lastModified())));
                     fileInfo.put("modified_timestamp", file.lastModified());
+                    File sidecar = descriptionSidecarFor(context, file);
+                    fileInfo.put("described", sidecar.exists());
                     fileList.put(fileInfo);
                     totalSize += file.length();
                 }
@@ -1635,6 +1648,282 @@ public class CameraControlReceiver extends BroadcastReceiver {
      *   duration_ms  - tone duration in ms (default 150)
      *   start_at     - UTC epoch ms to fire; 0 or absent = play immediately
      */
+    /* ====================================================================
+     * describeClip — on-device clip description (docs/GOOGLE_NANO_INTEGRATION.md)
+     *
+     * Reads a finished recording, samples a few frames, describes each with the
+     * on-device model, writes <basename>.kanaha.json beside the recording-start
+     * sidecar, and returns the descriptions. Needs no foreground activity. The
+     * model work is in ClipDescriber, which differs per build flavor; this
+     * handler is identical in both and only sees status strings.
+     * ==================================================================== */
+
+    private static final String DESCRIPTION_SIDECAR_SUFFIX = ".kanaha.json";
+
+    private JSONObject handleDescribeClip(Context context, Intent intent) throws JSONException {
+        final String operationId = intent.getStringExtra("operation_id");
+        final String videoFilename = intent.getStringExtra("video_filename");
+        final String frameCountStr = intent.getStringExtra("frame_count");
+        final String positionsCsv = intent.getStringExtra("positions");
+        final String writeSidecarStr = intent.getStringExtra("write_sidecar");
+        final String maxDimStr = intent.getStringExtra("max_dimension");
+
+        Log.i(TAG, String.format("Describe clip: file=%s frames=%s positions=%s",
+                videoFilename, frameCountStr, positionsCsv));
+
+        // Security validation: an exact file name, no path, no pattern.
+        String validationError = SecurityValidator.validateFilenameOrPattern(videoFilename, "video_filename");
+        if (validationError != null) {
+            Log.w(TAG, "Security: describeClip rejected - " + validationError);
+            return createErrorResponse(operationId, validationError);
+        }
+        if (videoFilename.contains("*")) {
+            return createErrorResponse(operationId, "video_filename must be an exact file name, not a pattern");
+        }
+
+        int frameCount = FrameSampler.DEFAULT_FRAMES;
+        if (frameCountStr != null && !frameCountStr.isEmpty()) {
+            try { frameCount = Integer.parseInt(frameCountStr.trim()); } catch (NumberFormatException ignored) {}
+        }
+        frameCount = Math.max(FrameSampler.MIN_FRAMES, Math.min(FrameSampler.MAX_FRAMES, frameCount));
+
+        int maxDimension = FrameSampler.DEFAULT_MAX_DIMENSION;
+        if (maxDimStr != null && !maxDimStr.isEmpty()) {
+            try { maxDimension = Integer.parseInt(maxDimStr.trim()); } catch (NumberFormatException ignored) {}
+        }
+        maxDimension = Math.max(64, Math.min(4096, maxDimension));
+
+        boolean writeSidecar = writeSidecarStr == null || writeSidecarStr.isEmpty()
+                || writeSidecarStr.equals("1") || writeSidecarStr.equalsIgnoreCase("true");
+
+        double[] positions;
+        try {
+            positions = FrameSampler.parsePositions(positionsCsv, frameCount);
+        } catch (IllegalArgumentException e) {
+            return createErrorResponse(operationId, e.getMessage());
+        }
+        if (positions == null) positions = FrameSampler.evenPositions(frameCount);
+
+        // Resolve the clip through the same lookup the other file operations use.
+        File videoDir = getVideoDirectory(context);
+        File[] matches = findFilesToTransfer(videoDir, videoFilename);
+        if (matches == null || matches.length != 1 || !matches[0].isFile()) {
+            JSONObject r = createErrorResponse(operationId, "Video not found: " + videoFilename);
+            r.put("code", OnDeviceModel.CODE_NOT_FOUND);
+            return r;
+        }
+        final File video = matches[0];
+
+        // Model availability. Everything below API 26, every unsupported device
+        // and the foss build answer here.
+        try (ClipDescriber describer = new ClipDescriber(context)) {
+            String status = describer.status();
+            if (OnDeviceModel.DOWNLOADABLE.equals(status)) {
+                describer.startDownload();
+                JSONObject r = createErrorResponse(operationId, "On-device model is being downloaded; retry later");
+                r.put("code", OnDeviceModel.CODE_DOWNLOADING);
+                r.put("download_percent", OnDeviceModel.getDownloadPercent());
+                return r;
+            }
+            if (OnDeviceModel.DOWNLOADING.equals(status)) {
+                JSONObject r = createErrorResponse(operationId, "On-device model download in progress; retry later");
+                r.put("code", OnDeviceModel.CODE_DOWNLOADING);
+                r.put("download_percent", OnDeviceModel.getDownloadPercent());
+                return r;
+            }
+            if (!OnDeviceModel.AVAILABLE.equals(status)) {
+                JSONObject r = createErrorResponse(operationId,
+                        ClipDescriber.BUILT_WITH_MODEL
+                                ? "On-device model unavailable on this device"
+                                : "This build carries no on-device model (foss flavor)");
+                r.put("code", OnDeviceModel.CODE_UNAVAILABLE);
+                return r;
+            }
+
+            // Frames, then inference, sequentially on this worker thread. The
+            // outer dispatcher writes the response file and finishes the
+            // broadcast when we return, as it does for every operation; the C
+            // side polls for up to 20 minutes, which covers eight frames.
+            long durationMs = FrameSampler.durationMs(video);
+            boolean durationUnknown = durationMs <= 0;
+            if (durationUnknown) {
+                // No usable duration in the container (a one-frame screen
+                // capture, a truncated file): every position would map to
+                // time 0 and describe the same frame several times. Describe
+                // it once and say why.
+                positions = new double[]{0.0};
+            }
+            List<FrameSampler.Frame> frames;
+            try {
+                frames = FrameSampler.sample(video, positions, maxDimension);
+            } catch (Exception e) {
+                Log.w(TAG, "Frame extraction failed for " + video.getName(), e);
+                JSONObject r = createErrorResponse(operationId, "Could not extract frames: " + e.getMessage());
+                r.put("code", OnDeviceModel.CODE_FRAME_EXTRACT_FAILED);
+                return r;
+            }
+
+            org.json.JSONArray frameArray = new org.json.JSONArray();
+            long inferenceStart = System.currentTimeMillis();
+            try {
+                for (FrameSampler.Frame frame : frames) {
+                    String text;
+                    try {
+                        text = describer.describe(frame.bitmap);
+                    } catch (java.util.concurrent.TimeoutException e) {
+                        JSONObject r = createErrorResponse(operationId,
+                                "Inference timed out on the frame at " + frame.timeMs + " ms");
+                        r.put("code", OnDeviceModel.CODE_INFERENCE_TIMEOUT);
+                        return r;
+                    }
+                    JSONObject f = new JSONObject();
+                    f.put("position", frame.position);
+                    f.put("time_ms", frame.timeMs);
+                    f.put("description", text);
+                    frameArray.put(f);
+                }
+            } finally {
+                for (FrameSampler.Frame frame : frames) frame.bitmap.recycle();
+            }
+            long inferenceMs = System.currentTimeMillis() - inferenceStart;
+
+            JSONObject response = new JSONObject();
+            response.put("success", true);
+            response.put("operation_id", operationId);
+            response.put("video_filename", video.getName());
+            response.put("duration_ms", durationUnknown ? -1 : durationMs);
+            if (durationUnknown) {
+                response.put("note", "duration unknown; one frame described at time 0");
+            }
+            response.put("model", ClipDescriber.MODEL_ID);
+            response.put("language", ClipDescriber.LANGUAGE);
+            response.put("frames", frameArray);
+            response.put("inference_ms", inferenceMs);
+            response.put("timestamp", System.currentTimeMillis());
+
+            if (writeSidecar) {
+                File sidecar = writeDescriptionSidecar(context, video, durationUnknown ? 0 : durationMs, frameArray);
+                if (sidecar != null) response.put("sidecar", sidecar.getAbsolutePath());
+            }
+            return response;
+        } catch (Exception e) {
+            Log.e(TAG, "describeClip failed", e);
+            return createErrorResponse(operationId, "describeClip failed: " + e.getMessage());
+        }
+    }
+
+    /** getStatus.on_device_model: feature, status, and download progress. Cheap; bounded by the status timeout. */
+    private static JSONObject onDeviceModelStatus(Context context) throws JSONException {
+        JSONObject m = new JSONObject();
+        m.put("feature", OnDeviceModel.FEATURE);
+        m.put("built_with_model", ClipDescriber.BUILT_WITH_MODEL);
+        String status = OnDeviceModel.UNAVAILABLE;
+        try (ClipDescriber d = new ClipDescriber(context)) {
+            status = d.status();
+        } catch (Exception e) {
+            Log.w(TAG, "on-device model status failed: " + e.getMessage());
+        }
+        m.put("status", status);
+        m.put("download_percent", Math.max(0, OnDeviceModel.getDownloadPercent()));
+        return m;
+    }
+
+    /** Directory the sidecars live in: the app's own external files dir, next to kanaha_recording_start.json. */
+    private static File sidecarDirectory(Context context) {
+        File dir = context.getExternalFilesDir(null);
+        if (dir == null) dir = context.getFilesDir();
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    /** <video basename>.kanaha.json for a clip; the file may or may not exist. */
+    private static File descriptionSidecarFor(Context context, File video) {
+        String name = video.getName();
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name;
+        return new File(sidecarDirectory(context), base + DESCRIPTION_SIDECAR_SUFFIX);
+    }
+
+    /** The given clips plus every existing description sidecar that belongs to one of them. */
+    private static File[] withDescriptionSidecars(Context context, File[] videos) {
+        if (videos == null) return new File[0];
+        java.util.ArrayList<File> all = new java.util.ArrayList<>();
+        for (File v : videos) {
+            all.add(v);
+            File sc = descriptionSidecarFor(context, v);
+            if (sc.exists()) all.add(sc);
+        }
+        return all.toArray(new File[0]);
+    }
+
+    /**
+     * Write the per-clip description sidecar. Writes to a temp name and renames
+     * so a reader never sees a partial file. recording_start_ms is copied from
+     * kanaha_recording_start.json when that file names this clip, so a consumer
+     * can convert time_ms to wall-clock without a second lookup.
+     */
+    private static File writeDescriptionSidecar(Context context, File video, long durationMs, org.json.JSONArray frames) {
+        try {
+            JSONObject sidecar = new JSONObject();
+            sidecar.put("clip", video.getName());
+            long recordingStartMs = recordingStartFor(context, video, durationMs);
+            if (recordingStartMs > 0) sidecar.put("recording_start_ms", recordingStartMs);
+            sidecar.put("description_generated_ms", System.currentTimeMillis());
+            sidecar.put("model", ClipDescriber.MODEL_ID);
+            sidecar.put("language", ClipDescriber.LANGUAGE);
+            sidecar.put("frames", frames);
+
+            File target = descriptionSidecarFor(context, video);
+            File tmp = new File(target.getParentFile(), target.getName() + ".tmp");
+            try (FileWriter fw = new FileWriter(tmp)) {
+                fw.write(sidecar.toString(2));
+            }
+            if (!tmp.renameTo(target)) {
+                Log.w(TAG, "Could not rename sidecar into place: " + target);
+                tmp.delete();
+                return null;
+            }
+            Log.i(TAG, "Description sidecar written: " + target.getAbsolutePath());
+            return target;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to write description sidecar (non-fatal)", e);
+            return null;
+        }
+    }
+
+    /**
+     * recording_start_ms from kanaha_recording_start.json when that file
+     * belongs to this clip, else 0. The start sidecar records the most recent
+     * recording and its clip_name is the caller's label, not the file name
+     * OpenCamera chose (VID_<timestamp>.mp4), so the name rarely matches.
+     * The reliable test is time: the file's modification time is the end of
+     * the recording, so start ≈ mtime − duration; accept within a minute.
+     */
+    private static long recordingStartFor(Context context, File video, long durationMs) {
+        try {
+            File f = new File(sidecarDirectory(context), "kanaha_recording_start.json");
+            if (!f.isFile()) return 0;
+            StringBuilder sb = new StringBuilder();
+            try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(f))) {
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+            }
+            JSONObject start = new JSONObject(sb.toString());
+            long startMs = start.optLong("recording_start_ms", 0);
+            if (startMs <= 0) return 0;
+            String clip = start.optString("clip_name", "");
+            String base = video.getName();
+            int dot = base.lastIndexOf('.');
+            if (dot > 0) base = base.substring(0, dot);
+            boolean nameMatches = !clip.isEmpty()
+                    && (clip.equals(video.getName()) || clip.equals(base) || video.getName().contains(clip));
+            long expectedStart = video.lastModified() - Math.max(0, durationMs);
+            boolean timeMatches = Math.abs(expectedStart - startMs) < 60_000L;
+            return (nameMatches || timeMatches) ? startMs : 0;
+        } catch (Exception ignored) {}
+        return 0;
+    }
+
     private JSONObject handlePlayTone(Context context, Intent intent) throws JSONException {
         String operationId = intent.getStringExtra("operation_id");
         int frequency  = intent.getIntExtra("frequency",  1000);
