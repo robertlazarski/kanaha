@@ -1,6 +1,6 @@
 # Android APK Building Guide
 
-This document provides comprehensive step-by-step instructions for building the Kanaha Camera App APK from source and installing it on any ARM64 Android device running API 21+ (Android 5.0 Lollipop or later). The same APK works across a wide range of devices—tested on hardware from 2017 Moto X4 to 2024 Pixel 9 Pro with no device-specific modifications.
+This document provides comprehensive step-by-step instructions for building the Kanaha Camera App APK from source and installing it on any ARM64 Android device running API 23+ (Android 6.0 Marshmallow or later; the `nano` flavour needs API 26). The same APK works across a wide range of devices—tested on hardware from a 2017 Moto X4 to a 2026 Pixel 10 Pro XL with no device-specific modifications.
 
 ---
 
@@ -533,16 +533,27 @@ cd ../../../..
 # Clean previous builds
 ./gradlew clean
 
-# Build debug APK for testing
+# Build debug APKs for testing — this builds BOTH product flavours
 ./gradlew assembleDebug
 
-# Or build release APK (requires signing configuration)
+# Or one flavour at a time
+./gradlew assembleFossDebug     # distributable build, no proprietary client
+./gradlew assembleNanoDebug     # adds the ML Kit description client, private use only
+
+# Or build release APKs (requires signing configuration)
 ./gradlew assembleRelease
 
-# APK output location:
-# Debug: app/build/outputs/apk/debug/app-debug.apk
-# Release: app/build/outputs/apk/release/app-release.apk
+# APK output locations (the flavour is part of the path — there is no
+# plain app-debug.apk since the flavours were added):
+# Debug:   app/build/outputs/apk/foss/debug/app-foss-debug.apk
+#          app/build/outputs/apk/nano/debug/app-nano-debug.apk
+# Release: app/build/outputs/apk/foss/release/app-foss-release.apk
 ```
+
+The `foss` flavour is the default (`isDefault = true`) and the one to publish.
+The `nano` flavour links Google's proprietary ML Kit GenAI client for
+`describeClip`; it is for private use only under GPL v3. See
+[GOOGLE_NANO_INTEGRATION.md](GOOGLE_NANO_INTEGRATION.md).
 
 **Build Variants:**
 - `debug` - Includes debugging symbols, not optimized, allows USB debugging
@@ -552,10 +563,10 @@ cd ../../../..
 
 ```bash
 # Check APK size (should be 10-15MB)
-ls -lh app/build/outputs/apk/debug/app-debug.apk
+ls -lh app/build/outputs/apk/foss/debug/app-foss-debug.apk
 
 # Check native library size (should be 5-7MB with all libraries linked)
-unzip -l app/build/outputs/apk/debug/app-debug.apk | grep libkanaha
+unzip -l app/build/outputs/apk/foss/debug/app-foss-debug.apk | grep libkanaha
 ```
 
 ---
@@ -645,7 +656,7 @@ adb devices
 # Should show: <serial>    device
 
 # Install debug APK
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/foss/debug/app-foss-debug.apk
 
 # Or install release APK
 adb install -r app/build/outputs/apk/release/app-release.apk
@@ -750,7 +761,7 @@ libkanaha-camera-control.so (arm64-v8a)
 
 ```bash
 # List native libraries in APK
-unzip -l app/build/outputs/apk/debug/app-debug.apk | grep "\.so$"
+unzip -l app/build/outputs/apk/foss/debug/app-foss-debug.apk | grep "\.so$"
 
 # Should show:
 # lib/arm64-v8a/libhttpd.so              (~10MB) - Apache httpd with Axis2/C (prebuilt)
@@ -765,7 +776,7 @@ unzip -l app/build/outputs/apk/debug/app-debug.apk | grep "\.so$"
 ```bash
 # Extract and check dependencies of the main httpd binary
 cd /tmp
-unzip ~/repos/kanaha/kanaha-camera-app/app/build/outputs/apk/debug/app-debug.apk lib/arm64-v8a/libhttpd.so
+unzip ~/repos/kanaha/kanaha-camera-app/app/build/outputs/apk/foss/debug/app-foss-debug.apk lib/arm64-v8a/libhttpd.so
 readelf -d lib/arm64-v8a/libhttpd.so | grep NEEDED
 ```
 
@@ -818,7 +829,7 @@ adb shell df /data
 adb uninstall org.kanaha.camera
 
 # Reinstall fresh
-adb install app/build/outputs/apk/debug/app-debug.apk
+adb install app/build/outputs/apk/foss/debug/app-foss-debug.apk
 ```
 
 ### Runtime Issues
@@ -1136,7 +1147,7 @@ adb shell sm list-disks
 ```bash
 # Complete installation flow (works on any ARM64 Android device):
 adb devices                                                  # Verify device connected
-adb install -r -d app/build/outputs/apk/debug/app-debug.apk  # -d allows downgrade
+adb install -r -d app/build/outputs/apk/foss/debug/app-foss-debug.apk  # -d allows downgrade
 adb shell am start -n org.kanaha.camera/.MainActivity
 adb logcat -s KanahaCamera:V                                 # Monitor startup
 
@@ -1162,7 +1173,7 @@ Kanaha is a standard Android application that uses standard Android APIs. It wor
 
 | Requirement | Details |
 |-------------|---------|
-| **Android Version** | 5.0+ (API 21) |
+| **Android Version** | 6.0+ (API 23); `nano` flavour 8.0+ (API 26) |
 | **Camera API** | Camera2 API support |
 | **Permissions** | Camera, Microphone, Storage, Internet |
 | **Developer Options** | USB Debugging enabled |
@@ -1177,7 +1188,7 @@ Kanaha is a standard Android application that uses standard Android APIs. It wor
 | **Motorola** | Moto X4 (2017) | Android 9 | Pass | Pass | Pass |
 | **Samsung** | Not yet tested | - | - | - | - |
 | **OnePlus** | Not yet tested | - | - | - | - |
-| **Other** | Any Android 5.0+ | - | Expected to work | Expected to work | Expected to work |
+| **Other** | Any Android 6.0+ | - | Expected to work | Expected to work | Expected to work |
 
 ### Why Google and Motorola Were Tested
 
@@ -1194,14 +1205,14 @@ The successful test on Moto X4 (2017) and Pixel 10 Pro XL (2025) demonstrates co
 **For Production Deployments:**
 
 1. **Primary Camera:** Use your best available device (highest resolution, best stabilization)
-2. **Secondary Cameras:** Any working Android 5.0+ device
+2. **Secondary Cameras:** Any working Android 6.0+ device
 3. **Budget Fleet:** Used devices from any manufacturer work fine
 
 **Practical Considerations:**
 - Larger batteries = longer recording sessions
 - More storage = more footage before transfer needed
 - Faster WiFi = quicker file transfers
-- Device age doesn't matter if it runs Android 5.0+
+- Device age doesn't matter if it runs Android 6.0+
 
 ---
 
@@ -1213,7 +1224,7 @@ The successful test on Moto X4 (2017) and Pixel 10 Pro XL (2025) demonstrates co
 - **Shell restart**: Run `source ~/.bashrc` or open a new terminal after setting environment variables
 
 **Device Requirements:**
-- Any ARM64 Android device running API 21+ (Android 5.0 Lollipop or later)
+- Any ARM64 Android device running API 23+ (Android 6.0 Marshmallow or later)
 - USB debugging enabled
 - Developer options unlocked
 - Minimum 2GB free storage for installation

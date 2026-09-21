@@ -3,7 +3,7 @@
 **Summary**: Kanaha gains MCP (Model Context Protocol) support, enabling AI
 assistants (Claude Desktop, Claude API, custom agents) to discover and control
 Android cameras as tools. The MCP server runs as a native ARM64 binary on the
-phone — 98 KB, no JVM, sub-50ms startup.
+phone — 117 KB, no JVM, sub-50ms startup.
 
 MCP is JSON-RPC 2.0. Three required methods: `initialize`, `tools/list`,
 `tools/call`. The transport is stdio (Claude Desktop launches the binary as a
@@ -67,7 +67,7 @@ documentation.
 ```
 Claude Desktop (MCP client)
     ↓ stdin (JSON-RPC 2.0)
-libkanaha_mcp.so (native ARM64 binary, 98 KB)
+libkanaha_mcp.so (native ARM64 binary, 117 KB)
     ↓ calls camera_control_service_invoke_json_impl()
 camera_control_service.c (action routing)
     ↓ fork/exec "am broadcast" (secure IPC, no shell)
@@ -82,7 +82,7 @@ Claude Desktop (displays result)
 
 The MCP binary (`libkanaha_mcp.so`) links only json-c + the camera service
 code — no Apache httpd, no OpenSSL, no Axis2/C framework. This keeps it at
-98 KB vs the full HTTP server at 4.8 MB.
+117 KB vs the full HTTP server at 9.4 MB.
 
 ---
 
@@ -94,7 +94,7 @@ Kanaha's MCP implementation follows the pattern established in the
 | | Financial Benchmark MCP | Kanaha Camera MCP |
 |---|---|---|
 | Binary | `financial-benchmark-mcp` | `libkanaha_mcp.so` |
-| Size | ~500 KB (links Axis2/C libs) | 98 KB (json-c only) |
+| Size | ~500 KB (links Axis2/C libs) | 117 KB (json-c only) |
 | Tools | 3 (portfolioVariance, monteCarlo, scenarioAnalysis) | 9 (camera operations) |
 | Dispatch | `finbench_*_json_only()` functions | `camera_control_service_invoke_json_impl()` |
 | Schemas | Static `finbench_mcp_tool_t[]` array | Static `kanaha_mcp_tool_t[]` array |
@@ -319,8 +319,8 @@ JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew assembleDebug
 
 Three native binaries are produced:
 - `libkanaha-camera-control.so` — shared library (5.6 MB)
-- `libkanaha_httpd.so` — HTTP/2 server executable (4.8 MB)
-- `libkanaha_mcp.so` — MCP stdio executable (98 KB)
+- `libkanaha_httpd.so` — HTTP/2 server executable (9.4 MB)
+- `libkanaha_mcp.so` — MCP stdio executable (117 KB)
 
 ---
 

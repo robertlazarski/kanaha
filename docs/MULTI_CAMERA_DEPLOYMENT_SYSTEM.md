@@ -2,7 +2,7 @@
 
 ## Overview
 
-Kanaha turns Android phones into remotely-controlled production cameras. Any Android 5.0+ device becomes a professional camera unit controllable via HTTP/2 API with mTLS security.
+Kanaha turns Android phones into remotely-controlled production cameras. Any Android 6.0+ device becomes a professional camera unit controllable via HTTP/2 API with mTLS security.
 
 This system enables professional camera crews to coordinate multiple Android phones in secure production environments with real-time control, synchronized operations, and automated file transfers.
 
@@ -769,7 +769,7 @@ curl --http2 --cert client.crt --key client.key --cacert ca.crt \
     │  🌐 HTTP/2 JSON Request Received          │   • Zero JVM overhead               │
     │  • Binary framing (efficient)             │   • 240MB peak memory (vs 2GB JVM) │
     │  • Header compression (HPACK)             │   • Direct JSON-C processing       │
-    │  • Stream multiplexing                    │   • 📱 Runs on Android 5.0+        │
+    │  • Stream multiplexing                    │   • 📱 Runs on Android 6.0+        │
     │  • Server push capable                    │   • 🏎️ 26.56 MB/s JSON throughput  │
     └──────────────────────────────────────────┐ └─────────────────┬───────────────────┘
                                                │                   │
@@ -882,7 +882,7 @@ curl --http2 --cert client.crt --key client.key --cacert ca.crt \
 │ ⚡ JSON-C Direct (2023): Zero XML/SOAP overhead, native C performance                  │
 │ 🛡️ mTLS PKI (Enterprise): Mutual authentication, certificate chains, zero passwords   │
 │ 🔌 Intent IPC: Process isolation, memory safety, no JNI complexity                    │
-│ 📻 ARM Compatibility: Runs on Android 5.0+ devices, includes legacy phones            │
+│ 📻 ARM Compatibility: Runs on Android 6.0+ devices, includes legacy phones            │
 │ 🏗️ Modern Architecture: Microservices, REST APIs, cloud-native patterns               │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
 

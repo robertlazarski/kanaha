@@ -76,7 +76,7 @@ a setting added, not a rewrite.
 | File | Lines | Role |
 |---|---|---|
 | `axis2c/camera_control_service.c` | 1,138 | The Axis2/C service. Parses the JSON request, dispatches on `action` (`startRecording`, `stopRecording`, `getStatus`, `listFiles`, `deleteFiles`, `cleanupFiles`, `configure`, `playTone`, `sftpTransfer`), and for each builds an Intent with `fork()`/`execvp()` and waits for the response file. |
-| `axis2c/kanaha_mcp.c`, `kanaha_mcp_main.c` | 633 | The MCP server: nine tools with schemas, JSON-RPC 2.0 over stdio, dispatching to the same service function. |
+| `axis2c/kanaha_mcp.c`, `kanaha_mcp_main.c` | 633 | The MCP server: ten tools with schemas, JSON-RPC 2.0 over stdio, dispatching to the same service function. |
 | `apache-httpd/apache_httpd_android.c` | 596 | The earlier hand-rolled OpenSSL server, superseded by real Apache; still built by CMake as `kanaha_httpd.so` but not the deployed httpd. |
 | `axis2c/axis2_static_service_adapter.c` | 166 | The strong symbol `camera_control_service_invoke_json` that overrides the weak stub in Axis2/C core, converting json-c objects to and from the service's string interface. |
 | `main.c` | 64 | Entry point of that earlier server. The deployed `libhttpd.so` uses Apache's own `main`. |

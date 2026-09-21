@@ -2,13 +2,13 @@
 
 Kanaha transforms Android phones into network-controllable cameras with a secure HTTP/2 API. Control multiple cameras simultaneously from any device using standard HTTPS requests with mutual TLS authentication.
 
-**Built in C for Performance:** The core server (Apache httpd + Axis2/C) is written entirely in C, delivering native execution speed with minimal memory footprint. This enables Kanaha to run efficiently on devices spanning 7+ years of Android hardware—from a 2017 Moto X4 to a 2024 Pixel 9 Pro—with identical functionality.
+**Built in C for Performance:** The core server (Apache httpd + Axis2/C) is written entirely in C, delivering native execution speed with minimal memory footprint. This enables Kanaha to run efficiently on devices spanning nearly a decade of Android hardware—from a 2017 Moto X4 to a 2026 Pixel 10 Pro XL—with identical functionality.
 
 ## Features
 
 - **Multi-Camera Control** - Start/stop recording on multiple phones simultaneously
 - **HTTP/2 + mTLS Security** - Enterprise-grade encryption with certificate authentication
-- **Wide Device Support** - Same APK works on Android 5.0+ devices (tested 2017 Moto X4 through 2024 Pixel 9 Pro) [<sup>1</sup>](#notes)
+- **Wide Device Support** - Same APK works on Android 6.0+ (API 23) devices, tested from a 2017 Moto X4 to a 2026 Pixel 10 Pro XL [<sup>1</sup>](#notes)
 - **SFTP File Transfer** - Secure file retrieval with SSH key authentication
 - **mDNS Discovery** - Automatic camera discovery on local network
 - **Synchronized Start** - `start_at` parameter fires all cameras at the same UTC millisecond, independent of network delivery timing
@@ -16,7 +16,8 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 - **GPS Timestamping** - `getStatus` exposes GPS fix time and age for clock quality assessment
 - **Recording Start Sidecar** - Writes `kanaha_recording_start.json` at recording start (millisecond precision, GPS time); the post-processing analog of a BWF Time Reference
 - **Open Gate Recording** - Full 4:3 native sensor recording on supported devices (2560×1920 on Pixel 9 Pro) with no horizontal or vertical crop; see [Open Gate Recording](docs/OPENGATE.md)
-- **MCP (AI Assistant) Support** - [Model Context Protocol](https://modelcontextprotocol.io/) integration lets Claude Desktop and other AI assistants discover and control cameras as tools. 9 camera operations exposed with full parameter schemas. 98 KB native binary, no JVM; see [MCP Documentation](docs/MCP.md)
+- **On-Device Clip Description** - `describeClip` samples frames from a finished recording and describes them with Gemini Nano through ML Kit, writing a `<clip>.kanaha.json` sidecar that travels with the video. Opt-in `nano` build flavour; the default `foss` build keeps the operation and reports the model unavailable. See [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md)
+- **MCP (AI Assistant) Support** - [Model Context Protocol](https://modelcontextprotocol.io/) integration lets Claude Desktop and other AI assistants discover and control cameras as tools. 10 camera operations exposed with full parameter schemas. 117 KB native binary, no JVM; see [MCP Documentation](docs/MCP.md)
 
 ## Installation
 
@@ -334,7 +335,7 @@ See [mTLS Setup Guide](docs/MULTI_CAMERA_DEPLOYMENT_SYSTEM.md#mtls-certificate-a
 
 Kanaha supports [Model Context Protocol](https://modelcontextprotocol.io/) (MCP),
 enabling Claude Desktop and other AI assistants to discover and control cameras
-as tools. The MCP server is a 98 KB native binary — no JVM, no Python, sub-50ms
+as tools. The MCP server is a 117 KB native binary — no JVM, no Python, sub-50ms
 startup.
 
 See [MCP Documentation](docs/MCP.md) for setup, tool catalog, and live examples
@@ -408,13 +409,24 @@ For developers who want to modify the app or native code:
 
 ```bash
 cd kanaha-camera-app
+
+# Both flavours at once
 ./gradlew assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
+# foss (distributable):  app/build/outputs/apk/foss/debug/app-foss-debug.apk
+# nano (private use):    app/build/outputs/apk/nano/debug/app-nano-debug.apk
+
+# Or one at a time
+./gradlew assembleFossDebug
+./gradlew assembleNanoDebug
 ```
+
+The `foss` flavour is the default and the only one to distribute. The `nano`
+flavour adds Google's proprietary on-device description client, which cannot be
+shipped under GPL v3; see [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md).
 
 ## Requirements
 
-- **Android**: 5.0+ (API 21+), ARM64 device
+- **Android**: 6.0+ (API 23+) for the `foss` build, 8.0+ (API 26+) for `nano`; ARM64 device
 - **Permissions**: Camera, Microphone, Storage, Network
 - **Network**: WiFi connection (same network as control station)
 
@@ -445,6 +457,7 @@ See [Security Documentation](docs/SECURITY.md) for threat model, certificate man
 | [MCP (AI Assistant)](docs/MCP.md) | Model Context Protocol integration — 10 camera tools, Claude Desktop config, live Pixel 9 Pro examples |
 | [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md) | `describeClip`: per-clip descriptions from Gemini Nano via ML Kit, the `.kanaha.json` sidecar, the `foss`/`nano` build flavors, and why the `nano` build is private-use only under GPL v3 |
 | [C and Java Design](docs/CPP_AND_JAVA_DESIGN.md) | Where Java starts and ends in this app, the Intent seam, and the licence boundary between OpenCamera (GPL) and the Axis2/C service (Apache 2.0) |
+| [Why Not the NDK Camera API](docs/NDK_INSTEAD_OF_OPENCAMERA_REJECTED.md) | The case for replacing OpenCamera with NDK camera code, and why fifteen years of device coverage won the argument |
 | [Legal Review](docs/LEGAL.md) | License compatibility analysis for Apache httpd, Axis2/C, OpenCamera (GPL v3+), and the proprietary ML Kit client (`nano` flavor only) |
 
 ## Architecture
