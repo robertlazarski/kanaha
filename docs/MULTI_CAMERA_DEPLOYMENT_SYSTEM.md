@@ -1384,7 +1384,7 @@ The discovery scripts handle this limitation transparently:
 #     URL:      https://Android_54RWTDIY.local:8443/services/CameraControlService
 
 # For scripting, use JSON output to get IPs:
-./tools/kanaha-discover.sh --json | jq -r '.[].ip'
+./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'
 # 192.168.8.168
 ```
 
@@ -1403,7 +1403,7 @@ The discovery scripts extract the IP from mDNS TXT records automatically:
 # motox4 (192.168.8.175:8443) - Moto X4
 
 # Use JSON output for scripting
-./tools/kanaha-discover.sh --json | jq -r '.[].ip'
+./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'
 ```
 
 **Option 2: Direct IP Connection**
@@ -1437,7 +1437,7 @@ curl -sk --cert client.crt --key client.key --cacert ca.crt \
 
 ```bash
 # Get all camera IPs via discovery
-cameras=$(./tools/kanaha-discover.sh --json | jq -r '.[].ip')
+cameras=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
 
 # Start recording on all cameras simultaneously
 for ip in $cameras; do
@@ -1600,7 +1600,7 @@ SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
 DURATION=${1:-60}  # Default 60 seconds
 
 # Discover cameras
-CAMERAS=$(./tools/kanaha-discover.sh --json | jq -r '.[].ip')
+CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
 
 echo "Starting recording on $(echo "$CAMERAS" | wc -l) cameras for ${DURATION}s..."
 
@@ -1629,7 +1629,7 @@ echo "Recording complete"
 # check-status.sh - Check status of all cameras
 
 SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=$(./tools/kanaha-discover.sh --json | jq -r '.[].ip')
+CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
 
 for cam in $CAMERAS; do
   echo "=== Camera: $cam ==="
@@ -1644,7 +1644,7 @@ done
 # transfer-all.sh - Transfer videos from all cameras
 
 SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=$(./tools/kanaha-discover.sh --json | jq -r '.[].ip')
+CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
 
 for cam in $CAMERAS; do
   echo "Transferring from $cam..."
@@ -1953,7 +1953,7 @@ echo "All transfers complete"
 #!/bin/bash
 # 8-camera film production setup
 SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=$(./tools/kanaha-discover.sh --json | jq -r '.[].ip')
+CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
 
 # Start synchronized recording on all cameras
 echo "Starting film production recording..."
@@ -1994,7 +1994,7 @@ echo "All cameras rolling"
 #!/bin/bash
 # Time-lapse recording across multiple cameras
 SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=$(./tools/kanaha-discover.sh --json | jq -r '.[].ip')
+CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
 INTERVAL=60      # seconds between captures
 DURATION=3600    # total duration in seconds
 
@@ -2029,7 +2029,7 @@ while true; do
   echo "=== Camera Status Dashboard ==="
   echo ""
 
-  for cam in $(./tools/kanaha-discover.sh --json | jq -r '.[].ip'); do
+  for cam in $(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'); do
     status=$(curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
       -d '{"action":"getStatus"}' "https://$cam:8443/services/CameraControlService/getStatus")
 
@@ -2057,7 +2057,7 @@ done
 SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
 
 echo "=== Storage Status ==="
-for cam in $(./tools/kanaha-discover.sh --json | jq -r '.[].ip'); do
+for cam in $(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'); do
   files=$(curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
     -d '{"action":"listFiles"}' "https://$cam:8443/services/CameraControlService/listFiles")
 

@@ -283,12 +283,15 @@ pointing at the camera's HTTPS endpoint:
 Kanaha cameras register as `_https._tcp` mDNS services with
 `api=kanaha-camera-control` in the TXT record. Discover cameras using:
 
+The script finds every Kanaha app (camera, audio and calcs; each JSON entry
+has a `kind`), so scripts that act on cameras pass `--kind camera`.
+
 ```bash
 # Automatic discovery (mDNS first, falls back to port scan)
 kanaha-discover.sh
 
-# JSON output for scripts
-kanaha-discover.sh --json
+# JSON output for scripts, cameras only
+kanaha-discover.sh --kind camera --json
 
 # Check specific IP
 kanaha-discover.sh --ip 192.168.1.100
