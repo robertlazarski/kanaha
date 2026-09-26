@@ -1763,11 +1763,16 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 return r;
             }
 
+            // inference_ms, per frame and in total, times only the model call
+            // (describer.describe) -- not frame extraction or downscaling -- so
+            // it is the on-device model's own latency. nanoTime: monotonic, so
+            // a wall-clock adjustment mid-run cannot skew it.
             org.json.JSONArray frameArray = new org.json.JSONArray();
-            long inferenceStart = System.currentTimeMillis();
+            long inferenceMs = 0;
             try {
                 for (FrameSampler.Frame frame : frames) {
                     String text;
+                    long frameStart = System.nanoTime();
                     try {
                         text = describer.describe(frame.bitmap);
                     } catch (java.util.concurrent.TimeoutException e) {
@@ -1776,16 +1781,18 @@ public class CameraControlReceiver extends BroadcastReceiver {
                         r.put("code", OnDeviceModel.CODE_INFERENCE_TIMEOUT);
                         return r;
                     }
+                    long frameMs = (System.nanoTime() - frameStart) / 1_000_000L;
+                    inferenceMs += frameMs;
                     JSONObject f = new JSONObject();
                     f.put("position", frame.position);
                     f.put("time_ms", frame.timeMs);
                     f.put("description", text);
+                    f.put("inference_ms", frameMs);
                     frameArray.put(f);
                 }
             } finally {
                 for (FrameSampler.Frame frame : frames) frame.bitmap.recycle();
             }
-            long inferenceMs = System.currentTimeMillis() - inferenceStart;
 
             JSONObject response = new JSONObject();
             response.put("success", true);
@@ -1802,7 +1809,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
             response.put("timestamp", System.currentTimeMillis());
 
             if (writeSidecar) {
-                File sidecar = writeDescriptionSidecar(context, video, durationUnknown ? 0 : durationMs, frameArray);
+                File sidecar = writeDescriptionSidecar(context, video, durationUnknown ? 0 : durationMs,
+                                                       frameArray, inferenceMs);
                 if (sidecar != null) response.put("sidecar", sidecar.getAbsolutePath());
             }
             return response;
@@ -1862,7 +1870,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
      * kanaha_recording_start.json when that file names this clip, so a consumer
      * can convert time_ms to wall-clock without a second lookup.
      */
-    private static File writeDescriptionSidecar(Context context, File video, long durationMs, org.json.JSONArray frames) {
+    private static File writeDescriptionSidecar(Context context, File video, long durationMs,
+                                                org.json.JSONArray frames, long inferenceMs) {
         try {
             JSONObject sidecar = new JSONObject();
             sidecar.put("clip", video.getName());
@@ -1871,6 +1880,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             sidecar.put("description_generated_ms", System.currentTimeMillis());
             sidecar.put("model", ClipDescriber.MODEL_ID);
             sidecar.put("language", ClipDescriber.LANGUAGE);
+            sidecar.put("inference_ms", inferenceMs);
             sidecar.put("frames", frames);
 
             File target = descriptionSidecarFor(context, video);

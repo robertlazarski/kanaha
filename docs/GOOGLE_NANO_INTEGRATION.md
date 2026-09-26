@@ -116,9 +116,9 @@ Response:
   "model": "gemini-nano/mlkit-image-description",
   "language": "en",
   "frames": [
-    {"position": 0.10, "time_ms": 18432,  "description": "A person standing at a lectern in front of a projection screen."},
-    {"position": 0.50, "time_ms": 92160,  "description": "A close view of a projection screen showing a table of numbers."},
-    {"position": 0.90, "time_ms": 165888, "description": "A person gesturing toward a screen; a second person seated at a table."}
+    {"position": 0.10, "time_ms": 18432,  "description": "A person standing at a lectern in front of a projection screen.", "inference_ms": 1480},
+    {"position": 0.50, "time_ms": 92160,  "description": "A close view of a projection screen showing a table of numbers.", "inference_ms": 1350},
+    {"position": 0.90, "time_ms": 165888, "description": "A person gesturing toward a screen; a second person seated at a table.", "inference_ms": 1380}
   ],
   "sidecar": "/…/files/VID_20260301_101500.kanaha.json",
   "inference_ms": 4210
@@ -176,9 +176,14 @@ One file per clip, next to the recording-start sidecar the app already writes:
   "description_generated_ms": 1741452301877,
   "model": "gemini-nano/mlkit-image-description",
   "language": "en",
-  "frames": [ {"position": 0.10, "time_ms": 18432, "description": "…"}, … ]
+  "inference_ms": 4210,
+  "frames": [ {"position": 0.10, "time_ms": 18432, "description": "…", "inference_ms": 1480}, … ]
 }
 ```
+
+`inference_ms` is the time spent in the model call alone, per frame and in
+total (the sum of the frames): not frame extraction or downscaling. It is the
+same value the `describeClip` response reports.
 
 `recording_start_ms` is copied from `kanaha_recording_start.json` when that file
 refers to the same clip, so a consumer can convert `time_ms` to wall-clock and
