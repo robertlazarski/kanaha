@@ -34,7 +34,8 @@
 
     <!-- Foreground service permission for Apache httpd -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- specialUse, not dataSync: see ApacheService below. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Signature-level permission for camera control broadcasts -->
@@ -158,13 +159,23 @@
         <!-- Kanaha Camera Control System Components -->
 
         <!-- Apache httpd Service for HTTP/2+mTLS server -->
-        <!-- Uses dataSync foregroundServiceType for network server functionality -->
+        <!-- Foreground type specialUse, not dataSync. From Android 15, dataSync
+             services may run 6 hours in any 24; at the limit Android stops the
+             service and refuses to restart it ("Time limit already exhausted")
+             until the app is brought to the foreground, which left the httpd
+             process alive but not listening. This service is a server that
+             must stay up while the camera is in use, which is not a data sync,
+             and specialUse has no time limit. Do not change it back. Not
+             "camera" either: the camera belongs to the activity. -->
         <service
             android:name="org.kanaha.camera.ApacheService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
+            android:foregroundServiceType="specialUse"
             android:process=":apache_httpd">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local HTTPS (mutual TLS) server for remote camera control from devices on the same network" />
             <intent-filter>
                 <action android:name="org.kanaha.camera.START_APACHE_HTTPD" />
             </intent-filter>

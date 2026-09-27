@@ -74,8 +74,11 @@ Kanaha achieves **pure horizontal scaling** - performance and capacity increase 
     android:name="org.kanaha.camera.ApacheService"
     android:enabled="true"
     android:exported="false"
-    android:foregroundServiceType="camera"
+    android:foregroundServiceType="specialUse"
     android:process=":apache_httpd">
+    <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Local HTTPS (mutual TLS) server for remote camera control from devices on the same network" />
     <intent-filter>
         <action android:name="org.kanaha.camera.START_APACHE_HTTPD" />
     </intent-filter>
@@ -91,12 +94,13 @@ Kanaha achieves **pure horizontal scaling** - performance and capacity increase 
 
 <!-- Foreground service permission for Apache httpd -->
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 <uses-permission android:name="android.permission.WAKE_LOCK" />
 ```
 
 **Key Configuration Features:**
 - **Process Isolation**: `android:process=":apache_httpd"` runs Apache in separate process
-- **Foreground Service**: `android:foregroundServiceType="camera"` prevents Android from killing the daemon
+- **Foreground Service**: `android:foregroundServiceType="specialUse"` prevents Android from killing the daemon, with no time limit (Android 15 caps `dataSync` at 6 hours in any 24; see `CPP_AND_JAVA_DESIGN.md`)
 - **Wake Lock**: Prevents device sleep from interrupting HTTP/2 connections
 - **Auto-restart**: `START_STICKY` service restarts automatically if killed
 

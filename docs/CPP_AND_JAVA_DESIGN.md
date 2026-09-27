@@ -19,7 +19,7 @@ this document explains why, and exactly where the line falls.
 Java, app process (org.kanaha.camera)        Java, ":apache_httpd" process        C child process (same UID)
 ────────────────────────────────────────      ──────────────────────────────       ────────────────────────────────
 net.sourceforge.opencamera.MainActivity       org.kanaha.camera.ApacheService      libhttpd.so  (Apache httpd -X)
-  Preview, CameraController2, MediaRecorder     foreground, type=dataSync            mod_ssl + mod_http2 + mod_axis2
+  Preview, CameraController2, MediaRecorder     foreground, type=specialUse          mod_ssl + mod_http2 + mod_axis2
   ~70,000 lines, ~40 lines touched by Kanaha    deploys config + certs               axis2_json_rpc_msg_recv
                                                 CertProvisioning                       └─ static registry → adapter
 org.kanaha.camera.CameraControlReceiver         ProcessBuilder ──exec───────────▶        └─ camera_control_service
@@ -179,8 +179,13 @@ with two differences forced by this app:
 - It runs in a separate process, `:apache_httpd`, so that the httpd child and
   the camera activity are supervised independently and a restart of one does
   not take down the other.
-- Its foreground-service type is `dataSync`, not `camera`: the service owns the
-  network server, and the camera itself belongs to the activity.
+- Its foreground-service type is `specialUse`, not `camera`: the service owns
+  the network server, and the camera itself belongs to the activity. It was
+  `dataSync` until 2026-09-26, when Android 15's limit on that type (6 hours in
+  any 24) stopped it mid-rehearsal: the httpd process stayed alive but stopped
+  listening, and every restart was refused until the app came to the
+  foreground. `specialUse` has no time limit and carries a one-line
+  `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` saying what the service is for.
 
 The launch is otherwise identical: `<nativeLibraryDir>/libhttpd.so -f
 <conf> -d <ServerRoot> -X`, with `LD_LIBRARY_PATH` and `HOME` in the
