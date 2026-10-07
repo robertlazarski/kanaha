@@ -155,6 +155,18 @@ static int send_intent_broadcast_secure(
         if (exit_code == 0) {
             LOGI("Intent broadcast completed successfully");
             return 0;
+        } else if (exit_code == 255) {
+            /* am is `cmd activity`, and whether an app (not adb) may run
+             * activity-manager shell commands is up to the device's build.
+             * A Motorola Android 14 build refuses every one -- even
+             * `cmd activity help` -- with a silent 255, so no camera
+             * operation can work there; a Pixel on Android 17 allows them.
+             * 255 is also what a command the activity manager rejected for
+             * other reasons returns, so say "likely". */
+            LOGE("Intent broadcast failed with exit code 255, with no output: "
+                 "this device likely refuses `am` (cmd activity) from apps, "
+                 "and camera control is then unavailable on it");
+            return -1;
         } else {
             LOGE("Intent broadcast failed with exit code: %d", exit_code);
             return -1;
