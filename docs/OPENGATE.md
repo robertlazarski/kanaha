@@ -926,8 +926,8 @@ vim app/src/main/cpp/axis2c/camera_control_service.c
 ~/android-cross-builds/link-httpd-axis2.sh
 
 # 3. Strip and copy to jniLibs
-llvm-strip --strip-all ~/android-cross-builds/httpd-2.4.66/httpd
-cp ~/android-cross-builds/httpd-2.4.66/httpd \
+llvm-strip --strip-all ~/android-cross-builds/httpd-2.4.69/httpd
+cp ~/android-cross-builds/httpd-2.4.69/httpd \
    app/src/main/jniLibs/arm64-v8a/libhttpd.so
 
 # 4. Rebuild APK (includes updated libhttpd.so in assets)
@@ -941,7 +941,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 1. Compiles `axis2_static_service_adapter.c` + `camera_control_service.c` → `libkanaha_services.a`
 2. Links with all static Apache modules, Axis2/C libs, OpenSSL, APR, nghttp2, PCRE2 using NDK clang (`aarch64-linux-android21-clang`)
-3. Output: `~/android-cross-builds/httpd-2.4.66/httpd` (~9.4MB unstripped, ~5.5MB stripped)
+3. Output: `~/android-cross-builds/httpd-2.4.69/httpd` (~9.4MB unstripped, ~5.5MB stripped)
 
 The resulting binary is the full Apache HTTP/2 + mTLS server with the Kanaha camera control service compiled in. The pre-built binary in `jniLibs/arm64-v8a/libhttpd.so` is the one actually deployed to the phone.
 

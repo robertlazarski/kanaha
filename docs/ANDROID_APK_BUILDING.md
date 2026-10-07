@@ -793,7 +793,7 @@ If you modify `camera_control_service.c` or other native code compiled into `lib
 ~/android-cross-builds/link-httpd-axis2.sh
 
 # Copy to jniLibs
-cp ~/android-cross-builds/httpd-2.4.66/httpd \
+cp ~/android-cross-builds/httpd-2.4.69/httpd \
    ~/repos/kanaha/kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so
 
 # Rebuild APK

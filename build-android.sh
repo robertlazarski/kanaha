@@ -5,7 +5,7 @@
 #   - NDK at ~/Android/Sdk/ndk/28.0.12916984
 #   - Cross-compiled deps at ~/android-cross-builds/deps/arm64-v8a/
 #   - Axis2/C source at ~/repos/axis-axis2-c-core/
-#   - Apache httpd build at ~/android-cross-builds/httpd-2.4.66/
+#   - Apache httpd build at ~/android-cross-builds/httpd-2.4.69/
 #
 # Output: kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so
 #
@@ -25,7 +25,7 @@ AR=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
 STRIP=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
 
 DEPS=$HOME/android-cross-builds/deps/arm64-v8a
-HTTPD_DIR=$HOME/android-cross-builds/httpd-2.4.66
+HTTPD_DIR=$HOME/android-cross-builds/httpd-2.4.69
 AXIS2_SRC=$HOME/repos/axis-axis2-c-core
 
 KANAHA_APP=$SCRIPT_DIR/kanaha-camera-app/app/src/main/cpp

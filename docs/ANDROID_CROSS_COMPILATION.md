@@ -88,7 +88,7 @@ cd ~/android-cross-builds
 cd ~/android-cross-builds
 
 # Apache httpd (https://dlcdn.apache.org/httpd/)
-curl -L -o httpd-2.4.66.tar.gz https://dlcdn.apache.org/httpd/httpd-2.4.66.tar.gz
+curl -L -o httpd-2.4.69.tar.gz https://dlcdn.apache.org/httpd/httpd-2.4.69.tar.gz
 
 # APR (https://dlcdn.apache.org/apr/)
 curl -L -o apr-1.7.6.tar.gz https://dlcdn.apache.org/apr/apr-1.7.6.tar.gz
@@ -96,14 +96,14 @@ curl -L -o apr-1.7.6.tar.gz https://dlcdn.apache.org/apr/apr-1.7.6.tar.gz
 # APR-util
 curl -L -o apr-util-1.6.3.tar.gz https://dlcdn.apache.org/apr/apr-util-1.6.3.tar.gz
 
-# OpenSSL (https://www.openssl.org/source/)
-curl -L -o openssl-3.2.0.tar.gz https://www.openssl.org/source/openssl-3.2.0.tar.gz
+# OpenSSL (https://github.com/openssl/openssl/releases)
+curl -L -o openssl-3.5.9.tar.gz https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz
 
 # nghttp2 (https://github.com/nghttp2/nghttp2/releases)
 curl -L -o nghttp2-1.64.0.tar.gz https://github.com/nghttp2/nghttp2/releases/download/v1.64.0/nghttp2-1.64.0.tar.gz
 
 # expat (https://github.com/libexpat/libexpat/releases)
-curl -L -o expat-2.6.4.tar.gz https://github.com/libexpat/libexpat/releases/download/R_2_6_4/expat-2.6.4.tar.gz
+curl -L -o expat-2.9.0.tar.gz https://github.com/libexpat/libexpat/releases/download/R_2_9_0/expat-2.9.0.tar.gz
 
 # PCRE2 (https://github.com/PCRE2Project/pcre2/releases)
 curl -L -o pcre2-10.44.tar.gz https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.gz
@@ -127,8 +127,8 @@ OpenSSL uses `ANDROID_NDK_ROOT` (not `ANDROID_NDK_HOME`):
 
 ```bash
 cd ~/android-cross-builds
-tar -xzf openssl-3.2.0.tar.gz
-cd openssl-3.2.0
+tar -xzf openssl-3.5.9.tar.gz
+cd openssl-3.5.9
 
 # Set NDK environment (note: ANDROID_NDK_ROOT, not ANDROID_NDK_HOME)
 export ANDROID_NDK_ROOT=$HOME/Android/Sdk/ndk/28.0.12916984
@@ -187,8 +187,8 @@ APR-util requires expat for XML support:
 
 ```bash
 cd ~/android-cross-builds
-tar -xzf expat-2.6.4.tar.gz
-cd expat-2.6.4
+tar -xzf expat-2.9.0.tar.gz
+cd expat-2.9.0
 
 # Set NDK environment
 export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/28.0.12916984
@@ -328,8 +328,8 @@ Apache httpd requires special handling for cross-compilation. See [Apache httpd 
 
 ```bash
 cd ~/android-cross-builds
-tar -xzf httpd-2.4.66.tar.gz
-cd httpd-2.4.66
+tar -xzf httpd-2.4.69.tar.gz
+cd httpd-2.4.69
 
 # Set environment
 export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/28.0.12916984
@@ -361,14 +361,28 @@ RANLIB=$TOOLCHAIN/bin/llvm-ranlib \
 
 # Build server directory first with host-generated test_char.h
 cd server
+make gen_test_char 2>/dev/null || true   # let make build its ARM64 copy first...
 gcc -DCROSS_COMPILE -I../include -I../os/unix gen_test_char.c -o gen_test_char_host
-./gen_test_char_host > test_char.h
-cp gen_test_char_host gen_test_char  # Replace ARM64 binary with host binary
+cp gen_test_char_host gen_test_char      # ...then replace it with the host binary
+./gen_test_char > test_char.h
+touch gen_test_char test_char.h          # newer than gen_test_char.lo, so make keeps them
 cd ..
 
-# Build
-make -j$(nproc)
+# Build. -k because the support tools fail on crypt() (Issue 3); the server
+# and module archives the link scripts use are all still produced.
+make -k -j$(nproc)
+
+# Register mod_axis2 and build the two objects the link scripts need (Issue 5)
+patch -p0 modules.c < ~/android-cross-builds/modules-axis2.patch   # contents in Issue 5
+make modules.o
+$(make -n -B modules.o | tail -1 | sed 's# -c modules.c$# -c server/buildmark.c#')
 ```
+
+> **Configure options actually in use:** the Kanaha binaries are built from
+> `~/android-cross-builds/build-httpd.sh`, which configures with
+> `--enable-mods-static="ssl http2 unixd authz_core log_config mime dir headers rewrite"`,
+> `--disable-shared --enable-static --with-mpm=worker` and the `--enable-*-staticlib-deps`
+> flags. The shorter configure above predates the static-module link.
 
 ### Step 8: Cross-Compile json-c
 
@@ -432,7 +446,7 @@ LIBS="-lapr-1 -laprutil-1 -lexpat -lssl -lcrypto -lnghttp2 -ljson-c" \
 ./configure \
     --host=aarch64-linux-android \
     --prefix=$DEPS \
-    --with-apache2=$HOME/android-cross-builds/httpd-2.4.66 \
+    --with-apache2=$HOME/android-cross-builds/httpd-2.4.69 \
     --with-apr=$DEPS \
     --enable-static \
     --disable-shared \
@@ -521,7 +535,7 @@ git pull
 export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/28.0.12916984
 export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
 export DEPS=$HOME/android-cross-builds/deps/arm64-v8a
-export HTTPD=$HOME/android-cross-builds/httpd-2.4.66
+export HTTPD=$HOME/android-cross-builds/httpd-2.4.69
 
 export CC=$TOOLCHAIN/bin/aarch64-linux-android21-clang
 export AR=$TOOLCHAIN/bin/llvm-ar
@@ -565,7 +579,7 @@ bash ~/android-cross-builds/rebuild-axis2c.sh
 bash ~/android-cross-builds/link-httpd-axis2.sh
 
 # 3. Copy to jniLibs
-cp ~/android-cross-builds/httpd-2.4.66/httpd \
+cp ~/android-cross-builds/httpd-2.4.69/httpd \
    ~/repos/kanaha/kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so
 
 # 4. Rebuild APK
@@ -692,7 +706,7 @@ Or apply manually by editing the two files as shown above.
 **Solution:** Build `gen_test_char` for the host using the `-DCROSS_COMPILE` flag (Apache httpd supports this):
 
 ```bash
-cd ~/android-cross-builds/httpd-2.4.66/server
+cd ~/android-cross-builds/httpd-2.4.69/server
 
 # Build for host (x86_64)
 gcc -DCROSS_COMPILE -I../include -I../os/unix gen_test_char.c -o gen_test_char_host
@@ -702,7 +716,13 @@ gcc -DCROSS_COMPILE -I../include -I../os/unix gen_test_char.c -o gen_test_char_h
 
 # Replace ARM64 binary so make doesn't regenerate it
 cp gen_test_char_host gen_test_char
+touch gen_test_char test_char.h
 ```
+
+Copying alone is not enough if `make` has already built `gen_test_char.lo`: the
+`.lo` is then newer than the copied binary, make relinks the ARM64 one over it,
+and the build stops with `Error 126` running it. The `touch` makes both outputs
+newer than their inputs.
 
 ### Issue 2: mod_ext_filter Uses Unsupported APR Function
 
@@ -729,6 +749,58 @@ cp gen_test_char_host gen_test_char
 ```bash
 CC=/full/path/to/aarch64-linux-android21-clang ./configure ...
 ```
+
+### Issue 5: mod_axis2 Must Be Registered in modules.c
+
+**Problem:** configure generates `modules.c`, the table of statically linked
+modules, from the httpd modules it knows about. mod_axis2 comes from the Axis2/C
+build, so it is not in that table, and a binary linked with an unmodified
+`modules.o` starts without mod_axis2, so Axis2/C never sees a request. The
+edit used to exist only inside the built `httpd-2.4.66` tree, so a fresh httpd
+tree silently loses it.
+
+**Solution:** after configure, declare `axis2_module` and add it to the three module
+tables, then rebuild `modules.o`. The patch is four added lines; keep
+it as `modules-axis2.patch` next to the httpd tree:
+
+```diff
+--- modules.c
++++ modules.c
+@@ -20,6 +20,7 @@
+ extern module unixd_module;
+ extern module dir_module;
+ extern module rewrite_module;
++extern module axis2_module;
+ 
+ /*
+  *  Modules which implicitly form the
+@@ -42,6 +43,7 @@
+   &unixd_module,
+   &dir_module,
+   &rewrite_module,
++  &axis2_module,
+   NULL
+ };
+ 
+@@ -63,6 +65,7 @@
+   {"unixd_module", &unixd_module},
+   {"dir_module", &dir_module},
+   {"rewrite_module", &rewrite_module},
++  {"axis2_module", &axis2_module},
+   {NULL, NULL}
+ };
+ 
+@@ -87,6 +90,7 @@
+   &unixd_module,
+   &dir_module,
+   &rewrite_module,
++  &axis2_module,
+   NULL
+ };
+ 
+```
+
+Check it took: `grep -c axis2_module modules.c` should print 4.
 
 ---
 
@@ -942,7 +1014,7 @@ echo "header files installed"
 
 echo ""
 echo "=== Apache httpd server library ==="
-ls -la ~/android-cross-builds/httpd-2.4.66/server/.libs/libmain.a
+ls -la ~/android-cross-builds/httpd-2.4.69/server/.libs/libmain.a
 
 echo ""
 echo "=== Verify ARM64 architecture ==="
@@ -1137,7 +1209,7 @@ Create `~/android-cross-builds/link-httpd-axis2.sh`:
 #!/bin/bash
 set -e
 
-cd ~/android-cross-builds/httpd-2.4.66
+cd ~/android-cross-builds/httpd-2.4.69
 DEPS=~/android-cross-builds/deps/arm64-v8a
 CC=~/Android/Sdk/ndk/28.0.12916984/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
 
@@ -1475,6 +1547,7 @@ LOAD  0x00000000000f18d0 0x00000000000f28d0 ... 0x1000
 
 | Date | Changes |
 |------|---------|
+| 2026-10-07 | Dependency refresh: OpenSSL 3.2.0 → 3.5.9, httpd 2.4.66 → 2.4.69, expat 2.6.4 → 2.9.0, Axis2/C master `ce7c8f381`. Documented the `modules.c` mod_axis2 registration (Issue 5), which had only existed inside the old httpd tree, and the `gen_test_char` relink trap (Issue 1) |
 | 2026-02-15 | Rebuilt Axis2/C from `3004810a1`: JSON reader security fixes, HTTP worker hardening, deprecated feature removal, SNI support |
 | 2026-01-31 | Added 16KB page alignment documentation for Android 15, updated linker flags for all native libraries |
 | 2026-01-31 | Added "Rebuilding Axis2/C for Security Updates" section with AXIS2C-1708 security hardening documentation and rebuild script |
