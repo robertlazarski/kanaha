@@ -1022,8 +1022,9 @@ The installation process is identical for older devices. The same APK runs witho
 
 | Device | Year | Android | ADB Tests | WiFi Tests | SFTP Transfer | Last verified | Notes |
 |--------|------|---------|-----------|------------|---------------|---------------|-------|
-| Google Pixel 10 Pro XL | 2025 | 16 (API 37) | Pass | Pass | Not re-run | 2026-09-05 | Primary development device |
+| Google Pixel 10 Pro XL | 2025 | 17 (API 37) | Pass | Pass | Not re-run | 2026-09-05 | Primary development device |
 | Motorola Moto X4 | 2017 | 9 (API 28) | Pass | Pass | Pass | 2026-09-05 | Oldest supported; runs Camera1 by default |
+| Motorola Moto G Play 2024 | 2024 | 14 (API 34) | Fail | Fail | Not tested | 2026-10-07 | The device refuses `am` from apps (exit 255), so camera control is unavailable; the HTTPS/mTLS server itself works |
 | Google Pixel 9 Pro | 2024 | 14 | Pass | Pass | Pass | 2026-01 (device traded in) | Superseded by the 10 Pro XL |
 
 **Tests Verified on Both Devices (via ADB and WiFi):**
@@ -1184,20 +1185,21 @@ Kanaha is a standard Android application that uses standard Android APIs. It wor
 
 | Manufacturer | Tested Device | Android Version | ADB | WiFi | SFTP |
 |--------------|---------------|-----------------|-----|------|------|
-| **Google** | Pixel 10 Pro XL (2025) | Android 16 | Pass | Pass | Not re-run |
+| **Google** | Pixel 10 Pro XL (2025) | Android 17 | Pass | Pass | Not re-run |
 | **Motorola** | Moto X4 (2017) | Android 9 | Pass | Pass | Pass |
+| **Motorola** | Moto G Play 2024 | Android 14 | Fail | Fail | Not tested |
 | **Samsung** | Not yet tested | - | - | - | - |
 | **OnePlus** | Not yet tested | - | - | - | - |
 | **Other** | Any Android 6.0+ | - | Expected to work | Expected to work | Expected to work |
 
 ### Why Google and Motorola Were Tested
 
-Google and Motorola have traditionally been more developer-friendly with open documentation, stock Android experiences, and accessible Developer Options. However, **for Kanaha specifically, there is no functional difference between manufacturers** - the app uses standard APIs available on all Android devices.
+Google and Motorola have traditionally been more developer-friendly with open documentation, stock Android experiences, and accessible Developer Options. The app uses standard APIs, with one exception that does depend on the device: the native server reaches the camera code by running `am broadcast`, and whether an app may run `am` is up to the device's build. The Moto X4 (Android 9) and the Pixels (Android 14 and 17) allow it; the Moto G Play 2024 (Android 14) refuses it with exit code 255, and on such a device camera control is unavailable even though the server runs. "Expected to work" below therefore means expected, not verified.
 
 The successful test on Moto X4 (2017) and Pixel 10 Pro XL (2025) demonstrates compatibility across:
 - **8 years** of Android development (2017-2025)
 - **Two different manufacturers** (Motorola, Google)
-- **Multiple Android versions** (Android 9 / API 28 to Android 16 / API 37)
+- **Multiple Android versions** (Android 9 / API 28 to Android 17 / API 37)
 - **Different hardware capabilities** (2.8 GB RAM to 16 GB RAM)
 
 ### Device Selection Recommendations
