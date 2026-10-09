@@ -57,6 +57,7 @@ public class ApacheService extends Service {
     private Process apacheProcess;
     private NetworkDiscoveryService networkDiscovery;
     private CertProvisioning provisioning;
+    private CameraIpcPoller ipcPoller;
 
     /**
      * Service binder for client communication
@@ -77,6 +78,11 @@ public class ApacheService extends Service {
         setupDirectories();
         deployConfiguration();
         initializeNetworkDiscovery();
+
+        // Serves camera control on devices that refuse `am` from apps; idle
+        // (one file check per tick) everywhere else. See CameraIpcPoller.
+        ipcPoller = new CameraIpcPoller(this);
+        ipcPoller.start();
     }
 
     /**
@@ -143,6 +149,9 @@ public class ApacheService extends Service {
         }
 
         stopHttpdServer();
+        if (ipcPoller != null) {
+            ipcPoller.stop();
+        }
         releaseWakeLock();
 
         super.onDestroy();

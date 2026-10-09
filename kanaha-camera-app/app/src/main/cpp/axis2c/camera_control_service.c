@@ -22,6 +22,7 @@
 #include <time.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <android/log.h>
 
 #define LOG_TAG "KanahaCameraService"
@@ -34,6 +35,19 @@
 // Use /data/user/0/ path which is the actual location on modern Android
 // (/data/data/ is a symlink that may not resolve correctly in native context)
 #define RESPONSE_FILE_PREFIX "/data/user/0/org.kanaha.camera/cache/response_"
+
+/* Request-file fallback, for devices that refuse `am` from apps (see
+ * send_intent_broadcast_secure). The marker records that this device refused
+ * once, so later calls go straight to a request file; ApacheService polls the
+ * request directory only while the marker exists. Delete the marker (or clear
+ * the app's cache) to make the next call try `am` again. Keep these paths in
+ * step with ApacheService.IPC_* . */
+#define IPC_REQUEST_DIR      "/data/user/0/org.kanaha.camera/cache/ipc_requests"
+#define IPC_AM_REFUSED_FILE  "/data/user/0/org.kanaha.camera/cache/ipc_am_refused"
+/* How long a request file may sit unclaimed before the call fails: the poller
+ * runs every 500 ms, so 5 s means the camera app is not running. */
+#define IPC_PICKUP_TIMEOUT_ATTEMPTS 50   /* x 100 ms */
+#define AM_REFUSED (-2)
 
 // Maximum number of intent extra arguments
 #define MAX_INTENT_EXTRAS 20
@@ -159,14 +173,15 @@ static int send_intent_broadcast_secure(
             /* am is `cmd activity`, and whether an app (not adb) may run
              * activity-manager shell commands is up to the device's build.
              * A Motorola Android 14 build refuses every one -- even
-             * `cmd activity help` -- with a silent 255, so no camera
-             * operation can work there; a Pixel on Android 17 allows them.
-             * 255 is also what a command the activity manager rejected for
-             * other reasons returns, so say "likely". */
-            LOGE("Intent broadcast failed with exit code 255, with no output: "
-                 "this device likely refuses `am` (cmd activity) from apps, "
-                 "and camera control is then unavailable on it");
-            return -1;
+             * `cmd activity help` -- with a silent 255; a Pixel on Android 17
+             * allows them. The caller then falls back to a request file
+             * (send_request_file). 255 is also what a command the activity
+             * manager rejected for other reasons returns, so say "likely";
+             * the fallback delivers such a request correctly too. */
+            LOGE("Intent broadcast failed with exit code 255: "
+                 "this device likely refuses `am` (cmd activity) from apps; "
+                 "falling back to a request file");
+            return AM_REFUSED;
         } else {
             LOGE("Intent broadcast failed with exit code: %d", exit_code);
             return -1;
@@ -187,6 +202,71 @@ static void generate_operation_id(char* buffer, size_t buffer_size) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     snprintf(buffer, buffer_size, "op_%ld_%ld", ts.tv_sec, ts.tv_nsec);
+}
+
+static const char* json_escape(const char* in, char* out, size_t out_size);
+
+/*
+ * Request-file fallback: write the extras as JSON into IPC_REQUEST_DIR for
+ * ApacheService's poller to send as an in-app broadcast. Written under a
+ * temporary name and renamed, so the poller never reads half a file.
+ * Format: {"strings":{"key":"value",...},"ints":{"key":"123",...}}
+ * On success the request's path is copied into request_path.
+ */
+static int send_request_file(const char* operation_id,
+                             const intent_extra_t* extras, int num_extras,
+                             char* request_path, size_t request_path_size) {
+    size_t cap = 64;
+    for (int j = 0; j < num_extras; j++)
+        cap += 2 * strlen(extras[j].key) + 2 * strlen(extras[j].value) + 8;
+    char* json = (char*)malloc(cap);
+    char* esc = (char*)malloc(cap);
+    if (!json || !esc) {
+        free(json); free(esc);
+        LOGE("Out of memory building request file");
+        return -1;
+    }
+
+    size_t len = 0;
+    for (int pass = 0; pass < 2; pass++) {    /* 0: strings (--es), 1: ints (--ei) */
+        const char* type = pass == 0 ? "--es" : "--ei";
+        len += snprintf(json + len, cap - len, "%s\"%s\":{",
+                        pass == 0 ? "{" : ",", pass == 0 ? "strings" : "ints");
+        int first = 1;
+        for (int j = 0; j < num_extras; j++) {
+            if (strcmp(extras[j].type, type) != 0) continue;
+            len += snprintf(json + len, cap - len, "%s\"%s\":",
+                            first ? "" : ",", json_escape(extras[j].key, esc, cap));
+            len += snprintf(json + len, cap - len, "\"%s\"",
+                            json_escape(extras[j].value, esc, cap));
+            first = 0;
+        }
+        len += snprintf(json + len, cap - len, "}");
+    }
+    snprintf(json + len, cap - len, "}");
+    free(esc);
+
+    mkdir(IPC_REQUEST_DIR, 0700);
+    char tmp_path[320];
+    snprintf(tmp_path, sizeof(tmp_path), "%s/%s.json.tmp", IPC_REQUEST_DIR, operation_id);
+    snprintf(request_path, request_path_size, "%s/%s.json", IPC_REQUEST_DIR, operation_id);
+
+    FILE* f = fopen(tmp_path, "w");
+    if (!f) {
+        LOGE("Cannot write request file %s: %s", tmp_path, strerror(errno));
+        free(json);
+        return -1;
+    }
+    int ok = fputs(json, f) >= 0;
+    ok = (fclose(f) == 0) && ok;
+    free(json);
+    if (!ok || rename(tmp_path, request_path) != 0) {
+        LOGE("Cannot place request file %s: %s", request_path, strerror(errno));
+        unlink(tmp_path);
+        return -1;
+    }
+    LOGI("Request file written for the in-app poller: %s", request_path);
+    return 0;
 }
 
 /**
@@ -227,12 +307,26 @@ static int send_intent_and_wait_for_response_ex(
 ) {
     LOGI("send_intent_and_wait_for_response called with operation_id: %s", operation_id);
 
-    int result = send_intent_broadcast_secure(
-        "org.kanaha.camera/org.kanaha.camera.CameraControlReceiver",
-        CAMERA_CONTROL_ACTION,
-        extras,
-        num_extras
-    );
+    char request_file[320] = "";
+    int result;
+    if (access(IPC_AM_REFUSED_FILE, F_OK) == 0) {
+        /* This device refused `am` before; don't pay for another refusal */
+        result = send_request_file(operation_id, extras, num_extras,
+                                   request_file, sizeof(request_file));
+    } else {
+        result = send_intent_broadcast_secure(
+            "org.kanaha.camera/org.kanaha.camera.CameraControlReceiver",
+            CAMERA_CONTROL_ACTION,
+            extras,
+            num_extras
+        );
+        if (result == AM_REFUSED) {
+            FILE* marker = fopen(IPC_AM_REFUSED_FILE, "w");
+            if (marker) fclose(marker);
+            result = send_request_file(operation_id, extras, num_extras,
+                                       request_file, sizeof(request_file));
+        }
+    }
 
     if (result != 0) {
         LOGE("Failed to send intent broadcast");
@@ -279,6 +373,16 @@ static int send_intent_and_wait_for_response_ex(
                 LOGE("Failed to open response file: %s", response_file);
             }
             return 0;
+        }
+        /* The poller claims a request by deleting it. Still there after the
+         * pickup timeout: withdraw it, and if that unlink succeeds the poller
+         * never had it -- it only dispatches requests it deleted itself. */
+        if (request_file[0] && attempts == IPC_PICKUP_TIMEOUT_ATTEMPTS &&
+            unlink(request_file) == 0) {
+            LOGE("Request not picked up within %d s: the camera app is not "
+                 "running, so camera control is unavailable until it is started",
+                 IPC_PICKUP_TIMEOUT_ATTEMPTS / 10);
+            return -1;
         }
         usleep(100000);
         attempts++;
