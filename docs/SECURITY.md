@@ -1378,12 +1378,9 @@ For detailed LTC timecode setup instructions, see [IRIG_PRO_SMPTE_TIMECODE_SETUP
 
 ## Reporting Security Issues
 
-If you discover a security vulnerability:
-
-1. **Do not** open a public GitHub issue
-2. Contact the maintainers privately
-3. Provide detailed reproduction steps
-4. Allow reasonable time for a fix before disclosure
+Do not open a public GitHub issue. Report privately through GitHub's security
+advisory form on this repository; see the root [SECURITY.md](../SECURITY.md),
+which also holds the threat model.
 
 ---
 

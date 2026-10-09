@@ -2,7 +2,10 @@
 
 ## Security threat model
 
-See [docs/SECURITY.md](docs/SECURITY.md) if present for the full model. This file is the
+See [SECURITY.md](SECURITY.md) for the full threat model: roles and trust
+levels, what is and is not a security issue, attack surface by component, and
+how to report a vulnerability. For the security architecture and deployment
+hardening see [docs/SECURITY.md](docs/SECURITY.md). This file is the
 scan-priority guide: where the risk actually is, ranked by exploitability.
 
 ## What this is
@@ -119,5 +122,5 @@ belongs to (carry it, delete it, never expose it on a path the clip is not on).
 - `startRecording` needs the camera activity foregrounded (`camera_available:true`).
 
 ## Reporting
-Report vulnerabilities privately via this repository's GitHub security advisory
-form; do not open a public issue.
+Report vulnerabilities privately through GitHub's security advisory form on this
+repository. Do not open a public issue. See [SECURITY.md](SECURITY.md).
