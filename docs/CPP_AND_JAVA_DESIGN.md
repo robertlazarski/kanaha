@@ -23,10 +23,11 @@ net.sourceforge.opencamera.MainActivity       org.kanaha.camera.ApacheService   
   ~70,000 lines, ~40 lines touched by Kanaha    deploys config + certs               axis2_json_rpc_msg_recv
                                                 CertProvisioning                       └─ static registry → adapter
 org.kanaha.camera.CameraControlReceiver         ProcessBuilder ──exec───────────▶        └─ camera_control_service
-  exported, guarded by a custom permission      NetworkDiscoveryService (mDNS)               (1,138 lines of C)
-  SecurityValidator                                                                             │
-  calls MainActivity.getInstance()...                                                           │ fork()/execvp()
-  writes <operation_id>.json      ◀──── am broadcast --es action ... --es operation_id ... ─────┘
+  exported, guarded by a custom permission      NetworkDiscoveryService (mDNS)               (1,424 lines of C)
+  SecurityValidator                             CameraIpcPoller                                 │
+  calls MainActivity.getInstance()...             (idle unless `am` was refused)                │ fork()/execvp()
+  writes <operation_id>.json      ◀──── am broadcast --es action ... --es operation_id ... ─────┤
+                                  ◀── same Intent ──── poller ◀── cache/ipc_requests/<id>.json ─┘  fallback, see below
                                   ────── C polls for the response file every 100 ms ──────────▶
 
                                                                                      libkanaha_mcp.so → files/kanaha-camera-mcp
@@ -39,7 +40,9 @@ The C side never links against Java and Java never loads C. There is no
 OpenCamera code. The seam is an Android Intent, sent by executing
 `/system/bin/am` with an argument array, and a JSON file written by Java and
 read by C. Every request that changes camera state crosses that seam once in
-each direction.
+each direction. On a device that refuses `am` from apps, the request half
+travels as a file instead, and the supervisor sends the same Intent (see "When
+the device refuses `am`" below).
 
 ## What each side owns
 
@@ -65,7 +68,8 @@ a setting added, not a rewrite.
 | File | Lines | Role | Required by Android? |
 |---|---|---|---|
 | `CameraControlReceiver.java` | 1,906 | Receives the C side's Intent, validates every parameter (`SecurityValidator`: length limits, path-traversal and injection patterns, character whitelist), calls the matching `MainActivity` method, writes the JSON response file. Includes the SFTP transfer and file operations that run in Java. | **Yes.** Only Java can call OpenCamera, and a `BroadcastReceiver` is the mechanism Android provides for a process to be told to do something. |
-| `ApacheService.java` | 927 | Foreground service in its own `:apache_httpd` process. Deploys the Apache config set and certificates, launches `libhttpd.so` with `ProcessBuilder`, kills orphans, registers mDNS. | The foreground service and the launch: **yes**. Deployment and mDNS: **no**, convenience. |
+| `ApacheService.java` | 936 | Foreground service in its own `:apache_httpd` process. Deploys the Apache config set and certificates, launches `libhttpd.so` with `ProcessBuilder`, kills orphans, registers mDNS, runs `CameraIpcPoller`. | The foreground service and the launch: **yes**. Deployment and mDNS: **no**, convenience. |
+| `CameraIpcPoller.java` | 163 | The request-file fallback for devices that refuse `am`: turns each request file into the Intent `am` would have sent. | **Yes, on those devices.** Sending an Intent from app code is a Java API; it is the only way left once `am` is refused. |
 | `PerformanceTestService.java` | 536 | HTTP/2 benchmarking and monitoring. | **No.** Tooling. |
 | `NetworkDiscoveryService.java` | 333 | `NsdManager` registration so clients find the camera by hostname. | **No.** Movable to C. |
 | `DeviceIdentifier.java` | 208 | One hostname used for both the certificate SAN and the mDNS name, so TLS verification by discovered name works. | **No.** Movable to C. |
@@ -75,7 +79,7 @@ a setting added, not a rewrite.
 
 | File | Lines | Role |
 |---|---|---|
-| `axis2c/camera_control_service.c` | 1,138 | The Axis2/C service. Parses the JSON request, dispatches on `action` (`startRecording`, `stopRecording`, `getStatus`, `listFiles`, `deleteFiles`, `cleanupFiles`, `configure`, `playTone`, `sftpTransfer`), and for each builds an Intent with `fork()`/`execvp()` and waits for the response file. |
+| `axis2c/camera_control_service.c` | 1,424 | The Axis2/C service. Parses the JSON request, dispatches on `action` (`startRecording`, `stopRecording`, `getStatus`, `listFiles`, `deleteFiles`, `cleanupFiles`, `configure`, `playTone`, `sftpTransfer`), and for each builds an Intent with `fork()`/`execvp()` (or, where `am` is refused, a request file) and waits for the response file. |
 | `axis2c/kanaha_mcp.c`, `kanaha_mcp_main.c` | 633 | The MCP server: ten tools with schemas, JSON-RPC 2.0 over stdio, dispatching to the same service function. |
 | `apache-httpd/apache_httpd_android.c` | 596 | The earlier hand-rolled OpenSSL server, superseded by real Apache; still built by CMake as `kanaha_httpd.so` but not the deployed httpd. |
 | `axis2c/axis2_static_service_adapter.c` | 166 | The strong symbol `camera_control_service_invoke_json` that overrides the weak stub in Axis2/C core, converting json-c objects to and from the service's string interface. |
@@ -171,6 +175,78 @@ Two consequences of this design are worth knowing:
   why the axis2-c-core documentation labels this app's IPC "fork/execvp Intent
   IPC (GPL boundary)" against the audio app's "direct function call".
 
+## When the device refuses `am`: the request-file fallback
+
+`am` is not an Android API. It is a shell script around `cmd activity`, which
+asks the activity manager to run a shell command for the caller, and Android
+leaves it to each device's build whether an app (rather than adb) may do that.
+The Moto X4 (Android 9) and the Pixels (Android 14 and 17) allow it. The Moto G
+Play 2024 (Motorola's Android 14) refuses every activity-manager shell command
+from an app, `cmd activity help` included, with exit code 255 and no output.
+On that phone step 3 above can never succeed, so without a second path no
+camera command works there.
+
+The fallback replaces step 3 only; everything before and after it is unchanged:
+
+1. `send_intent_broadcast_secure()` sees `am` exit 255 and returns
+   `AM_REFUSED`. The caller creates the marker `cache/ipc_am_refused` and
+   writes the request to `cache/ipc_requests/<operation_id>.json`, under a
+   `.tmp` name first and then renamed, so it is never read half-written. The
+   format carries the same extras `am` would have:
+   `{"strings": {"action": "start_recording", "operation_id": "...", ...}, "ints": {"duration": "1800"}}`.
+2. While the marker exists, every later call skips `am` and writes a request
+   file directly, so the device pays for the refusal once, not per command.
+3. `CameraIpcPoller`, started and stopped with `ApacheService` in the
+   `:apache_httpd` process, wakes every 500 ms. Without the marker it checks
+   that one file and sleeps again; this is all it ever does on a device where
+   `am` works. With the marker it lists the request directory, claims each
+   request by deleting it, and sends it with `Context.sendBroadcast()` to
+   `CameraControlReceiver`, with the same action, component and extras as the
+   `am` call. It has to be a real broadcast, not a direct call to
+   `onReceive()`: the receiver uses `goAsync()`. The app holds its own
+   `CAMERA_CONTROL` permission, so the receiver accepts it.
+4. The receiver and the response file work exactly as in steps 4 to 6.
+
+Three rules keep the two sides from disagreeing:
+
+- **A request is claimed by deleting it.** The poller dispatches only a file
+  its own `delete()` removed. If no one claims a request within 5 seconds, the
+  C side deletes it and fails the call with "the camera app is not running";
+  if that delete fails, the poller already has it and the C side keeps
+  waiting. A request is therefore either run once or withdrawn, never both.
+- **Stale requests are dropped, not run.** When the poller starts it deletes
+  request files older than a minute; their callers gave up after 5 seconds.
+- **The paths are shared constants.** `IPC_REQUEST_DIR` and
+  `IPC_AM_REFUSED_FILE` in `camera_control_service.c` and
+  `CameraIpcPoller.IPC_*` must name the same files under
+  `/data/user/0/org.kanaha.camera/cache/`.
+
+What the fallback costs, measured on the Moto G Play 2024:
+
+- **Up to half a second of added wait per command**, a quarter on average:
+  the poll interval. Measured end to end, HTTPS calls took 0.42 to 0.44 s
+  (each including a fresh TLS handshake) and an MCP `getStatus` 0.26 s.
+- **It needs the app running.** `am broadcast` can start the app process
+  from cold; a request file waits for a poller that only exists while
+  `ApacheService` runs. Over HTTP this changes nothing, because httpd runs
+  inside that service. An MCP call with the app stopped fails after 5 seconds
+  instead of waiting 20 minutes for a response.
+- **No meaningful battery cost.** The service already holds a wake lock while
+  it runs, and an idle tick is one file check.
+
+What it does not change:
+
+- **Security.** The request directory is in the app's private cache, writable
+  only by the app's UID, which is tighter than the exported receiver `am`
+  reaches. The receiver and `SecurityValidator` see the same Intent either
+  way, so every parameter is validated as before.
+- **The licence boundary.** The C service still talks to Java only through an
+  Intent and files, across processes.
+
+To make a device try `am` again (after a system update, say), delete
+`cache/ipc_am_refused` or clear the app's cache. The marker survives app
+updates.
+
 ## The supervisor, for comparison with the other apps
 
 `ApacheService` is the same supervisor pattern as the audio and calcs apps,
@@ -205,6 +281,7 @@ way and is copied to `files/kanaha-camera-mcp` on service start.
 | Certificates, mDNS, benchmarking, device naming | Java today | Convenience; movable to C |
 | HTTP/2, TLS, mTLS, routing | C | Apache httpd and mod_axis2 |
 | Request parsing, action dispatch, Intent IPC, response assembly | C | The Axis2/C service |
+| Sending the Intent where `am` is refused | Java (`CameraIpcPoller`) | `Context.sendBroadcast()` is a Java API, and the only route left on such a device |
 | MCP server | C | Same service code, stdio transport |
 
 In the audio app, Java starts at the manifest and ends at

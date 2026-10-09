@@ -8,7 +8,7 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 
 - **Multi-Camera Control** - Start/stop recording on multiple phones simultaneously
 - **HTTP/2 + mTLS Security** - Enterprise-grade encryption with certificate authentication
-- **Wide Device Support** - Same APK works on Android 6.0+ (API 23) devices, tested from a 2017 Moto X4 to a 2026 Pixel 10 Pro XL [<sup>1</sup>](#notes)
+- **Wide Device Support** - Same APK works on Android 6.0+ (API 23) devices, tested from a 2017 Moto X4 to a 2026 Pixel 10 Pro XL, and on a 2024 Moto G Play [<sup>1</sup>](#notes)
 - **SFTP File Transfer** - Secure file retrieval with SSH key authentication
 - **mDNS Discovery** - Automatic camera discovery on local network
 - **Synchronized Start** - `start_at` parameter fires all cameras at the same UTC millisecond, independent of network delivery timing
@@ -456,7 +456,7 @@ See [Security Documentation](docs/SECURITY.md) for threat model, certificate man
 | [Threading Model](docs/THREAD_MODEL.md) | IPC pipeline threading: C Apache/Axis2 worker → Android UI thread → background handler; JMM visibility rules, `CountDownLatch` patterns |
 | [MCP (AI Assistant)](docs/MCP.md) | Model Context Protocol integration — 10 camera tools, Claude Desktop config, live Pixel 9 Pro examples |
 | [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md) | `describeClip`: per-clip descriptions from Gemini Nano via ML Kit, the `.kanaha.json` sidecar, the `foss`/`nano` build flavors, and why the `nano` build is private-use only under GPL v3 |
-| [C and Java Design](docs/CPP_AND_JAVA_DESIGN.md) | Where Java starts and ends in this app, the Intent seam, and the licence boundary between OpenCamera (GPL) and the Axis2/C service (Apache 2.0) |
+| [C and Java Design](docs/CPP_AND_JAVA_DESIGN.md) | Where Java starts and ends in this app, the Intent seam and its request-file fallback for devices that refuse `am`, and the licence boundary between OpenCamera (GPL) and the Axis2/C service (Apache 2.0) |
 | [Why Not the NDK Camera API](docs/NDK_INSTEAD_OF_OPENCAMERA_REJECTED.md) | The case for replacing OpenCamera with NDK camera code, and why fifteen years of device coverage won the argument |
 | [Legal Review](docs/LEGAL.md) | License compatibility analysis for Apache httpd, Axis2/C, OpenCamera (GPL v3+), and the proprietary ML Kit client (`nano` flavor only) |
 
@@ -481,7 +481,7 @@ Control Station                    Android Device
 
 ## Notes
 
-<sup>1</sup> **SMPTE timecode recording** requires a USB audio interface (iRig Pro I/O) which needs ~500mA of USB power. Phones from ~2021+ (Pixel 6 and later) provide sufficient USB-C power and work with a direct connection. Older phones (pre-2020) lack sufficient USB OTG power for the audio interface to enumerate, making them unsuitable for timecode recording. Camera control, video recording, and all other Kanaha features work identically on all supported devices. See [iRig SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) for details.
+<sup>1</sup> **SMPTE timecode recording** requires a USB audio interface (iRig Pro I/O) which needs ~500mA of USB power. Phones from ~2021+ (Pixel 6 and later) provide sufficient USB-C power and work with a direct connection. Older phones (pre-2020) lack sufficient USB OTG power for the audio interface to enumerate, making them unsuitable for timecode recording. Camera control, video recording, and all other Kanaha features work on all tested devices. On a device that refuses `am` from apps, such as the Moto G Play 2024, camera commands reach the camera through a polled request file instead, which adds up to half a second per command; see [C and Java in Kanaha Camera](docs/CPP_AND_JAVA_DESIGN.md). See [iRig SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) for details.
 
 ## License
 
