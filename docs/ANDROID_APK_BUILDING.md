@@ -460,23 +460,16 @@ $HOME/apache-httpd-x86/bin/httpd -M | grep h2
 
 **Step 3b: Cross-Compile Dependencies for Android ARM64**
 
-Cross-compiling Apache httpd and its dependencies for Android requires building several libraries from source with specific patches for Android compatibility.
+Apache httpd, Axis2/C and their dependencies are cross-compiled by **[kanaha-android-deps](https://github.com/robertlazarski/kanaha-android-deps)**, shared with Kanaha Audio and Kanaha Calcs. Clone it and run `./build-all.sh`; its README covers the pinned versions, the Android patches and the workarounds.
 
-> **See [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md) for complete instructions.**
-
-The cross-compilation guide includes:
-- Step-by-step build instructions for OpenSSL, nghttp2, expat, PCRE2, APR, APR-util, and Apache httpd
-- **Required APR patches** for Android (union semun, strerror_r issues)
-- **Apache httpd workarounds** (gen_test_char, mod_ext_filter)
-- Troubleshooting for common errors
-- Environment variable reference
+> **See [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md)** for how this app's binary is linked against them.
 
 **Quick Summary:**
 
 | Component | Output Location |
 |-----------|----------------|
 | OpenSSL, nghttp2, APR, etc. | `~/android-cross-builds/deps/arm64-v8a/lib/` |
-| Apache httpd | `~/android-cross-builds/apache/` |
+| Apache httpd build tree | `~/android-cross-builds/httpd-<version>/` (version recorded in `deps/arm64-v8a/BUILD-INFO`) |
 
 **Prerequisites Check:**
 ```bash

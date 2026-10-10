@@ -11,7 +11,7 @@ Add `"open_gate": true` to a `startRecording` request. The camera reopens at its
 - The sidecar JSON (`kanaha_recording_start.json`) includes `"open_gate": true` so post scripts know which clips need reframing.
 
 **Most bugs come from:**
-- Editing `camera_control_service.c` but **not rebuilding `libhttpd.so`** — Gradle does not rebuild it. Run `~/android-cross-builds/link-httpd-axis2.sh` then copy the output. See [Build Process](#build-process-modifying-the-c-layer) below.
+- Editing `camera_control_service.c` but **not rebuilding `libhttpd.so`** — Gradle does not rebuild it. Run `build-android.sh` at the repository root, which relinks it and installs it into `jniLibs`. See [Build Process](#build-process-modifying-the-c-layer) below.
 - Expecting `startRecording` to return immediately with `open_gate=true` — it returns only after the camera reopen completes (~3–5 s).
 - Reading UI-thread camera state from a background handler thread without a `CountDownLatch`. See [`docs/THREAD_MODEL.md`](THREAD_MODEL.md) for the full threading model.
 
@@ -922,26 +922,21 @@ The HTTP server running on the phone is **`jniLibs/arm64-v8a/libhttpd.so`** — 
 # 1. Edit the C source
 vim app/src/main/cpp/axis2c/camera_control_service.c
 
-# 2. Cross-compile and relink
-~/android-cross-builds/link-httpd-axis2.sh
+# 2. Cross-compile, relink, strip and install into jniLibs
+(cd ../.. && bash build-android.sh)    # from kanaha-camera-app/; the script is at the repo root
 
-# 3. Strip and copy to jniLibs
-llvm-strip --strip-all ~/android-cross-builds/httpd-2.4.69/httpd
-cp ~/android-cross-builds/httpd-2.4.69/httpd \
-   app/src/main/jniLibs/arm64-v8a/libhttpd.so
-
-# 4. Rebuild APK (includes updated libhttpd.so in assets)
+# 3. Rebuild APK (includes updated libhttpd.so)
 ./gradlew assembleDebug
 
-# 5. Install
+# 4. Install
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### What `link-httpd-axis2.sh` Does
+### What `build-android.sh` Does
 
 1. Compiles `axis2_static_service_adapter.c` + `camera_control_service.c` → `libkanaha_services.a`
-2. Links with all static Apache modules, Axis2/C libs, OpenSSL, APR, nghttp2, PCRE2 using NDK clang (`aarch64-linux-android21-clang`)
-3. Output: `~/android-cross-builds/httpd-2.4.69/httpd` (~9.4MB unstripped, ~5.5MB stripped)
+2. Links with all static Apache modules, Axis2/C libs, OpenSSL, APR, nghttp2, PCRE2 using NDK clang (`aarch64-linux-android21-clang`). Those libraries, and the httpd build tree, come from [kanaha-android-deps](https://github.com/robertlazarski/kanaha-android-deps), which must be built first.
+3. Strips the binary and installs it as `kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so`
 
 The resulting binary is the full Apache HTTP/2 + mTLS server with the Kanaha camera control service compiled in. The pre-built binary in `jniLibs/arm64-v8a/libhttpd.so` is the one actually deployed to the phone.
 

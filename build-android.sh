@@ -3,9 +3,8 @@
 #
 # Prerequisites:
 #   - NDK at ~/Android/Sdk/ndk/28.0.12916984
-#   - Cross-compiled deps at ~/android-cross-builds/deps/arm64-v8a/
-#   - Axis2/C source at ~/repos/axis-axis2-c-core/
-#   - Apache httpd build at ~/android-cross-builds/httpd-2.4.69/
+#   - kanaha-android-deps built (its build-all.sh), which provides the
+#     libraries in ~/android-cross-builds/deps/arm64-v8a/ and the httpd tree
 #
 # Output: kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so
 #
@@ -24,9 +23,28 @@ CC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
 AR=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
 STRIP=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
 
-DEPS=$HOME/android-cross-builds/deps/arm64-v8a
-HTTPD_DIR=$HOME/android-cross-builds/httpd-2.4.69
-AXIS2_SRC=$HOME/repos/axis-axis2-c-core
+# Native dependencies come from kanaha-android-deps
+# (https://github.com/robertlazarski/kanaha-android-deps); run its build-all.sh
+# first. It records what it built in BUILD-INFO, including the httpd version
+# whose build tree this script links from.
+DEPS_WORK=$HOME/android-cross-builds
+DEPS=$DEPS_WORK/deps/arm64-v8a
+if [ ! -f "$DEPS/BUILD-INFO" ]; then
+    echo "error: $DEPS/BUILD-INFO not found; build kanaha-android-deps first" >&2
+    exit 1
+fi
+HTTPD_VERSION=$(sed -n 's/^HTTPD_VERSION=//p' "$DEPS/BUILD-INFO")
+AXIS2C_REF=$(sed -n 's/^AXIS2C_REF=//p' "$DEPS/BUILD-INFO")
+if [ -z "$HTTPD_VERSION" ] || [ -z "$AXIS2C_REF" ]; then
+    echo "error: $DEPS/BUILD-INFO lacks HTTPD_VERSION or AXIS2C_REF; rebuild kanaha-android-deps" >&2
+    exit 1
+fi
+# Axis2/C headers and sources come from the tree kanaha-android-deps exported
+# at the commit its libraries were built from, never from a checkout that may
+# have moved on: a header that disagrees with the library it describes fails
+# at run time, not at link time.
+AXIS2_SRC="$DEPS_WORK/axis2c-src-${AXIS2C_REF:0:9}"
+HTTPD_DIR="$DEPS_WORK/httpd-$HTTPD_VERSION"
 
 KANAHA_APP=$SCRIPT_DIR/kanaha-camera-app/app/src/main/cpp
 AXIS2_INCLUDE=$AXIS2_SRC/include
