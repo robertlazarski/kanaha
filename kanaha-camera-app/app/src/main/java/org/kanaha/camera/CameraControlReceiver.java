@@ -416,6 +416,12 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 lastRecordingWasOpenGate = false;
             }
 
+            // Here, not in startRecordingInternal: the scheduled start fires on the main
+            // thread, where waiting for the camera to reopen would block the reopen itself.
+            if (!ensureVideoModeReady(mainActivity)) {
+                return createErrorResponse(operationId, "Camera did not become ready in video mode");
+            }
+
             long now = System.currentTimeMillis();
             long delayMs = startAt > 0 ? startAt - now : 0;
 
@@ -1278,15 +1284,16 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 return true; // Already recording is considered success
             }
 
-            // Ensure we're in video mode
+            // handleStartRecording has already waited for video mode. If the camera has
+            // left it since, waiting is only possible off the main thread.
             if (!mainActivity.getPreview().isVideo()) {
-                Log.i(TAG, "Switching to video mode");
-                // Switch to video mode by calling switchVideo
-                mainActivity.runOnUiThread(() -> {
-                    mainActivity.clickedSwitchVideo(null);
-                });
-                // Give it a moment to switch
-                Thread.sleep(500);
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    Log.e(TAG, "Not in video mode at scheduled start; cannot wait on the main thread");
+                    return false;
+                }
+                if (!ensureVideoModeReady(mainActivity)) {
+                    return false;
+                }
             }
 
             // Start video recording on UI thread
@@ -1312,6 +1319,54 @@ public class CameraControlReceiver extends BroadcastReceiver {
             Log.e(TAG, "Error in startRecordingInternal", e);
             return false;
         }
+    }
+
+    /**
+     * Switches OpenCamera to video mode if needed and waits until the camera has reopened
+     * with its preview running. A photo→video switch reopens the camera session, and a
+     * takePicture() issued before the reopen finishes does not record. The Moto G HAL
+     * takes well over the 500 ms that a fixed sleep here used to allow, so the first
+     * recording after launch failed there. State is read on the UI thread, as in
+     * configureOpenGate(). Must not be called on the main thread: the reopen completes
+     * on the main Looper.
+     */
+    private static boolean ensureVideoModeReady(MainActivity mainActivity) throws InterruptedException {
+        Preview preview = mainActivity.getPreview();
+        AtomicBoolean switched = new AtomicBoolean(false);
+        CountDownLatch switchLatch = new CountDownLatch(1);
+        mainActivity.runOnUiThread(() -> {
+            if (!preview.isVideo()) {
+                Log.i(TAG, "Switching to video mode");
+                mainActivity.clickedSwitchVideo(null);
+                switched.set(true);
+            }
+            switchLatch.countDown();
+        });
+        switchLatch.await(1, TimeUnit.SECONDS);
+
+        for (int i = 0; i <= 20; i++) {
+            CountDownLatch latch = new CountDownLatch(1);
+            AtomicBoolean ready = new AtomicBoolean(false);
+            mainActivity.runOnUiThread(() -> {
+                ready.set(preview.isVideo()
+                        && preview.getCameraController() != null
+                        && !preview.isOpeningCamera()
+                        && preview.isPreviewStarted());
+                latch.countDown();
+            });
+            latch.await(1, TimeUnit.SECONDS);
+            if (ready.get()) {
+                if (switched.get()) {
+                    Log.i(TAG, "Video mode ready " + (i * 500) + "ms after switch");
+                    // As in configureOpenGate(): let startCameraPreview() settle.
+                    Thread.sleep(500);
+                }
+                return true;
+            }
+            if (i < 20) Thread.sleep(500);
+        }
+        Log.e(TAG, "Camera not ready in video mode after 10s");
+        return false;
     }
 
     /**
