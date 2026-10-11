@@ -50,6 +50,9 @@ KANAHA_APP=$SCRIPT_DIR/kanaha-camera-app/app/src/main/cpp
 AXIS2_INCLUDE=$AXIS2_SRC/include
 UTIL_INCLUDE=$AXIS2_SRC/util/include
 OUTPUT_DIR=$SCRIPT_DIR/kanaha-camera-app/app/src/main/jniLibs/arm64-v8a
+# Keep this machine's paths out of __FILE__ in the binary: sources compile as
+# kanaha-camera-app/... and axis2c-src-<ref>/... instead.
+MAP_FLAGS="-ffile-prefix-map=$SCRIPT_DIR/= -ffile-prefix-map=$DEPS_WORK/="
 
 cd "$HTTPD_DIR"
 
@@ -60,7 +63,7 @@ echo "=== Building static service adapter and implementation ==="
 # arm64. The Axis2/C libraries are built with -fsigned-char (see its
 # configure.ac), so these service sources must match or the same char
 # behaves differently either side of the call.
-$CC -fPIC -fsigned-char -D__ANDROID__ -c \
+$CC $MAP_FLAGS -fPIC -fsigned-char -D__ANDROID__ -c \
     -I$DEPS/include \
     -I$DEPS/include/apr-1 \
     -I$AXIS2_INCLUDE \
@@ -70,7 +73,7 @@ $CC -fPIC -fsigned-char -D__ANDROID__ -c \
     -o axis2_static_service_adapter.o
 
 # Compile the Kanaha camera service implementation (provides camera_control_service_invoke_json_impl)
-$CC -fPIC -fsigned-char -D__ANDROID__ -c \
+$CC $MAP_FLAGS -fPIC -fsigned-char -D__ANDROID__ -c \
     -I$DEPS/include \
     $KANAHA_APP/axis2c/camera_control_service.c \
     -o camera_control_service.o
