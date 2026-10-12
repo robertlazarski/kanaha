@@ -320,10 +320,7 @@ cd kanaha-camera-app
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew assembleDebug
 ```
 
-Three native binaries are produced:
-- `libkanaha-camera-control.so` — shared library (5.6 MB)
-- `libkanaha_httpd.so` — HTTP/2 server executable (9.4 MB)
-- `libkanaha_mcp.so` — MCP stdio executable (117 KB)
+Gradle builds `libkanaha_mcp.so`, the MCP stdio executable (about 120 KB). The HTTP/2 server, `libhttpd.so`, is linked separately by `build-android.sh`; see [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md).
 
 ---
 

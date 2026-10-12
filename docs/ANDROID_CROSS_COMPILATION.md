@@ -146,7 +146,6 @@ A new service needs a change in Axis2/C and three in the app.
    - Add `kanaha-camera-app/app/src/main/assets/axis2c/services/MyService/services.xml`, modelled on `CameraControlService`'s, with an `<operation>` for every operation. Each needs `<messageReceiver class="axis2_json_rpc_msg_recv"/>`, `RESTMethod` `POST` and `RESTLocation` `/<operation>`. Keep the `jsonrpc` catch-all too.
    - An operation the file does not declare is answered with "Operation Not Found", even though the service implements it.
    - `ApacheService.java` creates the service directory and deploys the file by name, so add the new service there as well.
-   - The `assets/axis2c/services.xml` one level up is not deployed.
 
 Then run `build-android.sh`, check with `llvm-nm -D` that `my_service_invoke_json` shows `T`, and rebuild the APK.
 

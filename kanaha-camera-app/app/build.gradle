@@ -26,21 +26,19 @@ android {
         //testInstrumentationRunner "android.test.InstrumentationTestRunner"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
-        // NDK Configuration for Apache httpd + Axis2/C compilation
+        // arm64 only: the server (jniLibs/arm64-v8a/libhttpd.so) and its
+        // libraries are built for nothing else.
         ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a'
+            abiFilters 'arm64-v8a'
         }
 
-        // External native build configuration for Apache httpd
+        // The MCP binary; see src/main/cpp/CMakeLists.txt
         externalNativeBuild {
             cmake {
                 cppFlags '-std=c++17 -frtti -fexceptions'
                 // Use static C++ runtime to avoid 16KB alignment issues with libc++_shared.so
                 arguments '-DANDROID_STL=c++_static',
                           '-DANDROID_PLATFORM=android-21',
-                          '-DAXIS2_JSON_ENABLED=1',
-                          '-DWITH_NGHTTP2=1',
-                          '-DWITH_OPENSSL=1',
                           // Android 15 (API 35) requires 16KB page alignment
                           '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
             }
@@ -115,7 +113,7 @@ android {
     buildFeatures {
     }
 
-    // External native build for Apache httpd + Axis2/C
+    // External native build for the MCP binary
     externalNativeBuild {
         cmake {
             path 'src/main/cpp/CMakeLists.txt'

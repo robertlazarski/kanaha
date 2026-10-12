@@ -269,95 +269,6 @@ Expected libraries:
 
 ---
 
-## Local C Code Verification (Without Android NDK)
-
-Before building the full APK, you can verify that native C code compiles correctly using standard GCC on your Ubuntu development machine. This is useful for:
-
-- **Quick syntax checking** during C code development
-- **CI/CD pipelines** that don't have Android NDK installed
-- **Contributors** who want to verify C changes without full Android Studio setup
-
-### Prerequisites for Local Verification
-
-Only `build-essential` is required (installed in Step 1 above):
-
-```bash
-# Verify GCC is available
-gcc --version
-# Should show: gcc (Ubuntu 14.x.x) or similar
-```
-
-### Running Local Verification
-
-The `build-tools/` directory contains a Makefile and Android API stubs for local compilation:
-
-```bash
-cd kanaha-camera-app/build-tools
-
-# Quick syntax check (fastest - no object files created)
-make check
-
-# Build shared objects (deeper verification)
-make
-
-# Build and inspect exported symbols
-make test
-
-# Clean build artifacts
-make clean
-```
-
-**Example Output:**
-```
-$ make check
-Syntax checking: camera_control_service.c
-gcc -fsyntax-only -std=c11 -Wall -Wextra -O2 -fPIC -D_GNU_SOURCE -DANDROID ...
-OK: camera_control_service.c
-
-Syntax checking: apache_httpd_android.c
-gcc -fsyntax-only -std=c11 -Wall -Wextra -O2 -fPIC -D_GNU_SOURCE -DANDROID ...
-OK: apache_httpd_android.c
-
-All syntax checks passed!
-```
-
-### How It Works
-
-The local build uses **stub headers** that mock Android-specific APIs:
-
-```
-build-tools/
-├── Makefile              # Build commands
-├── stubs/
-│   └── android/
-│       └── log.h         # Stub for <android/log.h> - prints to stderr
-└── build/                # Generated .so files (gitignored)
-    ├── libcamera_control_service.so
-    └── libapache_httpd_android.so
-```
-
-The stub `android/log.h` provides dummy implementations of `__android_log_print()` and related functions that print to stderr instead of Android's logcat. This allows the C code to compile and even run basic tests on Linux.
-
-### What Local Verification Checks
-
-| Aspect | Local Verify | Full NDK Build |
-|--------|--------------|----------------|
-| C syntax correctness | ✓ | ✓ |
-| Header includes | ✓ | ✓ |
-| Function signatures | ✓ | ✓ |
-| Symbol exports | ✓ | ✓ |
-| Android NDK compatibility | ✗ | ✓ |
-| ARM64 cross-compilation | ✗ | ✓ |
-| APK packaging | ✗ | ✓ |
-
-### GitHub Actions CI
-
-Pull requests automatically run local verification via GitHub Actions. The workflow is defined in `.github/workflows/verify-native-code.yml` and triggers on changes to `app/src/main/cpp/**`.
-
-Contributors receive automatic feedback on C code changes without needing any local Android development setup.
-
----
-
 ## Build Steps
 
 ### Step 1: Clone and Prepare Source
@@ -589,37 +500,9 @@ android {
 }
 ```
 
-### CMakeLists.txt Key Settings
+### CMakeLists.txt
 
-```cmake
-# Cross-compiled dependencies path
-set(CROSS_COMPILED_DEPS "$ENV{HOME}/android-cross-builds/deps/arm64-v8a")
-
-# Only use cross-compiled libs for arm64-v8a
-if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(USE_CROSS_COMPILED_LIBS ON)
-endif()
-
-# Import static libraries
-add_library(ssl STATIC IMPORTED)
-set_target_properties(ssl PROPERTIES IMPORTED_LOCATION ${DEPS_LIB_DIR}/libssl.a)
-# ... repeat for other libraries
-
-# Link all libraries
-target_link_libraries(kanaha-camera-control
-    ${log-lib}
-    ${android-lib}
-    ${z-lib}
-    json-c
-    nghttp2
-    ssl
-    crypto
-    apr-1
-    aprutil-1
-    expat
-    # Axis2/C libraries...
-)
-```
+Gradle's CMake build produces one binary, `libkanaha_mcp.so`, the MCP server. It compiles `kanaha_mcp_main.c`, `kanaha_mcp.c` and `camera_control_service.c`, and links json-c from `~/android-cross-builds/deps/arm64-v8a`. It stops with an error for any ABI but arm64-v8a. The HTTP/2 server is not built here; see below.
 
 ---
 
@@ -718,19 +601,20 @@ Once installed, configure Kanaha for multi-camera operation:
 
 ### What Gets Packaged in the APK
 
-The Android build process creates a **single statically-linked native library** that includes:
+Two native executables, both for arm64-v8a only:
 
 ```
-libkanaha-camera-control.so (arm64-v8a)
-    ├── Apache httpd core (with mod_h2 compiled in)
+libhttpd.so (~10 MB, from jniLibs, linked by build-android.sh)
+    ├── Apache httpd core
     ├── mod_ssl (SSL/TLS support)
     ├── mod_http2 (HTTP/2 support)
     ├── mod_axis2 (Axis2/C web services)
-    ├── Axis2/C runtime
+    ├── the camera service
     └── All dependencies (OpenSSL, nghttp2, etc.)
-```
 
-**Size:** ~15-20MB for arm64-v8a architecture
+libkanaha_mcp.so (~120 KB, built by Gradle's CMake)
+    └── the MCP server and the camera service
+```
 
 **Runtime Behavior:**
 - **No system Apache required**: Kanaha APK is self-contained
@@ -748,7 +632,7 @@ libkanaha-camera-control.so (arm64-v8a)
 | `app/src/main/java/org/kanaha/camera/CameraControlReceiver.java` | Intent receiver for camera operations |
 | `app/src/main/java/org/kanaha/camera/ApacheService.java` | Service managing Apache httpd lifecycle |
 
-**Note:** The `libhttpd.so` binary is built separately using the cross-compilation script at `~/android-cross-builds/link-httpd-axis2.sh`. Changes to `camera_control_service.c` require rebuilding this binary.
+**Note:** `libhttpd.so` is built separately, by `build-android.sh` at the repository root. Changes to `camera_control_service.c` need that script run as well as the Gradle build: Gradle rebuilds only the MCP binary.
 
 ### Verification
 
@@ -756,14 +640,9 @@ libkanaha-camera-control.so (arm64-v8a)
 # List native libraries in APK
 unzip -l app/build/outputs/apk/foss/debug/app-foss-debug.apk | grep "\.so$"
 
-# Should show:
-# lib/arm64-v8a/libhttpd.so              (~10MB) - Apache httpd with Axis2/C (prebuilt)
-# lib/arm64-v8a/libkanaha-camera-control.so      - CMake build artifact (unused)
-# lib/arm64-v8a/libkanaha_httpd.so               - CMake executable target (unused)
-# lib/arm64-v8a/libc++_shared.so                 - C++ runtime
-#
-# Note: Only libhttpd.so is actually used - it's launched via ProcessBuilder.
-# The other .so files are CMake build artifacts that could be removed.
+# Should show exactly two:
+# lib/arm64-v8a/libhttpd.so        (~10MB) - Apache httpd with Axis2/C, started via ProcessBuilder
+# lib/arm64-v8a/libkanaha_mcp.so   (~120KB) - the MCP server, copied to files/kanaha-camera-mcp
 ```
 
 ```bash

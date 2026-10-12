@@ -864,7 +864,7 @@ For security, ensure these minimum versions:
 
 ### CVE Monitoring (Application Responsibility)
 
-Kanaha uses **OWASP Dependency-Check** via GitHub Actions (`.github/workflows/owasp-dependency-check.yml`) to scan shipped binaries for known vulnerabilities.
+Kanaha has no automated dependency scan. Every native library it ships is pinned to a version and checksum in [kanaha-android-deps](https://github.com/robertlazarski/kanaha-android-deps)' `versions.env`, which records what each APK contains, and a developer checks those pins against upstream advisories.
 
 **Responsibility Chain:**
 
@@ -883,9 +883,9 @@ Kanaha uses **OWASP Dependency-Check** via GitHub Actions (`.github/workflows/ow
 ┌─────────────────────────────────────────────────────────────┐
 │  Kanaha (This Repository) - Ships APK Binaries              │
 │  ─────────────────────────────────────────────              │
-│  • OWASP DC scans jniLibs/ and cross-compiled deps          │
-│  • CI fails on critical CVEs (CVSS >= 9.0)                  │
-│  • Developer rebuilds deps in android-cross-builds/         │
+│  • Pins every native dependency in kanaha-android-deps      │
+│  • No automated scan                                        │
+│  • Developer bumps the pin and rebuilds                     │
 │  • New APK released with patched libraries                  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -894,15 +894,15 @@ Kanaha uses **OWASP Dependency-Check** via GitHub Actions (`.github/workflows/ow
 - Axis2/C is a library (source distribution, no binaries)
 - Kanaha is an application (ships APK with specific library versions)
 - Libraries **advise** on CVEs; applications **act** on CVEs
-- OWASP DC scans the actual `.so` files baked into the APK
+- The pins record exactly which library versions each APK contains
 
 **Workflow when CVE is discovered:**
 
 1. Axis2/C CVE checker creates issue with new vulnerability
 2. Axis2/C maintainer updates `docs/SECURITY.md` minimum versions
-3. Kanaha OWASP DC flags build as containing vulnerable library
-4. Kanaha developer updates `android-cross-builds/` with patched version
-5. Rebuild cross-compiled libraries (see [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md))
+3. Kanaha developer compares the advisory with the pins in `versions.env`
+4. Raise the pinned version and its SHA-256, and run `build-all.sh`
+5. Relink the app's server (see [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md))
 6. Release new Kanaha APK
 
 ## Security Checklist
