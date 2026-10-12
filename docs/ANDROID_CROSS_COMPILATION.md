@@ -56,25 +56,32 @@ The link is in this repository's `build-android.sh`. It compiles the camera serv
 
 ### Verifying Symbol Inclusion
 
-After linking, verify critical symbols are present:
+`build-android.sh` strips the binary, but `--export-dynamic` keeps the registry symbols in its dynamic symbol table, so you can check the installed file:
 
 ```bash
-# Check for Android static service registry
-nm httpd | grep -E "android_static|try_android|camera_control"
+llvm-nm -D kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so \
+    | grep -E "android_static|try_android|_service_invoke_json"
 
-# Expected output (T = global text symbol):
-# 00000000007b4998 T android_static_service_lookup
-# 00000000007b3ae0 T camera_control_service_invoke_json
-# 00000000007b49fc T try_android_static_service
+# Expected (T = defined here, W = only Axis2/C's weak stub):
+# ... T android_static_service_lookup
+# ... W audio_search_service_invoke_json
+# ... T camera_control_service_invoke_json
+# ... T camera_control_service_invoke_json_impl
+# ... W financial_benchmark_service_invoke_json
+# ... T try_android_static_service
 ```
+
+`llvm-nm` is in the NDK's `toolchains/llvm/prebuilt/linux-x86_64/bin`. The line that matters is `camera_control_service_invoke_json`: `T` means the app's adapter was linked. `W` means only the weak stub is there: it returns `NULL`, the receiver falls back to loading the service with `dlopen()`, which fails on Android, and every request to the service returns an error. The other services show `W` because this app does not provide them.
 
 ### Deploy
 
 ```bash
 cd kanaha-camera-app
-./gradlew assembleDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleFossDebug
+adb install -r app/build/outputs/apk/foss/debug/app-foss-debug.apk
 ```
+
+`foss` is the default flavor. `nano` adds the on-device ML Kit model and needs Android 8 or later.
 
 ---
 
@@ -93,51 +100,26 @@ invoke_func = dlsym(lib, "camera_control_service_invoke_json");
 
 With static linking, there are no `.so` files to load. Services must be registered at compile time.
 
-### Solution: Static Service Registry
+### Solution: Weak Stubs and a Lookup Table
 
-Axis2/C includes an Android-specific static service registry that maps service names to function pointers:
+The registry is in Axis2/C's `src/core/receivers/axis2_json_rpc_msg_recv.c`, under `#ifdef __ANDROID__`. It has three parts:
 
-**Registry in `axis2_json_rpc_msg_recv.c`:**
-```c
-#ifdef __ANDROID__
-/* Forward declaration of statically linked service */
-extern json_object* camera_control_service_invoke_json(
-    const axutil_env_t *env, json_object *json_request);
+1. **A weak stub per known service.** Each returns `NULL`, so the engine links whether or not an app supplies that service:
+   ```c
+   __attribute__((weak))
+   json_object* camera_control_service_invoke_json(
+       const axutil_env_t *env, json_object *json_request)
+   {
+       return NULL;
+   }
+   ```
+   The stubs today are `camera_control_service_invoke_json`, `audio_search_service_invoke_json` and `financial_benchmark_service_invoke_json`.
 
-typedef json_object* (*json_service_invoke_func_t)(
-    const axutil_env_t *env, json_object *json_request);
+2. **`android_static_service_lookup()`**, which maps a service name to its function: `CameraControlService`, `AudioSearchService` or `FinancialBenchmarkService`.
 
-/* Non-static to ensure linker includes this function from archives */
-json_service_invoke_func_t
-android_static_service_lookup(const char *service_name)
-{
-    if (strcmp(service_name, "CameraControlService") == 0) {
-        return camera_control_service_invoke_json;
-    }
-    /* Add more services here */
-    return NULL;
-}
+3. **`try_android_static_service()`**, which the JSON-RPC receiver calls with the service and operation the URL resolved to. It parses the body and calls the function. If the body does not name an operation, it first adds `"operation": "<operation>"`, so a service with no message context still knows what was called. A body that names a different operation from the URL is only accepted on the catch-all location; the comment in that function gives the full rule.
 
-/* Non-static to ensure linker includes this function from archives */
-axis2_bool_t
-try_android_static_service(const axutil_env_t *env,
-                           const char *service_name,
-                           const char *json_request_str,
-                           axis2_char_t **json_response_out)
-{
-    json_service_invoke_func_t service_invoke = android_static_service_lookup(service_name);
-    if (!service_invoke) return AXIS2_FALSE;
-
-    json_object *request = json_tokener_parse(json_request_str);
-    json_object *response = service_invoke(env, request);
-    *json_response_out = axutil_strdup(env, json_object_to_json_string(response));
-
-    json_object_put(request);
-    json_object_put(response);
-    return AXIS2_TRUE;
-}
-#endif
-```
+The app supplies the real function under the same name. Its definition is strong, so the linker uses it instead of the stub. In this repository that is `kanaha-camera-app/app/src/main/cpp/axis2c/axis2_static_service_adapter.c`. It converts the `json_object` request to a string, calls the camera service's `camera_control_service_invoke_json_impl()`, and parses the reply back. `build-android.sh` archives the adapter and the service into `libkanaha_services.a` and links it with `--whole-archive`.
 
 ### Why Functions Must Be Non-Static
 
@@ -148,54 +130,25 @@ try_android_static_service(const axutil_env_t *env,
 - Static functions not called from exported code are optimized away
 - **Non-static functions** are exported symbols that the linker preserves
 
-```c
-/* WRONG - will be optimized away during linking */
-static json_service_invoke_func_t android_static_service_lookup(...) { }
-
-/* CORRECT - preserved as global symbol */
-json_service_invoke_func_t android_static_service_lookup(...) { }
-```
+The same applies to the app's adapter: a `static` definition would not override the weak stub.
 
 ### Adding New Services
 
-To add a new statically-linked service:
+A new service needs a change in Axis2/C and three in the app.
 
-1. **Create service implementation:**
-   ```c
-   // axis2_my_service.c
-   json_object* my_service_invoke_json(
-       const axutil_env_t *env, json_object *json_request)
-   {
-       // Handle JSON-RPC methods
-       return json_response;
-   }
-   ```
+1. **Axis2/C: a weak stub and a lookup entry.** In `axis2_json_rpc_msg_recv.c`, add a weak `my_service_invoke_json(env, json_request)` returning `NULL` next to the others, and a `strcmp` for `"MyService"` in `android_static_service_lookup()`. Without the entry, the receiver falls back to `dlopen()` and the requests fail, even when the app links an implementation.
 
-2. **Add to Makefile.am:**
-   ```makefile
-   libaxis2_receivers_la_SOURCES = msg_recv.c \
-                                   axis2_json_rpc_msg_recv.c \
-                                   axis2_camera_control_service.c \
-                                   axis2_my_service.c \
-                                   svr_callback.c
-   ```
+2. **Rebuild the dependencies.** Commit the Axis2/C change, set `AXIS2C_REF` in kanaha-android-deps' `versions.env` to that commit, and run its `build-all.sh`. Do not patch `libaxis2_engine.a` in place: the next dependency rebuild would silently drop the change.
 
-3. **Register in static registry:**
-   ```c
-   // In axis2_json_rpc_msg_recv.c
-   extern json_object* my_service_invoke_json(...);
+3. **App: the implementation.** Define `json_object* my_service_invoke_json(const axutil_env_t *env, json_object *json_request)`, non-static, returning a `json_object` the caller frees. Following `axis2_static_service_adapter.c`, keep it a thin adapter over the service. Add its sources to the compile and `ar` lines in `build-android.sh`, so they land in `libkanaha_services.a` inside the `--whole-archive` pair.
 
-   json_service_invoke_func_t android_static_service_lookup(const char *service_name)
-   {
-       if (strcmp(service_name, "CameraControlService") == 0)
-           return camera_control_service_invoke_json;
-       if (strcmp(service_name, "MyService") == 0)
-           return my_service_invoke_json;
-       return NULL;
-   }
-   ```
+4. **App: services.xml, and deploying it.**
+   - Add `kanaha-camera-app/app/src/main/assets/axis2c/services/MyService/services.xml`, modelled on `CameraControlService`'s, with an `<operation>` for every operation. Each needs `<messageReceiver class="axis2_json_rpc_msg_recv"/>`, `RESTMethod` `POST` and `RESTLocation` `/<operation>`. Keep the `jsonrpc` catch-all too.
+   - An operation the file does not declare is answered with "Operation Not Found", even though the service implements it.
+   - `ApacheService.java` creates the service directory and deploys the file by name, so add the new service there as well.
+   - The `assets/axis2c/services.xml` one level up is not deployed.
 
-4. **Rebuild:** commit the Axis2/C change, set `AXIS2C_REF` in kanaha-android-deps' `versions.env` to that commit, run its `build-all.sh`, then run `build-android.sh` here. Do not patch `libaxis2_engine.a` in place: the next dependency rebuild would silently drop the change.
+Then run `build-android.sh`, check with `llvm-nm -D` that `my_service_invoke_json` shows `T`, and rebuild the APK.
 
 ---
 
@@ -285,6 +238,7 @@ LOAD  0x00000000000f18d0 0x00000000000f28d0 ... 0x1000
 
 | Date | Changes |
 |------|---------|
+| 2026-10-12 | Rewrote the static service registry and "Adding New Services" for the weak-stub design: the app supplies the implementation, and a new service also needs its `services.xml` deployed. Symbol check uses `llvm-nm -D`, which works on the stripped binary. Deploy uses the `foss` flavor |
 | 2026-10-09 | The dependency build steps (OpenSSL through Axis2/C, with their patches and workarounds) moved to [kanaha-android-deps](https://github.com/robertlazarski/kanaha-android-deps); `build-android.sh` takes the httpd version from its `BUILD-INFO`. Dropped the inline copy of the old link script and the in-place `libaxis2_engine.a` update |
 | 2026-10-07 | Dependency refresh: OpenSSL 3.2.0 → 3.5.9, httpd 2.4.66 → 2.4.69, expat 2.6.4 → 2.9.0, Axis2/C master `ce7c8f381`. Documented the `modules.c` mod_axis2 registration (Issue 5), which had only existed inside the old httpd tree, and the `gen_test_char` relink trap (Issue 1) |
 | 2026-02-15 | Rebuilt Axis2/C from `3004810a1`: JSON reader security fixes, HTTP worker hardening, deprecated feature removal, SNI support |
