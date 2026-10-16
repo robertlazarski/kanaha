@@ -108,46 +108,15 @@ sdkmanager --list_installed
 
 > **Note:** For headless/CI environments without Android Studio, download the command line tools manually from https://developer.android.com/studio#command-tools
 
-### Step 4: Install Additional Dependencies for Axis2/C HTTP/2 Build
+### Step 4: Install the Native Build Tools
+
+The native libraries are built from source by kanaha-android-deps (see Build Steps below). It needs only build tools on the host, no `-dev` packages and no cross-compiler package: the NDK supplies the compiler.
 
 ```bash
-# Install libraries required for Apache httpd + Axis2/C native compilation
-sudo apt install -y \
-    libssl-dev \
-    libcurl4-openssl-dev \
-    libnghttp2-dev \
-    libxml2-dev \
-    libz-dev \
-    libapr1-dev \
-    libaprutil1-dev \
-    libpcre2-dev
-
-# Install cross-compilation tools for Android NDK
-sudo apt install -y \
-    gcc-aarch64-linux-gnu \
-    g++-aarch64-linux-gnu \
-    binutils-aarch64-linux-gnu
+sudo apt install -y build-essential make cmake autoconf automake libtool perl curl git
 ```
 
-**Why We Don't Install apache2/apache2-dev**
-
-Notice that we did **NOT** install `apache2` or `apache2-dev` packages. Here's why:
-
-```bash
-# DO NOT RUN THIS:
-# sudo apt install apache2 apache2-dev
-
-# Reason: Ubuntu 25.10's Apache package lacks HTTP/2 support
-ls /usr/lib/apache2/modules/mod_h2.so
-# Result: No such file or directory
-```
-
-**Why Ubuntu 25.10 Apache Won't Work:**
-- Default apache2 package (2.4.64) does **not include mod_h2** (HTTP/2 module)
-- No `libapache2-mod-h2` package available in Ubuntu 25.10 repositories
-- Using system Apache would result in HTTP/1.1-only builds (unusable for Kanaha)
-
-**Solution**: We compile Apache httpd from source with HTTP/2 explicitly enabled via `--enable-http2` configure flag. This ensures mod_h2 is built and statically linked into the Android native library.
+`build-essential` provides the host gcc that httpd's build uses for one tool it runs during the build.
 
 ### Step 5: Configure Android NDK Environment
 
@@ -242,7 +211,7 @@ ls -d $HOME/Android/Sdk/ndk/*/ 2>/dev/null || echo "No NDK found in ~/Android/Sd
 - Java JDK 17 or later (JDK 21 also works)
 - Android Studio (latest stable - Ladybug or later)
 - Android SDK Platform 35 or 36
-- Android NDK r27 or r28
+- Android NDK 28.0.12916984, the version kanaha-android-deps builds with
 - Build Tools 35.0.0 or 36.1.0
 - CMake 3.22.1 or later
 - Git 2.40 or later
@@ -271,184 +240,54 @@ Expected libraries:
 
 ## Build Steps
 
-### Step 1: Clone and Prepare Source
+The APK carries two native executables. `libhttpd.so`, Apache httpd with mod_axis2 and the camera service, is linked by `build-android.sh` at the repository root against libraries that kanaha-android-deps builds. Gradle builds only the MCP binary, `libkanaha_mcp.so`, and packages `libhttpd.so` from `jniLibs`.
+
+### Step 1: Build the Native Dependencies
 
 ```bash
-# Clone the Kanaha repository
 cd ~/repos
-git clone https://github.com/your-org/kanaha.git
-cd kanaha
-
-# Initialize submodules (includes Axis2/C HTTP/2, OpenCamera)
-git submodule update --init --recursive
-
-# Verify NDK is configured
-echo "NDK Location: $ANDROID_NDK_HOME"
-# Should point to: ~/Android/Sdk/ndk/28.0.12916984 or similar
+git clone https://github.com/robertlazarski/kanaha-android-deps.git
+cd kanaha-android-deps
+./build-all.sh
 ```
 
-### Step 2: Configure Build Environment
+This builds OpenSSL, nghttp2, APR, APR-util, PCRE2, expat, json-c, Apache httpd and Axis2/C, at the versions pinned in its `versions.env`, into `~/android-cross-builds/deps/arm64-v8a/`. It records what it built in `BUILD-INFO` there, which the next step reads. The same build serves Kanaha Audio and Kanaha Calcs, so it only needs running again when its pins change.
+
+### Step 2: Clone Kanaha and Link libhttpd.so
+
+```bash
+cd ~/repos
+git clone https://github.com/robertlazarski/kanaha.git
+cd kanaha
+bash build-android.sh
+```
+
+`build-android.sh` compiles the camera service and the Axis2/C static service adapter, links them into httpd, strips the result and installs it as `kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so`. It stops if `BUILD-INFO` is missing.
+
+### Step 3: Configure the Gradle Build
 
 ```bash
 cd kanaha-camera-app
-
-# Set up local.properties for Android SDK/NDK paths
 cat > local.properties <<EOF
 sdk.dir=$HOME/Android/Sdk
-ndk.dir=$HOME/Android/Sdk/ndk/28.0.12916984
-cmake.dir=$HOME/Android/Sdk/cmake/3.22.1
+ndk.version=28.0.12916984
 EOF
-
-# Verify Gradle wrapper
-./gradlew --version
 ```
 
-### Step 3: Build Apache httpd with HTTP/2 for Android
-
-**CRITICAL: Apache httpd Dependency**
-
-Kanaha requires **Apache httpd 2.4.x compiled from source** with HTTP/2 support (mod_h2). This is a **build-time dependency only** - the compiled httpd binary is statically linked into the Android APK and ships with the app.
-
-**Why System Apache Won't Work:**
-```bash
-# Testing Ubuntu 25.10 system Apache for HTTP/2 support:
-sudo apt install apache2 apache2-dev
-
-# Check for mod_h2:
-ls /usr/lib/apache2/modules/mod_h2.so
-# Result: No such file or directory
-
-# Try to enable mod_h2:
-sudo a2enmod h2
-# Result: ERROR: Module h2 does not exist!
-```
-
-**Solution: Build Apache httpd from Source for Android**
-
-You must compile Apache httpd from source with HTTP/2 enabled, then cross-compile it for Android ARM64 using the NDK.
-
-**Step 3a: Compile Apache httpd from Source (x86_64 Build Host)**
-
-First, build Apache for your Ubuntu development machine:
+### Step 4: Build the APK
 
 ```bash
-# Install build dependencies
-sudo apt install -y build-essential libtool-bin \
-    libpcre3-dev libssl-dev libnghttp2-dev \
-    libexpat1-dev libapr1-dev libaprutil1-dev wget
-
-# Create build directory
-mkdir -p ~/apache-android-build
-cd ~/apache-android-build
-
-# Download Apache httpd 2.4.64 (or latest)
-wget https://archive.apache.org/dist/httpd/httpd-2.4.64.tar.gz
-tar -xzf httpd-2.4.64.tar.gz
-cd httpd-2.4.64
-
-# Configure with HTTP/2 support (x86_64 host)
-./configure \
-    --prefix=$HOME/apache-httpd-x86 \
-    --enable-so \
-    --enable-ssl \
-    --enable-http2 \
-    --enable-headers \
-    --enable-rewrite \
-    --with-ssl \
-    --with-nghttp2 \
-    --enable-mods-shared=all
-
-# Compile
-make -j$(nproc)
-
-# Install to local directory
-make install
-
-# Verify HTTP/2 support
-$HOME/apache-httpd-x86/bin/httpd -M | grep h2
-# Should show: http2_module (shared)
-```
-
-**Step 3b: Cross-Compile Dependencies for Android ARM64**
-
-Apache httpd, Axis2/C and their dependencies are cross-compiled by **[kanaha-android-deps](https://github.com/robertlazarski/kanaha-android-deps)**, shared with Kanaha Audio and Kanaha Calcs. Clone it and run `./build-all.sh`; its README covers the pinned versions, the Android patches and the workarounds.
-
-> **See [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md)** for how this app's binary is linked against them.
-
-**Quick Summary:**
-
-| Component | Output Location |
-|-----------|----------------|
-| OpenSSL, nghttp2, APR, etc. | `~/android-cross-builds/deps/arm64-v8a/lib/` |
-| Apache httpd build tree | `~/android-cross-builds/httpd-<version>/` (version recorded in `deps/arm64-v8a/BUILD-INFO`) |
-
-**Prerequisites Check:**
-```bash
-# Verify NDK is installed
-ls $HOME/Android/Sdk/ndk/28.0.12916984/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
-
-# Create build directory (NOT inside ~/Android/Sdk)
-mkdir -p ~/android-cross-builds/deps/arm64-v8a
-```
-
-After completing the cross-compilation guide, continue with Step 3c below.
-
-**Step 3c: Build Axis2/C with Android Apache httpd**
-
-Now build Axis2/C against the Android cross-compiled Apache httpd:
-
-```bash
-# Set environment variables
-export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/28.0.12916984
-export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
-export DEPS_DIR=$HOME/android-cross-builds/deps/arm64-v8a
-export APACHE_DIR=$HOME/android-cross-builds/apache/arm64-v8a
-
-# Navigate to Kanaha native code directory
-cd ~/repos/kanaha/kanaha-camera-app/app/src/main/cpp
-
-# Configure Axis2/C with HTTP/2 support
-./configure \
-    --host=aarch64-linux-android \
-    --enable-http2 \
-    --enable-json-rpc \
-    --with-apache=$APACHE_DIR \
-    --with-apr=$DEPS_DIR \
-    --with-nghttp2=$DEPS_DIR \
-    --with-ssl=$DEPS_DIR \
-    --prefix=$PWD/build/arm64-v8a \
-    CC=$TOOLCHAIN/bin/aarch64-linux-android21-clang \
-    CXX=$TOOLCHAIN/bin/aarch64-linux-android21-clang++ \
-    CFLAGS="-I$DEPS_DIR/include" \
-    LDFLAGS="-L$DEPS_DIR/lib"
-
-# Build native components
-make clean
-make -j$(nproc)
-make install
-
-# Return to project root
-cd ../../../..
-```
-
-### Step 4: Build APK
-
-```bash
-# Clean previous builds
-./gradlew clean
-
-# Build debug APKs for testing — this builds BOTH product flavours
+# Both product flavours
 ./gradlew assembleDebug
 
 # Or one flavour at a time
 ./gradlew assembleFossDebug     # distributable build, no proprietary client
 ./gradlew assembleNanoDebug     # adds the ML Kit description client, private use only
 
-# Or build release APKs (requires signing configuration)
+# Release APKs need a signing configuration
 ./gradlew assembleRelease
 
-# APK output locations (the flavour is part of the path — there is no
-# plain app-debug.apk since the flavours were added):
+# Output, with the flavour in the path:
 # Debug:   app/build/outputs/apk/foss/debug/app-foss-debug.apk
 #          app/build/outputs/apk/nano/debug/app-nano-debug.apk
 # Release: app/build/outputs/apk/foss/release/app-foss-release.apk
@@ -459,18 +298,14 @@ The `nano` flavour links Google's proprietary ML Kit GenAI client for
 `describeClip`; it is for private use only under GPL v3. See
 [GOOGLE_NANO_INTEGRATION.md](GOOGLE_NANO_INTEGRATION.md).
 
-**Build Variants:**
-- `debug` - Includes debugging symbols, not optimized, allows USB debugging
-- `release` - Optimized, requires signing key, production-ready
-
 ### Step 5: Verify the APK
 
 ```bash
-# Check APK size (should be 10-15MB)
+# About 15 MB
 ls -lh app/build/outputs/apk/foss/debug/app-foss-debug.apk
 
-# Check native library size (should be 5-7MB with all libraries linked)
-unzip -l app/build/outputs/apk/foss/debug/app-foss-debug.apk | grep libkanaha
+# Exactly two native libraries: libhttpd.so (about 10 MB) and libkanaha_mcp.so (about 120 KB)
+unzip -l app/build/outputs/apk/foss/debug/app-foss-debug.apk | grep "\.so$"
 ```
 
 ---
@@ -658,19 +493,16 @@ Expected output should show only Android system libraries (liblog.so, libandroid
 
 ## Rebuilding libhttpd.so
 
-If you modify `camera_control_service.c` or other native code compiled into `libhttpd.so`, you must rebuild it separately:
+`camera_control_service.c` is compiled into both executables. After changing it, or any other code linked into `libhttpd.so`, run `build-android.sh` again before the Gradle build; Gradle on its own rebuilds only the MCP binary and would package the old server:
 
 ```bash
-# Rebuild Apache httpd with Axis2/C and camera service
-~/android-cross-builds/link-httpd-axis2.sh
-
-# Copy to jniLibs
-cp ~/android-cross-builds/httpd-2.4.69/httpd \
-   ~/repos/kanaha/kanaha-camera-app/app/src/main/jniLibs/arm64-v8a/libhttpd.so
-
-# Rebuild APK
-./gradlew assembleDebug
+cd ~/repos/kanaha
+bash build-android.sh
+cd kanaha-camera-app
+./gradlew assembleFossDebug
 ```
+
+After a kanaha-android-deps update, run its `build-all.sh` first.
 
 ---
 
@@ -796,43 +628,9 @@ public class MainActivity extends Activity {
 }
 ```
 
-#### Issue 5: PIC relocation errors
+#### Issue 5: Link errors in build-android.sh
 
-**Error:**
-```
-ld.lld: error: relocation R_AARCH64_ADR_PREL_PG_HI21 cannot be used against symbol
-```
-
-**Cause:** Static libraries compiled without `-fPIC` cannot be linked into shared libraries.
-
-**Solution:** Rebuild ALL dependencies (APR, APR-util, Axis2/C) with:
-```bash
-export CFLAGS="-fPIC"
-./configure --with-pic ...
-```
-
-#### Issue 6: pthread not found on Android
-
-**Error:**
-```
-ld.lld: error: unable to find library -lpthread
-```
-
-**Cause:** Android's Bionic libc includes pthread, no separate library needed.
-
-**Solution:** Modify Axis2/C configure.ac:
-```autoconf
-case "$host" in
-  *android*)
-    PTHREADLIBS=""
-    ;;
-  *)
-    AC_CHECK_LIB(pthread, pthread_key_create)
-    PTHREADLIBS="-lpthread"
-    ;;
-esac
-AC_SUBST(PTHREADLIBS)
-```
+Errors such as `relocation R_AARCH64_ADR_PREL_PG_HI21 cannot be used against symbol` or `unable to find library -lpthread` came from dependencies built by hand. kanaha-android-deps builds every library with `-fPIC` for Android's linker, so rebuild them with its `build-all.sh` rather than patching individual libraries.
 
 ### Prerequisites Troubleshooting
 
@@ -1114,6 +912,7 @@ The successful test on Moto X4 (2017) and Pixel 10 Pro XL (2025) demonstrates co
 
 | Date | Changes |
 |------|---------|
+| 2026-10-16 | Build Steps rewritten for kanaha-android-deps and `build-android.sh`; removed the hand-built httpd and Axis2/C steps and the host `-dev` packages they needed |
 | 2026-01-31 | Fixed Android 15 16KB page alignment warning: added `-Wl,-z,max-page-size=16384 -Wl,-z,separate-loadable-segments` to all native library link flags, switched to c++_static STL. See [ANDROID_CROSS_COMPILATION.md](ANDROID_CROSS_COMPILATION.md#android-15-16kb-page-alignment) for details |
 | 2026-01-31 | New build with Axis2/C AXIS2C-1708 security hardening (TLS 1.2+, XXE protection, JSON limits, NTLM removed) |
 | 2026-01-22 | Consolidated installation guide from MULTI_CAMERA_DEPLOYMENT_SYSTEM.md |
