@@ -692,7 +692,7 @@ The installation process is identical for older devices. The same APK runs witho
 
 | Device | Year | Android | ADB Tests | WiFi Tests | SFTP Transfer | Last verified | Notes |
 |--------|------|---------|-----------|------------|---------------|---------------|-------|
-| Google Pixel 10 Pro XL | 2025 | 17 (API 37) | Pass | Pass | Not re-run | 2026-09-05 | Primary development device |
+| Google Pixel 10 Pro XL | 2025 | 17 (API 37) | Pass | Pass | Pass | 2026-10-16 | Primary development device; `nano` flavour, `describeClip` with Gemini Nano also passes |
 | Motorola Moto X4 | 2017 | 9 (API 28) | Pass | Pass | Pass | 2026-09-05 | Oldest supported; runs Camera1 by default |
 | Motorola Moto G Play 2024 | 2024 | 14 (API 34) | Pass | Not tested | Not tested | 2026-10-11 | Refuses `am` from apps (exit 255); camera control runs through the request-file fallback (`CameraIpcPoller`). Its camera HAL can take over 500 ms to reopen when OpenCamera switches from photo to video mode; `startRecording` now waits for the reopen, so the first recording after launch no longer fails |
 | Google Pixel 9 Pro | 2024 | 14 | Pass | Pass | Pass | 2026-01 (device traded in) | Superseded by the 10 Pro XL |
