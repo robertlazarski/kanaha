@@ -17,6 +17,7 @@ package org.kanaha.camera;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.location.Location;
@@ -38,6 +39,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 import android.media.CamcorderProfile;
@@ -363,6 +365,14 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     case "describeClip":
                         response = handleDescribeClip(context, intent);
                         break;
+                    case "set_exposure":
+                    case "setExposure":
+                        response = handleSetExposure(context, intent);
+                        break;
+                    case "get_exposure":
+                    case "getExposure":
+                        response = handleGetExposure(context, intent);
+                        break;
                     default:
                         Log.e(TAG, "Unknown action: " + action);
                         response = createErrorResponse(operationId, "Unknown action: " + action);
@@ -581,6 +591,345 @@ public class CameraControlReceiver extends BroadcastReceiver {
             Log.e(TAG, "Error getting status", e);
             return createErrorResponse(operationId, "Exception getting status: " + e.getMessage());
         }
+    }
+
+    /**
+     * setExposure: pin ISO, shutter, white balance, focus and stabilization so every camera
+     * in a shoot records with the same values, or return them to auto.
+     *
+     * Per field, an explicit value wins, then "lock" (the camera's current live value), then
+     * "auto". Nothing is clamped: a value outside the camera's range is refused, because a
+     * silently clamped value would leave two cameras unmatched.
+     *
+     * The values are written to OpenCamera's preferences and applied through
+     * updateForSettings(), the path the on-screen controls use, so they persist across takes
+     * and survive the camera reopen that open gate causes.
+     */
+    private JSONObject handleSetExposure(Context context, Intent intent) throws JSONException {
+        String operationId = intent.getStringExtra("operation_id");
+        boolean auto = "1".equals(intent.getStringExtra("auto"));
+        boolean lock = "1".equals(intent.getStringExtra("lock"));
+        String wb = emptyToNull(intent.getStringExtra("wb"));
+        String focus = emptyToNull(intent.getStringExtra("focus"));
+        String stabilization = emptyToNull(intent.getStringExtra("stabilization"));
+        final Long isoReq, exposureReq, kelvinReq;
+        final Float focusReq;
+        try {
+            isoReq = optionalLong(intent, "iso");
+            exposureReq = optionalLong(intent, "exposure_time_ns");
+            kelvinReq = optionalLong(intent, "wb_kelvin");
+            String fd = emptyToNull(intent.getStringExtra("focus_distance"));
+            focusReq = fd == null ? null : Float.parseFloat(fd);
+        } catch (NumberFormatException e) {
+            return createErrorResponse(operationId,
+                    "iso, exposure_time_ns and wb_kelvin must be whole numbers, and focus_distance a number");
+        }
+
+        boolean anyValue = isoReq != null || exposureReq != null || kelvinReq != null
+                || focusReq != null || wb != null || focus != null;
+        if (auto && (lock || anyValue)) {
+            return createErrorResponse(operationId, "auto cannot be combined with lock or explicit values");
+        }
+        if (!auto && !lock && !anyValue && stabilization == null) {
+            return createErrorResponse(operationId, "Nothing to set: give auto, lock, or at least one value");
+        }
+        if (wb != null && !wb.equals("auto")) {
+            return createErrorResponse(operationId, "wb must be \"auto\"; give a manual white balance as wb_kelvin");
+        }
+        if (kelvinReq != null && wb != null) {
+            return createErrorResponse(operationId, "Give wb_kelvin or wb, not both");
+        }
+        if (focus != null && !focus.equals("auto") && !focus.equals("lock")) {
+            return createErrorResponse(operationId, "focus must be \"auto\" or \"lock\"; give a manual distance as focus_distance");
+        }
+        if (focusReq != null && focus != null) {
+            return createErrorResponse(operationId, "Give focus_distance or focus, not both");
+        }
+
+        try {
+            MainActivity mainActivity = MainActivity.getInstance();
+            if (mainActivity == null) {
+                return createErrorResponse(operationId, "MainActivity instance not available");
+            }
+            if (mainActivity.isAppPaused()) {
+                return createErrorResponse(operationId, CAMERA_NOT_IN_FOREGROUND);
+            }
+            if (isRecordingActive(mainActivity)) {
+                return createErrorResponse(operationId,
+                        "Exposure cannot change during a recording; stop it first so every frame of a take matches");
+            }
+            // The focus preference is per photo/video mode; set it for the mode that records.
+            if (!ensureVideoModeReady(mainActivity)) {
+                return createErrorResponse(operationId, "Camera did not become ready in video mode");
+            }
+
+            AtomicReference<String> error = new AtomicReference<>();
+            CountDownLatch latch = new CountDownLatch(1);
+            mainActivity.runOnUiThread(() -> {
+                try {
+                    error.set(applyExposure(mainActivity, auto, lock, isoReq, exposureReq, kelvinReq, wb,
+                            focusReq, focus, stabilization));
+                } catch (Exception e) {
+                    Log.e(TAG, "applyExposure failed", e);
+                    error.set("Failed to apply exposure: " + e.getMessage());
+                } finally {
+                    latch.countDown();
+                }
+            });
+            if (!latch.await(2, TimeUnit.SECONDS)) {
+                return createErrorResponse(operationId, "Camera did not respond while setting exposure");
+            }
+            if (error.get() != null) {
+                return createErrorResponse(operationId, error.get());
+            }
+            // updateForSettings() restarts the preview on a delay. Wait for it, so the
+            // reported values and any startRecording that follows see the new settings.
+            if (!ensureVideoModeReady(mainActivity)) {
+                return createErrorResponse(operationId, "Camera did not come back after applying exposure");
+            }
+
+            JSONObject response = exposureState(mainActivity);
+            if (response == null) {
+                return createErrorResponse(operationId, "Exposure set, but the camera did not report it");
+            }
+            response.put("success", true);
+            response.put("operation_id", operationId);
+            response.put("message", "Exposure set");
+            return response;
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting exposure", e);
+            return createErrorResponse(operationId, "Exception setting exposure: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Validates the whole request before writing anything, so a refused request changes
+     * nothing. Runs on the UI thread, which owns the camera state it reads.
+     *
+     * @return null on success, otherwise the error for the client
+     */
+    private static String applyExposure(MainActivity mainActivity, boolean auto, boolean lock,
+                                        Long isoReq, Long exposureReq, Long kelvinReq, String wb,
+                                        Float focusReq, String focus, String stabilization) {
+        Preview preview = mainActivity.getPreview();
+        CameraController controller = preview.getCameraController();
+        if (controller == null) {
+            return "Camera not available";
+        }
+        SharedPreferences.Editor editor = PreferenceManager.getDefaultSharedPreferences(mainActivity).edit();
+
+        // ISO and shutter go together: Camera2 has no shutter or ISO priority, so manual
+        // exposure means both, and the one not given is taken from the live value.
+        Long iso = isoReq, exposure = exposureReq;
+        if (iso != null || exposure != null || lock) {
+            if (!preview.supportsISORange() || !preview.supportsExposureTime()) {
+                return "This camera does not support manual ISO and shutter (Motorola phones: set Settings > Camera API to Camera2)";
+            }
+            if (iso == null) {
+                if (!controller.captureResultHasIso()) return "The camera has not reported its ISO yet; give iso";
+                iso = (long) controller.captureResultIso();
+            }
+            if (exposure == null) {
+                if (!controller.captureResultHasExposureTime()) return "The camera has not reported its shutter yet; give exposure_time_ns";
+                exposure = controller.captureResultExposureTime();
+            }
+            if (iso < preview.getMinimumISO() || iso > preview.getMaximumISO()) {
+                return "iso " + iso + " is outside this camera's range "
+                        + preview.getMinimumISO() + "-" + preview.getMaximumISO();
+            }
+            if (exposure < preview.getMinimumExposureTime() || exposure > preview.getMaximumExposureTime()) {
+                return "exposure_time_ns " + exposure + " is outside this camera's range "
+                        + preview.getMinimumExposureTime() + "-" + preview.getMaximumExposureTime();
+            }
+            // A shutter longer than one frame makes the camera stretch the frame to fit it,
+            // which lowers the frame rate of that camera alone.
+            if (controller.captureResultHasFrameDuration() && exposure > controller.captureResultFrameDuration()) {
+                return "exposure_time_ns " + exposure + " is longer than one frame ("
+                        + controller.captureResultFrameDuration() + " ns) and would lower the frame rate";
+            }
+            editor.putString(PreferenceKeys.ISOPreferenceKey, String.valueOf(iso));
+            editor.putLong(PreferenceKeys.ExposureTimePreferenceKey, exposure);
+        } else if (auto) {
+            editor.putString(PreferenceKeys.ISOPreferenceKey, CameraController.ISO_DEFAULT);
+            editor.putLong(PreferenceKeys.ExposureTimePreferenceKey, CameraController.EXPOSURE_TIME_DEFAULT);
+        }
+
+        Long kelvin = kelvinReq;
+        if (kelvin == null && lock && wb == null) {
+            if (!controller.captureResultHasWhiteBalanceTemperature()) return "The camera has not reported its white balance yet; give wb_kelvin";
+            kelvin = (long) controller.captureResultWhiteBalanceTemperature();
+        }
+        if (kelvin != null) {
+            if (!preview.supportsWhiteBalanceTemperature()) {
+                return "This camera does not support white balance in kelvin";
+            }
+            if (kelvin < preview.getMinimumWhiteBalanceTemperature() || kelvin > preview.getMaximumWhiteBalanceTemperature()) {
+                return "wb_kelvin " + kelvin + " is outside this camera's range "
+                        + preview.getMinimumWhiteBalanceTemperature() + "-" + preview.getMaximumWhiteBalanceTemperature();
+            }
+            editor.putString(PreferenceKeys.WhiteBalancePreferenceKey, "manual");
+            editor.putInt(PreferenceKeys.WhiteBalanceTemperaturePreferenceKey, (int) (long) kelvin);
+        } else if (auto || wb != null) {
+            editor.putString(PreferenceKeys.WhiteBalancePreferenceKey, CameraController.WHITE_BALANCE_DEFAULT);
+        }
+
+        List<String> focusModes = preview.getSupportedFocusValues();
+        String focusKey = PreferenceKeys.getFocusPreferenceKey(preview.getCameraId(), true);
+        Float distance = focusReq;
+        if (distance == null && ("lock".equals(focus) || (lock && focus == null))) {
+            if (!controller.captureResultHasFocusDistance()) return "The camera has not reported its focus distance yet; give focus_distance";
+            distance = controller.captureResultFocusDistance();
+        }
+        if (distance != null) {
+            if (focusModes == null || !focusModes.contains("focus_mode_manual2")) {
+                return "This camera does not support manual focus";
+            }
+            if (distance < 0.0f || distance > preview.getMinimumFocusDistance()) {
+                return "focus_distance " + distance + " is outside this camera's range 0 (infinity) to "
+                        + preview.getMinimumFocusDistance() + " dioptres";
+            }
+            editor.putString(focusKey, "focus_mode_manual2");
+            editor.putFloat(PreferenceKeys.FocusDistancePreferenceKey, distance);
+        } else if (auto || "auto".equals(focus)) {
+            if (focusModes != null && focusModes.contains("focus_mode_continuous_video")) {
+                editor.putString(focusKey, "focus_mode_continuous_video");
+            } else {
+                editor.remove(focusKey);
+            }
+        }
+
+        if (stabilization != null) {
+            boolean on = "1".equals(stabilization);
+            if (on && !preview.supportsVideoStabilization()) {
+                return "This camera does not support video stabilization";
+            }
+            editor.putBoolean(PreferenceKeys.VideoStabilizationPreferenceKey, on);
+        }
+
+        editor.apply();
+        mainActivity.updateForSettings(true, "");
+        Log.i(TAG, "applyExposure: auto=" + auto + " lock=" + lock + " iso=" + iso + " exposure_ns=" + exposure
+                + " wb_kelvin=" + kelvin + " focus_distance=" + distance + " stabilization=" + stabilization);
+        return null;
+    }
+
+    /**
+     * getExposure: the modes in force and the camera's live values. The live values can be
+     * sent unchanged to setExposure on another camera to match it to this one.
+     */
+    private JSONObject handleGetExposure(Context context, Intent intent) throws JSONException {
+        String operationId = intent.getStringExtra("operation_id");
+        try {
+            MainActivity mainActivity = MainActivity.getInstance();
+            if (mainActivity == null) {
+                return createErrorResponse(operationId, "MainActivity instance not available");
+            }
+            if (mainActivity.isAppPaused()) {
+                return createErrorResponse(operationId, CAMERA_NOT_IN_FOREGROUND);
+            }
+            JSONObject response = exposureState(mainActivity);
+            if (response == null) {
+                return createErrorResponse(operationId, "Camera did not respond while reading exposure");
+            }
+            response.put("success", true);
+            response.put("operation_id", operationId);
+            return response;
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting exposure", e);
+            return createErrorResponse(operationId, "Exception getting exposure: " + e.getMessage());
+        }
+    }
+
+    /** Reads exposureStateOnUiThread() from a background thread; null if the UI thread did not answer. */
+    private static JSONObject exposureState(MainActivity mainActivity) throws InterruptedException {
+        AtomicReference<JSONObject> state = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        mainActivity.runOnUiThread(() -> {
+            try {
+                state.set(exposureStateOnUiThread(mainActivity));
+            } catch (JSONException e) {
+                Log.e(TAG, "exposureState failed", e);
+            } finally {
+                latch.countDown();
+            }
+        });
+        latch.await(2, TimeUnit.SECONDS);
+        return state.get();
+    }
+
+    private static JSONObject exposureStateOnUiThread(MainActivity mainActivity) throws JSONException {
+        Preview preview = mainActivity.getPreview();
+        CameraController controller = preview.getCameraController();
+        JSONObject state = new JSONObject();
+        state.put("camera_available", controller != null);
+        if (controller == null) {
+            return state;
+        }
+
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mainActivity);
+        String isoPref = prefs.getString(PreferenceKeys.ISOPreferenceKey, CameraController.ISO_DEFAULT);
+        state.put("exposure_mode", CameraController.ISO_DEFAULT.equals(isoPref) ? "auto" : "manual");
+        String wbPref = prefs.getString(PreferenceKeys.WhiteBalancePreferenceKey, CameraController.WHITE_BALANCE_DEFAULT);
+        state.put("wb_mode", wbPref);
+        String focusPref = prefs.getString(PreferenceKeys.getFocusPreferenceKey(preview.getCameraId(), true), "");
+        state.put("focus_mode", "focus_mode_manual2".equals(focusPref) ? "manual"
+                : focusPref.isEmpty() ? "default" : focusPref.replace("focus_mode_", ""));
+        state.put("stabilization", prefs.getBoolean(PreferenceKeys.VideoStabilizationPreferenceKey, false));
+
+        // Live values from the latest capture result: what the sensor is doing now, in auto or manual.
+        if (controller.captureResultHasIso()) {
+            state.put("iso", controller.captureResultIso());
+        }
+        if (controller.captureResultHasExposureTime()) {
+            long t = controller.captureResultExposureTime();
+            state.put("exposure_time_ns", t);
+            state.put("shutter", t > 0 && t < 1000000000L ? "1/" + Math.round(1e9 / t) : (t / 1e9) + "s");
+        }
+        if (controller.captureResultHasWhiteBalanceTemperature()) {
+            state.put("wb_kelvin", controller.captureResultWhiteBalanceTemperature());
+        }
+        if (controller.captureResultHasFocusDistance()) {
+            state.put("focus_distance", (double) controller.captureResultFocusDistance());
+        }
+        if (controller.captureResultHasFrameDuration()) {
+            state.put("frame_duration_ns", controller.captureResultFrameDuration());
+        }
+
+        JSONObject supports = new JSONObject();
+        JSONObject ranges = new JSONObject();
+        boolean manualExposure = preview.supportsISORange() && preview.supportsExposureTime();
+        supports.put("manual_exposure", manualExposure);
+        if (manualExposure) {
+            ranges.put("iso_min", preview.getMinimumISO());
+            ranges.put("iso_max", preview.getMaximumISO());
+            ranges.put("exposure_time_min_ns", preview.getMinimumExposureTime());
+            ranges.put("exposure_time_max_ns", preview.getMaximumExposureTime());
+        }
+        supports.put("wb_kelvin", preview.supportsWhiteBalanceTemperature());
+        if (preview.supportsWhiteBalanceTemperature()) {
+            ranges.put("wb_kelvin_min", preview.getMinimumWhiteBalanceTemperature());
+            ranges.put("wb_kelvin_max", preview.getMaximumWhiteBalanceTemperature());
+        }
+        List<String> focusModes = preview.getSupportedFocusValues();
+        boolean manualFocus = focusModes != null && focusModes.contains("focus_mode_manual2");
+        supports.put("manual_focus", manualFocus);
+        if (manualFocus) {
+            ranges.put("focus_distance_max", (double) preview.getMinimumFocusDistance());
+        }
+        supports.put("stabilization", preview.supportsVideoStabilization());
+        state.put("supports", supports);
+        state.put("ranges", ranges);
+        return state;
+    }
+
+    private static String emptyToNull(String s) {
+        return s == null || s.isEmpty() ? null : s;
+    }
+
+    /** An optional whole-number extra: null when absent or empty. */
+    private static Long optionalLong(Intent intent, String key) {
+        String value = emptyToNull(intent.getStringExtra(key));
+        return value == null ? null : Long.parseLong(value);
     }
 
     /**

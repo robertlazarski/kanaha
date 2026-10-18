@@ -212,6 +212,40 @@ $CURL -H "Content-Type: application/json" \
   "https://$CAMERA:8443/services/CameraControlService/stopRecording"
 ```
 
+#### setExposure / getExposure
+
+Pin exposure so cameras match, instead of each one metering its own framing.
+
+```bash
+# Manual: ISO 100, 1/60 (180° shutter at 30 fps), 5600 K, focus held where it is
+$CURL -H "Content-Type: application/json" \
+  -d '{"action":"setExposure","iso":100,"exposure_time_ns":16666666,"wb_kelvin":5600,"focus":"lock"}' \
+  "https://$CAMERA:8443/services/CameraControlService/setExposure"
+
+# Freeze whatever auto has settled on
+$CURL -H "Content-Type: application/json" -d '{"action":"setExposure","lock":true}' \
+  "https://$CAMERA:8443/services/CameraControlService/setExposure"
+
+# Back to auto
+$CURL -H "Content-Type: application/json" -d '{"action":"setExposure","auto":true}' \
+  "https://$CAMERA:8443/services/CameraControlService/setExposure"
+
+# Modes, live values, support and ranges
+$CURL -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
+  "https://$CAMERA:8443/services/CameraControlService/getExposure"
+```
+
+`setExposure` fields, all optional:
+- `iso`, `exposure_time_ns` — manual exposure. Camera2 has no shutter or ISO priority, so giving one fixes both; the other is taken from the live value.
+- `wb_kelvin` — manual white balance; `"wb":"auto"` returns white balance alone to auto.
+- `focus_distance` (dioptres, `0` = infinity), or `"focus":"lock"` to hold the current distance, or `"focus":"auto"`.
+- `stabilization` — `true`/`false`. Electronic stabilization crops by a varying amount, so set it the same on every camera.
+- `lock` — freeze every value not given explicitly at its live value. `auto` — everything back to auto; not combinable with other fields.
+
+Values outside the camera's range are refused, never clamped, since a clamped value would leave cameras unmatched; so is a shutter longer than one frame, which would lower that camera's frame rate. Settings persist across takes and through the reopen `open_gate` causes, and are refused while recording. Manual exposure and kelvin need the Camera2 API; Motorola phones default to Camera1 (Settings > Camera API).
+
+`getExposure` returns `exposure_mode`, `wb_mode`, `focus_mode`, `stabilization`, the live `iso`, `exposure_time_ns` (also as `shutter`, e.g. `"1/60"`), `wb_kelvin`, `focus_distance` and `frame_duration_ns`, plus `supports` and `ranges` objects. The live values can be sent unchanged to `setExposure` on other cameras; see [Multi-Camera Setup](#multi-camera-setup). `wb_kelvin` read from auto white balance is OpenCamera's estimate from the colour gains, so locking it can shift colour slightly on that camera; cameras given the same `wb_kelvin` still match.
+
 #### listFiles
 
 ```bash
@@ -363,6 +397,8 @@ no URL, so for them `"action"` is what selects the tool.
 | `/deleteFiles` | POST | `pattern` | Delete files matching glob pattern |
 | `/sftpTransfer` | POST | `storage_server_id`, `video_filename`, `destination_folder` | Push files to remote host via SFTP |
 | `/describeClip` | POST | `video_filename`, `frame_count`, `positions`, `write_sidecar`, `max_dimension` | Describe a recording with the on-device model (Gemini Nano, `nano` flavor only); writes `<basename>.kanaha.json` |
+| `/setExposure` | POST | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization` | Pin exposure, white balance, focus and stabilization so cameras match; refused out of range or while recording |
+| `/getExposure` | POST | — | Modes in force, live values (feed them to `setExposure` on other cameras), support flags and ranges |
 | `/playTone` | POST | `frequency`, `duration_ms`, `start_at` | Play synthesized sine wave for software sync slate |
 
 **`start_at` parameter** (on `startRecording` and `playTone`): Pass a future UTC epoch millisecond timestamp. The camera schedules the action internally and returns immediately. Send to multiple cameras simultaneously — each fires at the same wall-clock time regardless of network delivery timing. See [Quick Start](#5-control-via-api) for curl examples.
@@ -392,6 +428,24 @@ echo "All cameras scheduled — firing at $START_AT"
 ```
 
 The same client certificate works for all cameras when they share a CA.
+
+**Matching exposure.** Meter on one camera, then send its live values to all of them, so no camera meters its own framing:
+
+```bash
+VALUES=$(curl -s --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+  -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
+  "https://192.168.1.100:8443/services/CameraControlService/getExposure" \
+  | jq -c '{action:"setExposure", iso, exposure_time_ns, wb_kelvin, focus_distance, stabilization:false}')
+
+for cam in 192.168.1.{100,101,102}; do
+  curl -s --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    -H "Content-Type: application/json" -d "$VALUES" \
+    "https://$cam:8443/services/CameraControlService/setExposure" &
+done
+wait
+```
+
+Identical phones match only on the same Android build: an OTA update changes the image processing, so update every camera together.
 
 For three-camera workflows with automatic sync slate, SFTP transfer, and post-processing, use `test-triple-camera-workflow.sh` — it handles address resolution, `start_at` scheduling, software slate (`play_slate_all`), file transfer including the sync sidecar, and cleanup in a single script.
 

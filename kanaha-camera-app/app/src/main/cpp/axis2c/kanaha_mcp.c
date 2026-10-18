@@ -186,6 +186,34 @@ static const char SCHEMA_DESCRIBE_CLIP[] =
     "\"required\":[\"video_filename\"]"
     "}";
 
+static const char SCHEMA_SET_EXPOSURE[] =
+    "{"
+    "\"type\":\"object\","
+    "\"properties\":{"
+        "\"auto\":{\"type\":\"boolean\","
+            "\"description\":\"Return ISO, shutter, white balance and focus to auto. Not combinable with other fields\"},"
+        "\"lock\":{\"type\":\"boolean\","
+            "\"description\":\"Freeze every value not given explicitly at the camera's current live value\"},"
+        "\"iso\":{\"type\":\"integer\",\"description\":\"Manual ISO; the shutter is kept at its live value if not given\"},"
+        "\"exposure_time_ns\":{\"type\":\"integer\","
+            "\"description\":\"Manual shutter in nanoseconds (16666666 = 1/60). Must not exceed one frame\"},"
+        "\"wb_kelvin\":{\"type\":\"integer\",\"description\":\"Manual white balance in kelvin\"},"
+        "\"wb\":{\"type\":\"string\",\"enum\":[\"auto\"],\"description\":\"Return white balance alone to auto\"},"
+        "\"focus\":{\"type\":\"string\",\"enum\":[\"auto\",\"lock\"],"
+            "\"description\":\"Continuous autofocus, or hold the current focus distance\"},"
+        "\"focus_distance\":{\"type\":\"number\",\"description\":\"Manual focus in dioptres; 0 is infinity\"},"
+        "\"stabilization\":{\"type\":\"boolean\",\"description\":\"Video stabilization on or off\"}"
+    "},"
+    "\"required\":[]"
+    "}";
+
+static const char SCHEMA_GET_EXPOSURE[] =
+    "{"
+    "\"type\":\"object\","
+    "\"properties\":{},"
+    "\"required\":[]"
+    "}";
+
 static const char SCHEMA_CONFIGURE[] =
     "{"
     "\"type\":\"object\","
@@ -280,6 +308,21 @@ static const kanaha_mcp_tool_t kanaha_mcp_tools[] = {
         "(device, build or API level), downloading (retry later), not_found, "
         "frame_extract_failed, inference_timeout.",
         SCHEMA_DESCRIBE_CLIP
+    },
+    {
+        "setExposure",
+        "Pin ISO, shutter, white balance in kelvin, focus and stabilization so every "
+        "camera in a shoot records with the same values, or return them to auto. "
+        "Values outside the camera's range are refused, never clamped. Settings persist "
+        "across takes; refused while recording. To match cameras, call getExposure on "
+        "one and send its iso, exposure_time_ns, wb_kelvin and focus_distance to all.",
+        SCHEMA_SET_EXPOSURE
+    },
+    {
+        "getExposure",
+        "Report the exposure, white balance and focus modes in force, the camera's live "
+        "values, what it supports and its ranges.",
+        SCHEMA_GET_EXPOSURE
     },
     {
         "configure",

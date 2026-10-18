@@ -20,6 +20,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <math.h>
 #include <errno.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -542,6 +543,31 @@ static int extract_json_bool(const char* json, const char* key, int default_valu
     return default_value;
 }
 
+/*
+ * Copy the number at "key" into out as its own text, for an Intent extra the
+ * Java side parses. Returns 1 when present and a finite number, 0 when absent
+ * or null (out is ""), -1 when the key is present but its value is not a number.
+ */
+static int extract_json_number_token(const char* json, const char* key, char* out, size_t out_size) {
+    char search_key[128];
+    snprintf(search_key, sizeof(search_key), "\"%s\":", key);
+    out[0] = '\0';
+
+    const char* start = strstr(json, search_key);
+    if (!start) return 0;
+    start += strlen(search_key);
+    while (*start == ' ') start++;
+    if (strncmp(start, "null", 4) == 0) return 0;   /* e.g. jq copying a value the camera did not report */
+
+    char* end;
+    double value = strtod(start, &end);
+    if (end == start || !isfinite(value)) return -1;
+    if ((size_t)(end - start) >= out_size) return -1;
+    memcpy(out, start, (size_t)(end - start));
+    out[end - start] = '\0';
+    return 1;
+}
+
 /* Create JSON response helpers */
 static void create_success_response(char* buffer, size_t size, const char* message) {
     snprintf(buffer, size, "{\"success\":true,\"message\":\"%s\"}", message);
@@ -557,6 +583,23 @@ static void create_error_response(char* buffer, size_t size, const char* error) 
 
 int camera_device_start_recording_impl(const char* clip_name, const char* quality, int duration, const char* format, long long start_at, int open_gate,
                                        int hlg10, char* reason, size_t reason_size);
+
+/* setExposure fields as the Java side takes them: numbers as their JSON text,
+ * "" when not given; stabilization -1 when not given. */
+typedef struct {
+    int auto_all;
+    int lock;
+    char iso[32];
+    char exposure_time_ns[32];
+    char wb_kelvin[32];
+    char focus_distance[32];
+    char wb[16];
+    char focus[16];
+    int stabilization;
+} exposure_request_t;
+
+int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_response, size_t response_size);
+int camera_device_get_exposure_impl(char* json_response, size_t response_size);
 int camera_device_stop_recording_impl(void);
 int camera_device_get_status_impl(char* status_json, size_t buffer_size);
 int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
@@ -800,6 +843,42 @@ int camera_control_service_invoke_json_impl(
                                                       json_response, response_size);
         if (result != 0) {
             create_error_response(json_response, response_size, "Failed to describe clip");
+        }
+    }
+    else if (strcmp(action, "set_exposure") == 0 || strcmp(action, "setExposure") == 0) {
+        /* Format checks only; which combinations make sense, and the camera's
+         * ranges, are decided on the Java side, which can see the camera. */
+        exposure_request_t req;
+        memset(&req, 0, sizeof(req));
+        if (extract_json_number_token(json_request, "iso", req.iso, sizeof(req.iso)) < 0 ||
+            extract_json_number_token(json_request, "exposure_time_ns", req.exposure_time_ns, sizeof(req.exposure_time_ns)) < 0 ||
+            extract_json_number_token(json_request, "wb_kelvin", req.wb_kelvin, sizeof(req.wb_kelvin)) < 0 ||
+            extract_json_number_token(json_request, "focus_distance", req.focus_distance, sizeof(req.focus_distance)) < 0) {
+            create_error_response(json_response, response_size,
+                "iso, exposure_time_ns, wb_kelvin and focus_distance must be numbers");
+            return -1;
+        }
+        extract_json_string(json_request, "wb", req.wb, sizeof(req.wb));
+        extract_json_string(json_request, "focus", req.focus, sizeof(req.focus));
+        if (req.wb[0] && strcmp(req.wb, "auto") != 0) {
+            create_error_response(json_response, response_size, "wb must be \\\"auto\\\"");
+            return -1;
+        }
+        if (req.focus[0] && strcmp(req.focus, "auto") != 0 && strcmp(req.focus, "lock") != 0) {
+            create_error_response(json_response, response_size, "focus must be \\\"auto\\\" or \\\"lock\\\"");
+            return -1;
+        }
+        req.auto_all = extract_json_bool(json_request, "auto", 0);
+        req.lock = extract_json_bool(json_request, "lock", 0);
+        req.stabilization = extract_json_bool(json_request, "stabilization", -1);
+
+        if (camera_device_set_exposure_impl(&req, json_response, response_size) != 0) {
+            create_error_response(json_response, response_size, "Failed to set exposure");
+        }
+    }
+    else if (strcmp(action, "get_exposure") == 0 || strcmp(action, "getExposure") == 0) {
+        if (camera_device_get_exposure_impl(json_response, response_size) != 0) {
+            create_error_response(json_response, response_size, "Failed to get exposure");
         }
     }
     else if (strcmp(action, "play_tone") == 0 || strcmp(action, "playTone") == 0) {
@@ -1341,6 +1420,33 @@ int camera_device_list_files_impl(const char* pattern, char* json_response, size
     return 0;
 }
 
+/*
+ * Send a request whose Java response goes back to the client as it is, success
+ * or failure, so the client sees the Java side's own reason. Returns 0 when a
+ * response was read into json_response, -1 when there was none.
+ */
+static int send_and_pass_through(const char* label, const char* operation_id,
+                                 const intent_extra_t* extras, int num_extras,
+                                 char* json_response, size_t response_size) {
+    int result = send_intent_and_wait_for_response_ex(operation_id, extras, num_extras, 1);
+
+    char response_file[256];
+    snprintf(response_file, sizeof(response_file), "%s%s.json", RESPONSE_FILE_PREFIX, operation_id);
+    FILE* file = fopen(response_file, "r");
+    if (!file) {
+        LOGE("%s: no response file (%s)", label, response_file);
+        return -1;
+    }
+    size_t bytes_read = fread(json_response, 1, response_size - 1, file);
+    fclose(file);
+    unlink(response_file);
+    if (bytes_read == 0) return -1;
+    json_response[bytes_read] = '\0';
+
+    LOGI("%s: response %s", label, result == 0 ? "ok" : "reported failure");
+    return 0;
+}
+
 int camera_device_describe_clip_impl(const char* video_filename, int frame_count, const char* positions_csv,
                                      int write_sidecar, int max_dimension,
                                      char* json_response, size_t response_size) {
@@ -1365,25 +1471,55 @@ int camera_device_describe_clip_impl(const char* video_filename, int frame_count
         {"--es", "max_dimension", max_dim_str}
     };
     /* The Java side answers with the full response (or a failure with a
-     * stable code); a failed status here means the response file said
-     * success:false, and the file still holds the reason. Read it either way. */
-    int result = send_intent_and_wait_for_response_ex(operation_id, extras, 7, 1);
+     * stable code); pass it through either way. */
+    return send_and_pass_through("describe_clip", operation_id, extras,
+                                 (int)(sizeof(extras) / sizeof(extras[0])),
+                                 json_response, response_size);
+}
 
-    char response_file[256];
-    snprintf(response_file, sizeof(response_file), "%s%s.json", RESPONSE_FILE_PREFIX, operation_id);
-    FILE* file = fopen(response_file, "r");
-    if (!file) {
-        LOGE("describe_clip: no response file (%s)", response_file);
-        return -1;
-    }
-    size_t bytes_read = fread(json_response, 1, response_size - 1, file);
-    fclose(file);
-    unlink(response_file);
-    if (bytes_read == 0) return -1;
-    json_response[bytes_read] = '\0';
+int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_response, size_t response_size) {
+    LOGI("camera_device_set_exposure_impl called: auto=%d lock=%d iso=%s exposure_time_ns=%s wb_kelvin=%s",
+         req->auto_all, req->lock, req->iso, req->exposure_time_ns, req->wb_kelvin);
 
-    LOGI("describe_clip: response %s", result == 0 ? "ok" : "reported failure");
-    return 0;   /* the caller passes the JSON through, success or failure */
+    if (!json_response || response_size == 0) return -1;
+
+    char operation_id[64];
+    generate_operation_id(operation_id, sizeof(operation_id));
+
+    /* Absent fields go as "" and the Java side treats them as not given. */
+    intent_extra_t extras[] = {
+        {"--es", "action", "set_exposure"},
+        {"--es", "operation_id", operation_id},
+        {"--es", "auto", req->auto_all ? "1" : "0"},
+        {"--es", "lock", req->lock ? "1" : "0"},
+        {"--es", "iso", req->iso},
+        {"--es", "exposure_time_ns", req->exposure_time_ns},
+        {"--es", "wb_kelvin", req->wb_kelvin},
+        {"--es", "wb", req->wb},
+        {"--es", "focus", req->focus},
+        {"--es", "focus_distance", req->focus_distance},
+        {"--es", "stabilization", req->stabilization < 0 ? "" : (req->stabilization ? "1" : "0")}
+    };
+    return send_and_pass_through("set_exposure", operation_id, extras,
+                                 (int)(sizeof(extras) / sizeof(extras[0])),
+                                 json_response, response_size);
+}
+
+int camera_device_get_exposure_impl(char* json_response, size_t response_size) {
+    LOGI("camera_device_get_exposure_impl called");
+
+    if (!json_response || response_size == 0) return -1;
+
+    char operation_id[64];
+    generate_operation_id(operation_id, sizeof(operation_id));
+
+    intent_extra_t extras[] = {
+        {"--es", "action", "get_exposure"},
+        {"--es", "operation_id", operation_id}
+    };
+    return send_and_pass_through("get_exposure", operation_id, extras,
+                                 (int)(sizeof(extras) / sizeof(extras[0])),
+                                 json_response, response_size);
 }
 
 /*
