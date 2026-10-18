@@ -282,6 +282,8 @@ class SecurityValidator {
 public class CameraControlReceiver extends BroadcastReceiver {
     private static final String TAG = "KanahaCameraReceiver";
     private static final String CAMERA_CONTROL_ACTION = "org.kanaha.CAMERA_CONTROL";
+    static final String CAMERA_NOT_IN_FOREGROUND =
+            "Kanaha Camera is not in the foreground. Android gives the camera only to the app on screen; bring it to the front and try again.";
 
     // Track whether the last recording used open gate so we know when a session
     // reopen is needed to reset back to 16:9 quality.
@@ -402,6 +404,12 @@ public class CameraControlReceiver extends BroadcastReceiver {
             MainActivity mainActivity = MainActivity.getInstance();
             if (mainActivity == null) {
                 return createErrorResponse(operationId, "MainActivity instance not available");
+            }
+            // Android gives the camera only to the app on screen, and OpenCamera
+            // releases it when paused, so a start would wait out the readiness
+            // poll and fail without saying why.
+            if (mainActivity.isAppPaused()) {
+                return createErrorResponse(operationId, CAMERA_NOT_IN_FOREGROUND);
             }
 
             // Open gate overrides any explicit quality: find best native-ratio resolution and reopen camera.

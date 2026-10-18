@@ -119,7 +119,7 @@ public class MainActivity extends AppCompatActivity implements PreferenceFragmen
 
     private static int activity_count = 0;
 
-    private boolean app_is_paused = true; // whether activity is paused
+    private volatile boolean app_is_paused = true; // whether activity is paused; volatile as Kanaha camera control reads it off the main thread
 
     private SensorManager mSensorManager;
     private Sensor mSensorAccelerometer;

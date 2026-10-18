@@ -736,8 +736,8 @@ Settings > Camera API > Camera2 API (the app restarts).
 
 **Bring the app to the foreground before calling `startRecording`.** The status
 fields `camera_available` and `preview_active` are `false` while the activity is
-backgrounded, and `startRecording` returns
-`{"success": false, "error": "Failed to start recording"}`. This is not
+backgrounded, and `startRecording` fails at once with
+`{"success": false, "error": "Kanaha Camera is not in the foreground. ..."}`. This is not
 age-related, but it is the first thing to check when a scripted shoot fails to
 start. Poll `getStatus` and confirm `camera_available` before issuing the start.
 

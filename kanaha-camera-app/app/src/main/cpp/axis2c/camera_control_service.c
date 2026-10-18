@@ -555,7 +555,8 @@ static void create_error_response(char* buffer, size_t size, const char* error) 
  * FORWARD DECLARATIONS - Android-specific implementations
  * ======================================================================== */
 
-int camera_device_start_recording_impl(const char* clip_name, const char* quality, int duration, const char* format, long long start_at, int open_gate);
+int camera_device_start_recording_impl(const char* clip_name, const char* quality, int duration, const char* format, long long start_at, int open_gate,
+                                       char* reason, size_t reason_size);
 int camera_device_stop_recording_impl(void);
 int camera_device_get_status_impl(char* status_json, size_t buffer_size);
 int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
@@ -632,7 +633,9 @@ int camera_control_service_invoke_json_impl(
         long long start_at = extract_json_long(json_request, "start_at", 0);
         int open_gate = extract_json_bool(json_request, "open_gate", 0);
 
-        int result = camera_device_start_recording_impl(clip_name, quality, duration, format, start_at, open_gate);
+        char reason[384] = "";
+        int result = camera_device_start_recording_impl(clip_name, quality, duration, format, start_at, open_gate,
+                                                        reason, sizeof(reason));
 
         if (result == 0) {
             char esc_clip[513], esc_quality[129];   /* 2*src+1 worst-case escaping */
@@ -640,6 +643,12 @@ int camera_control_service_invoke_json_impl(
                 "{\"success\":true,\"message\":\"Recording started\",\"clip_name\":\"%s\",\"quality\":\"%s\"}",
                 json_escape(clip_name, esc_clip, sizeof(esc_clip)),
                 json_escape(quality, esc_quality, sizeof(esc_quality)));
+        } else if (reason[0]) {
+            /* The Java side's own reason, such as the camera app being in the
+             * background, rather than a failure that says nothing. */
+            char esc_reason[769];
+            create_error_response(json_response, response_size,
+                                  json_escape(reason, esc_reason, sizeof(esc_reason)));
         } else {
             create_error_response(json_response, response_size, "Failed to start recording");
         }
@@ -856,7 +865,9 @@ int camera_device_start_recording_impl(
     int duration,
     const char* format,
     long long start_at,
-    int open_gate
+    int open_gate,
+    char* reason,
+    size_t reason_size
 ) {
     LOGI("camera_device_start_recording_impl called");
     LOGI("  clip_name: %s", clip_name ? clip_name : "NULL");
@@ -896,11 +907,26 @@ int camera_device_start_recording_impl(
 
     LOGI("Sending secure intent broadcast to start recording");
 
-    int result = send_intent_and_wait_for_response(operation_id, extras, 8);
+    /* Keep the response file on failure: it holds the Java side's reason. */
+    int result = send_intent_and_wait_for_response_ex(operation_id, extras, 8, 1);
     if (result == 0) {
         LOGI("Recording started successfully via secure IPC");
     } else {
         LOGE("Failed to start recording via secure IPC");
+        char response_file[256];
+        snprintf(response_file, sizeof(response_file), "%s%s.json", RESPONSE_FILE_PREFIX, operation_id);
+        FILE* file = fopen(response_file, "r");
+        if (file) {
+            char response_buffer[4096];
+            size_t bytes_read = fread(response_buffer, 1, sizeof(response_buffer) - 1, file);
+            fclose(file);
+            response_buffer[bytes_read] = '\0';
+            if (reason && reason_size > 0 &&
+                !extract_json_string(response_buffer, "error", reason, reason_size)) {
+                reason[0] = '\0';
+            }
+        }
+        unlink(response_file);
     }
 
     return result;
