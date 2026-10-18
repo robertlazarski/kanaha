@@ -100,7 +100,11 @@ static const char SCHEMA_START_RECORDING[] =
         "\"open_gate\":{\"type\":\"boolean\","
             "\"description\":\"Record at full 4:3 sensor resolution (2560x1920 on Pixel 9 Pro). "
                 "Preserves all sensor rows for maximum reframing flexibility in post. "
-                "Takes 3-5 seconds to reopen camera session. Default: false\"}"
+                "Takes 3-5 seconds to reopen camera session. Default: false\"},"
+        "\"hlg10\":{\"type\":\"boolean\","
+            "\"description\":\"Record 10-bit HLG video (HEVC Main 10, BT.2020). "
+                "Refused with an error on cameras without 10-bit support; check "
+                "supports_hlg10 in getStatus. Default: false\"}"
     "},"
     "\"required\":[]"
     "}";

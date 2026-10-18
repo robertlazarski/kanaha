@@ -638,9 +638,13 @@ were understood, and both are now in the code:
   HLG10 when recording starts and back to 8-bit when it stops. Video snapshots
   are dropped for the duration, since that reader cannot join an HLG10 session.
 
-**Still to do** for the 1-2 days: the HTTP `startRecording` parameter. The
-histogram/zebra/focus-peaking/pre-shots refusal described above is done
-(`DrawPreview.updateSettings()`).
+**HTTP parameter:** `startRecording` takes `"hlg10": true`. It applies to that
+recording only, so omitting it records 8-bit whatever the Settings toggle says,
+and a camera without 10-bit support refuses it with an error rather than
+recording 8-bit. `getStatus` reports `supports_hlg10`. No session reopen is
+needed: the recording session is built fresh at start, which is where HLG10 is
+applied. The histogram/zebra/focus-peaking/pre-shots refusal described above is
+done (`DrawPreview.updateSettings()`).
 
 #### Running it again
 

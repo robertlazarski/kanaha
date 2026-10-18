@@ -188,6 +188,7 @@ Request parameters:
 - `duration` *(optional)* — recording duration in seconds. `0` = record until stopRecording.
 - `format` *(optional)* — container format. Default: `"MP4"`.
 - `open_gate` *(optional)* — `true` to record at the camera's native 4:3 sensor resolution (2560×1920 on Pixel 9 Pro) with no crop. The call blocks 3–5 s while the camera session reopens. Moto G phones ignore this flag and record normally. Default: `false`. See [Open Gate Recording](docs/OPENGATE.md).
+- `hlg10` *(optional)* — `true` to record 10-bit HLG video (HEVC Main 10, BT.2020), whatever the `format`. Applies to this recording only; omitting it records 8-bit even if the Settings toggle is on. Refused with an error on cameras that lack 10-bit support (`supports_hlg10: false` in `getStatus`) rather than silently recording 8-bit. Combines with `open_gate`. Default: `false`.
 - `start_at` *(optional)* — UTC epoch milliseconds at which recording should begin. When provided, the camera schedules the start via `Handler.postDelayed()` and returns immediately with `"scheduled": true`. The camera fires at the specified wall-clock time regardless of when the request arrived. Valid range: 50 ms to 30 000 ms in the future. If zero or omitted, recording starts immediately.
 
 Scheduled start response (when `start_at` is provided and valid):
@@ -290,7 +291,8 @@ Response (10 tools with full inputSchema):
       {"name": "startRecording", "description": "Start video recording. Supports scheduled start...",
        "inputSchema": {"type": "object", "properties": {
          "clip_name": {"type": "string"}, "quality": {"type": "string"},
-         "start_at": {"type": "integer"}, "open_gate": {"type": "boolean"}}, "required": []}},
+         "start_at": {"type": "integer"}, "open_gate": {"type": "boolean"},
+         "hlg10": {"type": "boolean"}}, "required": []}},
       {"name": "stopRecording",  "description": "Stop the current video recording immediately.", "...": "..."},
       {"name": "playTone",       "description": "Play sync slate tone for multi-camera alignment.", "...": "..."},
       {"name": "listFiles",      "description": "List recorded video files on the device.", "...": "..."},
@@ -355,7 +357,7 @@ no URL, so for them `"action"` is what selects the tool.
 | Endpoint | Method | Key Parameters | Description |
 |----------|--------|----------------|-------------|
 | `/getStatus` | GET/POST | — | Camera state, battery, storage, `timestamp`, `gps_time`, `gps_age_ms` |
-| `/startRecording` | POST | `clip_name`, `start_at`, `quality`, `duration`, `format`, `open_gate` | Begin recording; `open_gate: true` records full 4:3 sensor on Pixel 9 Pro; supports scheduled start via `start_at` (UTC epoch ms) |
+| `/startRecording` | POST | `clip_name`, `start_at`, `quality`, `duration`, `format`, `open_gate`, `hlg10` | Begin recording; `open_gate: true` records full 4:3 sensor on Pixel 9 Pro; supports scheduled start via `start_at` (UTC epoch ms) |
 | `/stopRecording` | POST | — | Stop active recording |
 | `/listFiles` | GET/POST | — | List recorded video files with sizes and timestamps |
 | `/deleteFiles` | POST | `pattern` | Delete files matching glob pattern |

@@ -26,6 +26,7 @@ import android.media.AudioFormat;
 import android.media.AudioTrack;
 import android.os.Handler;
 import android.os.Looper;
+import android.preference.PreferenceManager;
 import android.util.Log;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -41,6 +42,8 @@ import java.util.regex.Pattern;
 
 import android.media.CamcorderProfile;
 import net.sourceforge.opencamera.MainActivity;
+import net.sourceforge.opencamera.PreferenceKeys;
+import net.sourceforge.opencamera.cameracontroller.CameraController;
 import net.sourceforge.opencamera.preview.Preview;
 
 /**
@@ -284,6 +287,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
     private static final String CAMERA_CONTROL_ACTION = "org.kanaha.CAMERA_CONTROL";
     static final String CAMERA_NOT_IN_FOREGROUND =
             "Kanaha Camera is not in the foreground. Android gives the camera only to the app on screen; bring it to the front and try again.";
+    static final String HLG10_NOT_SUPPORTED =
+            "This camera does not support 10-bit HLG video. Record without hlg10.";
 
     // Track whether the last recording used open gate so we know when a session
     // reopen is needed to reset back to 16:9 quality.
@@ -388,6 +393,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         int duration = intent.getIntExtra("duration", 1800); // Default 30 minutes
         String format = intent.getStringExtra("format");
         boolean openGate = "1".equals(intent.getStringExtra("open_gate"));
+        boolean hlg10 = "1".equals(intent.getStringExtra("hlg10"));
 
         // Optional scheduled start: start_at is a Unix epoch ms timestamp on this device's clock
         String startAtStr = intent.getStringExtra("start_at");
@@ -396,8 +402,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
             try { startAt = Long.parseLong(startAtStr); } catch (NumberFormatException ignored) {}
         }
 
-        Log.i(TAG, String.format("Start recording: clip=%s, quality=%s, duration=%d, format=%s, open_gate=%b, start_at=%d",
-                clipName, quality, duration, format, openGate, startAt));
+        Log.i(TAG, String.format("Start recording: clip=%s, quality=%s, duration=%d, format=%s, open_gate=%b, hlg10=%b, start_at=%d",
+                clipName, quality, duration, format, openGate, hlg10, startAt));
 
         try {
             // Get MainActivity instance and start recording
@@ -429,6 +435,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
             if (!ensureVideoModeReady(mainActivity)) {
                 return createErrorResponse(operationId, "Camera did not become ready in video mode");
             }
+            // After the camera is ready, so supportsHlg10() describes the camera that will record.
+            String hlg10Error = configureHlg10(mainActivity, hlg10);
+            if (hlg10Error != null) {
+                return createErrorResponse(operationId, hlg10Error);
+            }
 
             long now = System.currentTimeMillis();
             long delayMs = startAt > 0 ? startAt - now : 0;
@@ -438,10 +449,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 final MainActivity activity = mainActivity;
                 final String clip = clipName;
                 final boolean og = openGate;
+                final boolean tenBit = hlg10;
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     long fireTime = System.currentTimeMillis();
                     Log.i(TAG, "Scheduled recording start firing at " + fireTime);
-                    writeSyncSidecar(context, clip, fireTime, og);
+                    writeSyncSidecar(context, clip, fireTime, og, tenBit);
                     startRecordingInternal(activity, clip);
                 }, delayMs);
 
@@ -454,12 +466,13 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 response.put("delay_ms", delayMs);
                 response.put("timestamp", now);
                 response.put("open_gate", openGate);
+                response.put("hlg10", hlg10);
                 response.put("message", "Recording scheduled");
                 return response;
             }
 
             // Immediate start (no start_at or already past)
-            writeSyncSidecar(context, clipName, System.currentTimeMillis(), openGate);
+            writeSyncSidecar(context, clipName, System.currentTimeMillis(), openGate, hlg10);
             boolean success = startRecordingInternal(mainActivity, clipName);
 
             // Create response JSON
@@ -471,6 +484,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             response.put("duration", duration);
             response.put("format", format);
             response.put("open_gate", openGate);
+            response.put("hlg10", hlg10);
 
             if (success) {
                 response.put("message", "Recording started successfully");
@@ -1459,6 +1473,49 @@ public class CameraControlReceiver extends BroadcastReceiver {
      * setupCameraParameters() call (i.e., after reopenCamera or on the next recording start
      * if the camera session already matches).
      */
+    /**
+     * Sets 10-bit HLG for this recording from the request, not from whatever the Settings
+     * screen last held, so a scripted shoot gets the same bit depth every take.
+     *
+     * Refuses rather than falls back, unlike open gate: a silent 8-bit recording after
+     * 10-bit was asked for is only discovered in the grade (see docs/OPENGATE.md).
+     *
+     * No session reopen is needed. Starting a recording builds a new capture session,
+     * and that is where CameraController2 applies HLG10; the controller flag is set
+     * here as well as the preference because Preview copies it only at camera open.
+     *
+     * @return null on success, otherwise the error for the client
+     */
+    private static String configureHlg10(MainActivity mainActivity, boolean hlg10) throws InterruptedException {
+        Preview preview = mainActivity.getPreview();
+        AtomicBoolean supported = new AtomicBoolean(false);
+        CountDownLatch latch = new CountDownLatch(1);
+        mainActivity.runOnUiThread(() -> {
+            try {
+                supported.set(preview.supportsHlg10());
+                if (hlg10 && !supported.get()) return;
+                PreferenceManager.getDefaultSharedPreferences(mainActivity).edit()
+                        .putBoolean(PreferenceKeys.Hlg10PreferenceKey, hlg10).apply();
+                CameraController controller = preview.getCameraController();
+                if (controller != null) {
+                    controller.setHlg10(hlg10 && !controller.isCameraExtension());
+                }
+                // Histogram, zebras and focus peaking yield to 10-bit; see DrawPreview.updateSettings().
+                mainActivity.getApplicationInterface().getDrawPreview().updateSettings();
+            } finally {
+                latch.countDown();
+            }
+        });
+        if (!latch.await(1, TimeUnit.SECONDS)) {
+            return "Camera did not respond while setting hlg10";
+        }
+        if (hlg10 && !supported.get()) {
+            return HLG10_NOT_SUPPORTED;
+        }
+        Log.i(TAG, "configureHlg10: hlg10=" + hlg10 + " supports_hlg10=" + supported.get());
+        return null;
+    }
+
     private static void configureRecordingQuality(MainActivity mainActivity, String quality) {
         Log.i(TAG, "configureRecordingQuality: " + quality);
         try {
@@ -2104,12 +2161,13 @@ public class CameraControlReceiver extends BroadcastReceiver {
      * Combined with NTP RTT correction this yields ~100–200 ms accuracy; with a software
      * slate it improves to ~1–5 ms.
      */
-    private void writeSyncSidecar(Context context, String clipName, long recordingStartMs, boolean openGate) {
+    private void writeSyncSidecar(Context context, String clipName, long recordingStartMs, boolean openGate, boolean hlg10) {
         try {
             JSONObject sidecar = new JSONObject();
             sidecar.put("recording_start_ms", recordingStartMs);
             sidecar.put("clip_name", clipName != null ? clipName : "");
             sidecar.put("open_gate", openGate);
+            sidecar.put("hlg10", hlg10);
 
             // Add GPS fix time if available (same pattern as addCameraStatusDetails)
             MainActivity mainActivity = MainActivity.getInstance();
@@ -2174,6 +2232,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
             boolean isVideoMode = mainActivity.getPreview() != null &&
                                   mainActivity.getPreview().isVideo();
             response.put("video_mode", isVideoMode);
+            response.put("supports_hlg10", mainActivity.getPreview() != null
+                    && mainActivity.getPreview().supportsHlg10());
 
             // Battery level (from Android system)
             android.content.Intent batteryIntent = mainActivity.registerReceiver(null,

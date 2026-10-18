@@ -556,7 +556,7 @@ static void create_error_response(char* buffer, size_t size, const char* error) 
  * ======================================================================== */
 
 int camera_device_start_recording_impl(const char* clip_name, const char* quality, int duration, const char* format, long long start_at, int open_gate,
-                                       char* reason, size_t reason_size);
+                                       int hlg10, char* reason, size_t reason_size);
 int camera_device_stop_recording_impl(void);
 int camera_device_get_status_impl(char* status_json, size_t buffer_size);
 int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
@@ -632,17 +632,19 @@ int camera_control_service_invoke_json_impl(
         duration = extract_json_int(json_request, "duration", 1800);
         long long start_at = extract_json_long(json_request, "start_at", 0);
         int open_gate = extract_json_bool(json_request, "open_gate", 0);
+        int hlg10 = extract_json_bool(json_request, "hlg10", 0);
 
         char reason[384] = "";
         int result = camera_device_start_recording_impl(clip_name, quality, duration, format, start_at, open_gate,
-                                                        reason, sizeof(reason));
+                                                        hlg10, reason, sizeof(reason));
 
         if (result == 0) {
             char esc_clip[513], esc_quality[129];   /* 2*src+1 worst-case escaping */
             snprintf(json_response, response_size,
-                "{\"success\":true,\"message\":\"Recording started\",\"clip_name\":\"%s\",\"quality\":\"%s\"}",
+                "{\"success\":true,\"message\":\"Recording started\",\"clip_name\":\"%s\",\"quality\":\"%s\",\"hlg10\":%s}",
                 json_escape(clip_name, esc_clip, sizeof(esc_clip)),
-                json_escape(quality, esc_quality, sizeof(esc_quality)));
+                json_escape(quality, esc_quality, sizeof(esc_quality)),
+                hlg10 ? "true" : "false");
         } else if (reason[0]) {
             /* The Java side's own reason, such as the camera app being in the
              * background, rather than a failure that says nothing. */
@@ -664,7 +666,7 @@ int camera_control_service_invoke_json_impl(
     }
     else if (strcmp(action, "get_status") == 0 || strcmp(action, "getStatus") == 0) {
         LOGI("Matched get_status/getStatus action, calling camera_device_get_status_impl");
-        char status_buffer[1024];
+        char status_buffer[4096];   /* the status JSON grows with each field; 1024 truncated close to the edge */
         int result = camera_device_get_status_impl(status_buffer, sizeof(status_buffer));
         LOGI("camera_device_get_status_impl returned: %d", result);
 
@@ -866,6 +868,7 @@ int camera_device_start_recording_impl(
     const char* format,
     long long start_at,
     int open_gate,
+    int hlg10,
     char* reason,
     size_t reason_size
 ) {
@@ -876,6 +879,7 @@ int camera_device_start_recording_impl(
     LOGI("  format: %s", format ? format : "NULL");
     LOGI("  start_at: %lld", start_at);
     LOGI("  open_gate: %d", open_gate);
+    LOGI("  hlg10: %d", hlg10);
 
     if (!clip_name || !quality) {
         LOGE("Invalid parameters: clip_name or quality is NULL");
@@ -902,13 +906,15 @@ int camera_device_start_recording_impl(
         {"--ei", "duration", duration_str},
         {"--es", "format", format ? format : "MP4"},
         {"--es", "start_at", start_at_str},
-        {"--es", "open_gate", open_gate ? "1" : "0"}
+        {"--es", "open_gate", open_gate ? "1" : "0"},
+        {"--es", "hlg10", hlg10 ? "1" : "0"}
     };
 
     LOGI("Sending secure intent broadcast to start recording");
 
     /* Keep the response file on failure: it holds the Java side's reason. */
-    int result = send_intent_and_wait_for_response_ex(operation_id, extras, 8, 1);
+    int result = send_intent_and_wait_for_response_ex(operation_id, extras,
+                                                      (int)(sizeof(extras) / sizeof(extras[0])), 1);
     if (result == 0) {
         LOGI("Recording started successfully via secure IPC");
     } else {
