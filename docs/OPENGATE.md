@@ -749,6 +749,33 @@ JSON describes a file; the ffmpeg steps open a file. A DNG sequence is a
 directory of a few thousand files with no audio and no container. Every stage
 needs a notion of "a take is a directory", including whatever offloads it.
 
+#### The probe that sizes it
+
+`RawProbeActivity` (debug builds only, `app/src/debug/`) answers the open
+questions on the device before any design work: whether full-size RAW arrives at
+30 fps without drops, whether the frames can be written as fast as they arrive
+(the write-raw-now, build-DNGs-later design), how long `DngCreator` takes per
+frame, and whether the samples really use 12 bits. A white level of 4095 does not
+settle the last one: 10-bit data scaled into a 12-bit range has its two low bits
+always zero, so the probe counts them in a real frame.
+
+```sh
+adb shell am start -n org.kanaha.camera/org.kanaha.camera.RawProbeActivity
+adb logcat -s KANAHA_RAW12
+```
+
+Point the camera at a bright scene first, or the bit-depth check reports that the
+values never left the 10-bit range. `--ei seconds 10` lengthens each timed phase;
+`--es format raw12` times packed RAW12 capture instead (the DNG and bit checks
+need `RAW_SENSOR` and are skipped). The full result is also written to
+`Android/data/org.kanaha.camera/files/raw_probe/result.json`. The write phase puts
+several GB on storage and deletes it afterwards.
+
+How to read it: `dng_cpu_ms` under 33 means the simple DNG-per-frame design can
+work; over it, the deferred design is mandatory. `writer_drops` above zero means
+storage or the copy cannot keep up. `missing_frames` in the capture phase means
+the camera itself cannot sustain 30 fps at full size, which ends the question.
+
 #### The capacity question, honestly
 
 Four minutes of total recording on the free space available. That is not a

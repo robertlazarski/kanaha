@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: the 12-bit RAW probe never ships in a release. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Exported so `adb shell am start` can launch it; see RawProbeActivity. -->
+        <activity
+            android:name="org.kanaha.camera.RawProbeActivity"
+            android:exported="true"
+            android:screenOrientation="landscape" />
+    </application>
+</manifest>
