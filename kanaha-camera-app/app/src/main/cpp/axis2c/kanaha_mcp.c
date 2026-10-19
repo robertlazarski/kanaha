@@ -124,7 +124,7 @@ static const char SCHEMA_PLAY_TONE[] =
         "\"frequency\":{\"type\":\"integer\","
             "\"description\":\"Tone frequency in Hz. Default: 1000\"},"
         "\"duration_ms\":{\"type\":\"integer\","
-            "\"description\":\"Tone duration in milliseconds. Default: 500\"},"
+            "\"description\":\"Tone duration in milliseconds. Default: 150\"},"
         "\"start_at\":{\"type\":\"integer\","
             "\"description\":\"UTC epoch millisecond for scheduled playback. "
                 "Used for software sync slate — all cameras play the tone at the "
@@ -237,13 +237,14 @@ static const char SCHEMA_CLEANUP_FILES[] =
     "\"type\":\"object\","
     "\"properties\":{"
         "\"cleanup_policy\":{\"type\":\"string\","
-            "\"description\":\"Policy: transferred_only, all, older_than. Default: transferred_only\"},"
-        "\"days_threshold\":{\"type\":\"integer\","
-            "\"description\":\"For older_than policy, delete files older than N days. Default: 30\"},"
+            "\"enum\":[\"older_than_days\",\"after_successful_transfer\",\"all_videos\",\"by_pattern\"],"
+            "\"description\":\"Which files to delete\"},"
+        "\"days_threshold\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":365,"
+            "\"description\":\"For older_than_days: delete files older than N days\"},"
         "\"file_pattern\":{\"type\":\"string\","
-            "\"description\":\"Glob pattern to match. Default: *.mp4\"}"
+            "\"description\":\"Glob pattern; required for by_pattern\"}"
     "},"
-    "\"required\":[]"
+    "\"required\":[\"cleanup_policy\"]"
     "}";
 
 /* ============================================================================

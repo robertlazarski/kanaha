@@ -49,7 +49,7 @@
 
         <operation name="playTone">
             <parameter name="mcpDescription">Play a sync slate tone through the phone speaker. For multi-camera alignment — all cameras play at the same scheduled time. Post-processing detects waveform onset to ±1-5ms accuracy.</parameter>
-            <parameter name="mcpInputSchema">{"type":"object","properties":{"frequency":{"type":"integer","description":"Tone frequency Hz. Default: 1000"},"duration_ms":{"type":"integer","description":"Duration ms. Default: 500"},"start_at":{"type":"integer","description":"UTC epoch ms for scheduled playback. 0=now"}},"required":[]}</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"frequency":{"type":"integer","description":"Tone frequency Hz. Default: 1000"},"duration_ms":{"type":"integer","description":"Duration ms. Default: 150"},"start_at":{"type":"integer","description":"UTC epoch ms for scheduled playback. 0=now"}},"required":[]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/playTone</parameter>
@@ -121,7 +121,7 @@
 
         <operation name="cleanupFiles">
             <parameter name="mcpDescription">Clean up video files from the device based on policy: transferred files only, all files, or files older than a threshold.</parameter>
-            <parameter name="mcpInputSchema">{"type":"object","properties":{"cleanup_policy":{"type":"string","description":"transferred_only, all, older_than. Default: transferred_only"},"days_threshold":{"type":"integer","description":"For older_than, days. Default: 30"},"file_pattern":{"type":"string","description":"Glob pattern. Default: *.mp4"}},"required":[]}</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"cleanup_policy":{"type":"string","enum":["older_than_days","after_successful_transfer","all_videos","by_pattern"]},"days_threshold":{"type":"integer","minimum":1,"maximum":365,"description":"Required for older_than_days"},"file_pattern":{"type":"string","description":"Glob pattern; required for by_pattern"}},"required":["cleanup_policy"]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/cleanupFiles</parameter>
