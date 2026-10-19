@@ -2,12 +2,12 @@
 
 ## BLUF
 
-Add `"open_gate": true` to a `startRecording` request. The camera reopens at its largest recordable 4:3 size, **2560×1920** on both the Pixel 10 Pro XL and the Pixel 9 Pro, and records the full sensor width and height with no 16:9 crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1.
+Add `"open_gate": true` to a `startRecording` request. The camera reopens at its largest recordable 4:3 size, **2560×1920** on the Pixel 10 Pro XL, and records the full sensor width and height with no 16:9 crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1.
 
 **Open gate trades resolution for field of view.** It records the full sensor height, so every crop can include the sky and foreground that 16:9 never records; the grid in [the demo below](#demo-deliverables-grid--one-shoot-every-platform) is that. At 2560×1920 it covers **1080p deliverables without upscaling**: a 16:9 crop is 2560×1440, and a 9:16 vertical is exactly 1080×1920, TikTok's native size. A 4K 16:9 recording (3840×2160) has more pixels but only the 16:9 band's height: its 9:16 crop is 1215×2160 and loses the top and bottom of the scene. Shoot 4K for a 4K 16:9 deliverable; shoot open gate for 1080p and vertical deliverables, or when you need the coverage. Why the ceiling is 2560×1920, not 4032×3024, is under [the encoder limit](#the-encoder-limit-measured-2026-10-19).
 
 **What you need to know:**
-- In the current rig only the **Pixel 10 Pro XL** supports open gate (the Pixel 9 Pro did too, and has been traded in). Moto G phones fall back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
+- In the current rig only the **Pixel 10 Pro XL** supports open gate. Motorola phones fall back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
 - The `startRecording` call **blocks 3–5 s** while the camera session reopens at 4:3. Account for this in `start_at` scheduling — use at least a 5 s lead time.
 - After an open gate session, the **next standard recording** triggers a second session reopen to reset quality back to 16:9. This is intentional and takes another ~2 s.
 - The sidecar JSON (`kanaha_recording_start.json`) includes `"open_gate": true` so post scripts know which clips need reframing.
@@ -47,42 +47,58 @@ encoded by nothing.
 
 ---
 
-## Sensor Bit Depth: 12-bit vs 10-bit vs 8-bit
+## Bit Depth: What Each Phone Records
 
-Understanding bit depth matters for how much dynamic range and color information your open gate footage carries.
+Bit depth is how many steps each colour channel is divided into: 256 at 8-bit, 1024 at
+10-bit, 4096 at 12-bit. More steps means a grade can stretch a smooth gradient, a dusk sky
+or a snowfield, without it breaking into bands. Bit depth is not dynamic range: the range
+from shadow to highlight is set by the sensor and the tone curve, and the extra bits
+describe that same range in finer steps (see [Step 4](#step-4--the-ab-that-decides-whether-any-of-this-is-worth-it)).
 
-### 8-bit (standard H.264 / HEVC baseline)
-- **Value range per channel**: 0–255 (256 levels)
-- **Dynamic range**: ~8–10 stops usable
-- **Banding risk**: Visible in smooth gradients (sky, skin) during heavy color grading
-- **File size**: Smallest
-- **All three Kanaha phones** record 8-bit by default in H.264
+### Pixel 10 Pro XL (A-camera)
 
-### 10-bit (HEVC Main 10 / HDR)
-- **Value range per channel**: 0–1023 (4× more steps than 8-bit)
-- **Dynamic range**: ~12–13 stops usable depending on tone mapping
-- **Banding risk**: Rare even with aggressive grades
-- **File size**: ~20–30% larger than 8-bit
-- **Pixel 9 Pro**: Hardware supports 10-bit HDR but Google **locks the HLG profile at the HAL level** — only the stock Pixel Camera app can invoke it. Third-party Camera2 apps (including OpenCamera/Kanaha, Blackmagic Camera, MotionCam Pro) receive no 10-bit profile regardless of implementation. Kanaha records 8-bit H.264.
-- **Pixel 10 Pro**: First Pixel to unlock 10-bit (and 12-bit DCG) for third-party Camera2 apps. Kanaha could record 10-bit HLG on a Pixel 10 Pro with an HEVC Main 10 implementation — but OpenCamera upstream does not yet support it (ticket [#1218](https://sourceforge.net/p/opencamera/tickets/1218/), open as of early 2026, no developer response).
-- **Moto G 2025 / Moto G 5G 2024**: 8-bit only
+Measured on the device, Android 17, 2026-10-19.
 
-### 12-bit (RAW DCG — Dual Conversion Gain)
-- **Value range per channel**: 0–4095 (16× more steps than 8-bit)
-- **Dynamic range**: 14+ stops; DCG captures two analog gains simultaneously and merges before digitization, giving cleaner shadows and highlights than any tone-mapped 10-bit
-- **File size**: Very large (DNG sequences, not H.264/HEVC)
-- **Pixel 9 Pro**: Hardware capable but **not accessible via standard Camera2 API** — requires MotionCam Pro or Blackmagic Camera using privileged/private Google APIs. Kanaha uses Camera2 only and therefore **cannot reach 12-bit RAW**.
-- **Pixel 10 Pro**: First Pixel to unlock DCG as a Camera2-accessible feature (as of late 2025). Third-party apps can access 12-bit RAW at 4080×3072 — see the 12-bit section below, where this was measured on the device rather than taken from a spec sheet.
-- **Moto G 2025 / Moto G 5G 2024**: 8-bit only; no DCG hardware
-
-### Summary table for the current Kanaha rig
-
-| Phone | Open Gate Support | Max Bit Depth via Kanaha | Max Bit Depth (any app) |
+| | 8-bit (default) | 10-bit HLG | 12-bit RAW |
 |---|---|---|---|
-| Pixel 9 Pro | **Yes** — 4:3 resolution available via Camera2 | **8-bit H.264** | 10-bit HLG via stock Pixel Camera app only (HAL-locked); 12-bit RAW via MotionCam Pro/Blackmagic (private API) |
-| Pixel 10 Pro | **Yes** — 4:3 resolution available via Camera2 | **8-bit H.264** (10-bit feasible once OpenCamera adds HEVC Main 10) | 10-bit HLG + 12-bit DCG RAW — unlocked for all Camera2 apps |
-| Moto G 2025 | No — HAL exposes 16:9 only | 8-bit | 8-bit |
-| Moto G 5G 2024 | No — HAL exposes 16:9 only | 8-bit | 8-bit |
+| How | `startRecording` | `startRecording` with `"hlg10": true` | Not recordable by Kanaha yet; the debug probe captures it |
+| Codec | H.264 High | HEVC Main 10 | None: one DNG per frame |
+| Pixel format | `yuv420p` | `yuv420p10le` | 16-bit container, 12 significant bits |
+| Colour tags | BT.709 primaries, sRGB transfer (`iec61966-2-1`) | BT.2020, HLG (`arib-std-b67`) | Camera colour matrices in each DNG |
+| 4K30 data rate | 23 Mbps dim scene, 73 Mbps daylight | 55 Mbps dim scene | 753 MB/s (25.1 MB per frame) |
+| Largest frame | 3840×2160; open gate 2560×1920 | 3840×2160 | 4080×3072, the full 4:3 sensor |
+
+- **10-bit HLG** is correctly tagged by the camera, so it grades without retagging. It
+  always records HEVC whatever `format` says, since H.264 has no 10-bit profile on this
+  phone. `getStatus` reports `supports_hlg10`. `startRecording` refuses `hlg10` while
+  `setExposure` has a fixed `tone` curve pinned, because the curve would distort the HLG
+  transfer function. Open gate combined with `hlg10` has not been tested.
+- **The 8-bit files are tagged with the sRGB transfer curve** rather than BT.709. Players
+  and ffmpeg read the tag as written; it matters when converting colour spaces in post.
+- **12-bit RAW is real.** The camera offers `RAW_SENSOR`, `RAW12` and `RAW10` at 4080×3072
+  and 30 fps. In a daylight scene the samples reached 4095, 10.5% sat above the 10-bit
+  range, and their two lowest bits were populated, which 10-bit data scaled up would never
+  have. Recording it as video is Part 2 below. Whether the sensor used dual conversion
+  gain to produce those samples cannot be seen: the camera exposes no key for it.
+- **The data rates above are not a property of bit depth.** They are what the encoder
+  produced for these scenes and codecs, and they move with the scene and the encoder's
+  settings; the dim and daylight 8-bit takes alone differ threefold.
+
+### Motorola B-cameras
+
+Record 8-bit H.264 by default. Under the Camera1 API, which Motorola phones use unless
+Settings > Camera API is changed to Camera2, there is no 10-bit or RAW path at all. Under
+Camera2 neither has been tested on a Motorola phone: `getStatus` (`supports_hlg10`) and
+`getExposure` on the phone answer it. They do not offer a 4:3 video size, so `open_gate`
+falls back to standard recording.
+
+### Summary for the current rig
+
+| Phone | 8-bit | 10-bit HLG | 12-bit RAW | Open gate |
+|---|---|---|---|---|
+| Pixel 10 Pro XL | Default | Yes, `hlg10` | Camera delivers it; Kanaha records it only through the debug probe | 2560×1920 |
+| Motorola (Camera1, default) | Default | No | No | No |
+| Motorola (Camera2) | Default | Not tested | Not tested | No |
 
 ---
 
@@ -105,7 +121,7 @@ Or with `start_at` for synchronized multi-camera start (open gate on the Pixel o
 ```bash
 START_AT=$(date -d "+5 seconds" +%s%3N)  # 5s lead time for open gate reopen
 
-# Pixel 9 Pro — open gate
+# Pixel 10 Pro XL — open gate
 curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
      -X POST https://192.168.1.182:8443/services/CameraControlService/startRecording \
      -H 'Content-Type: application/json' \
@@ -177,39 +193,11 @@ adb -s <pixel-serial> pull \
 
 ---
 
-## Pixel 10 Pro — Recommended Upgrade for Kanaha
-
-**The recommended A-camera upgrade.** The Pixel 10 Pro is the first Pixel where the HAL is unlocked for third-party Camera2 apps — 10-bit HLG and 12-bit DCG are accessible to Kanaha directly, not just the stock camera app. This is the meaningful quality ceiling lift for the Claude + ffmpeg post pipeline.
-
-| Feature | Pixel 9 Pro | Pixel 10 Pro |
-|---|---|---|
-| Sensor | Samsung GNK, 1/1.31", 50MP | Samsung GNK successor, 1/1.31", 50MP |
-| Native aspect ratio | 4:3 | 4:3 |
-| Open gate resolution (Camera2) | 2560×1920 (confirmed) | **2560×1920** for video (encoder-limited, recorded 2026-10-19); 4080×3072 for RAW |
-| 10-bit HDR via Camera2 (third-party) | **No** — HAL-locked to stock Pixel Camera | **Yes** — unlocked |
-| 12-bit RAW open gate via Camera2 | **No** — HAL-locked | **Yes** — DCG unlocked |
-| DCG (Dual Conversion Gain) | Hardware present; software-locked for third-party | Not visible through public Camera2 keys; RAW samples are genuine 12-bit (probe, 2026-10-19), whether DCG produced them cannot be told from outside |
-| ADB / developer experience | Standard Pixel | Identical |
-| Moto G compatibility | Unchanged | Unchanged |
-
-**What this means for the Claude + ffmpeg pipeline:**
-- `lut3d` grading works on better source — 10-bit HLG gives real tonal headroom vs. 8-bit compressed highlights
-- `zscale + tonemap` HDR-to-SDR delivery becomes meaningful (you have actual HDR to deliver from)
-- 12-bit DCG: 14+ stops of dynamic range means shadow detail in snow scenes that 8-bit simply clips; `curves` and `eq` grading has real information to work with
-
-**Note**: Kanaha currently records compressed video (H.264/HEVC), not RAW DNG. 12-bit RAW support would require an ImageReader pipeline — a separate workstream. The immediate gain is 10-bit HLG video via HEVC Main 10, which requires adding that profile to OpenCamera's codec selection (see [OpenCamera ticket #1218](https://sourceforge.net/p/opencamera/tickets/1218/)).
-
----
-
 ## Testing the Pixel 10 Pro XL
 
-**Rig status, September 2026:** the Pixel 9 Pro has been traded in. The
-Pixel 10 Pro XL is the A-camera. Every Pixel 9 Pro row in the tables above is
-historical — kept because it explains why the upgrade was worth making, not
-because that phone is still in the rig.
-
-The section above was written as a recommendation. This one is the procedure for
-confirming it on the actual hardware, in the order that fails cheapest first.
+The Pixel 10 Pro XL is the A-camera. This is the procedure that confirmed its 10-bit
+support on the actual hardware, in the order that fails cheapest first; the results are
+in [Bit Depth](#bit-depth-what-each-phone-records).
 
 ### Step 1 — ask the phone what it exposes
 
@@ -912,7 +900,7 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 
 src = Image.open("graded.jpg")
-W, H = src.size  # 2560x1920 from Pixel 9 Pro open gate
+W, H = src.size  # 2560x1920 open gate
 
 CELL_W, CELL_H = 1280, 960
 
@@ -940,7 +928,7 @@ def make_cell(img, crop_box, label, sublabel):
 
 cells = [
     make_cell(src, None,
-              "4:3  OPEN GATE",    "Full sensor · all pixels · Pixel 9 Pro"),
+              "4:3  OPEN GATE",    "Full sensor field of view"),
     make_cell(src, (0, (H-round(W*9/16))//2, W, round(W*9/16)),
               "16:9  YOUTUBE",     "Center crop · no upscale"),
     make_cell(src, ((W-round(H*9/16))//2, 0, round(H*9/16), H),
@@ -978,7 +966,7 @@ python3 deliverables_grid.py
 
 ## Limitations and Known Issues
 
-- **~3s reopen latency**: `configureOpenGate()` triggers a photo→video mode cycle which causes a camera session reopen. On the Pixel 9 Pro this typically completes in 500–2000ms; the poller returns as soon as the camera is ready (max 10s). The `open_gate=true` startRecording call therefore takes 3–5s to return. For use with `start_at` scheduling, the sidecar is written before the recording starts so timing is still accurate.
+- **~3s reopen latency**: `configureOpenGate()` triggers a photo→video mode cycle which causes a camera session reopen. On the Pixel 10 Pro XL the camera was ready 500 ms after the switch back to video and the `open_gate=true` startRecording call returned in 3.6 s (2026-10-19); the poller returns as soon as the camera is ready (max 10s), so allow 3–5 s. For use with `start_at` scheduling, the sidecar is written before the recording starts so timing is still accurate.
 - **Zoom reset**: `configureOpenGate()` resets digital zoom to 1x. If you need open gate at a specific focal length, use optical zoom (different lens) rather than digital zoom.
 - **12-bit not supported**: Kanaha records compressed video via MediaRecorder. 12-bit RAW requires an ImageReader pipeline (DNG capture) — out of scope for the current implementation.
 - **Moto G graceful fallback**: No error is returned; the phones simply record in their default quality. The `open_gate: false` in the sidecar confirms it was not applied.
