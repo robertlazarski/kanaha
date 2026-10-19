@@ -810,8 +810,13 @@ Android 17 (`CP3A.260905.009`), 5 s per timed phase, indoors and dim.
 What this settles: the camera, the storage and the DNG writer each keep up with 30 fps
 on their own. Still open: all three together for longer than 5 s, and heat over a long
 take. The 12-bit check shows the samples carry 12 bits of precision; whether the sensor
-used dual conversion gain to produce them cannot be seen from outside. The dim scene
-peaked at 417 of 4095, so a bright-scene run is still worth doing for the range used.
+used dual conversion gain to produce them cannot be seen from outside.
+
+**Second run, same day, daylight scene** (ISO 21, 1/1024 s): 148 frames at 30 fps with
+none missing; 764 MB/s written with no drops; `DngCreator` 5–7 ms CPU and 19–22 ms to a
+file. Samples reached the full 4095 (the window clipped), 10.5% of them sat above the
+10-bit range, and 25.1% were divisible by 4. So the raw data spans the whole 12-bit range
+with populated low bits, in a bright scene as in a dim one.
 
 #### The capacity question, honestly
 
