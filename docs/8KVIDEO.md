@@ -2,10 +2,10 @@
 
 ## BLUF
 
-Kanaha cannot record 8K today, and on the Pixel 10 Pro XL it never will: no Pixel
-records 8K on the device. What a Pixel calls 8K is a 4K recording that Google
-upscales in the cloud. Kanaha's largest real frame is open gate's 4032×3024, and for
-reframing that is worth more than an upscaled 8K file.
+Kanaha cannot record 8K today, and on the Pixel 10 Pro XL it never will: the phone's
+hardware video encoders stop at 3840×2176, so no app can record a larger frame. What a
+Pixel calls 8K is a 4K recording that Google upscales in the cloud. Kanaha's largest
+recorded frame is 4K itself, 3840×2160.
 
 Some Samsung, Xiaomi, OnePlus and Realme phones do record native 8K. Whether that
 reaches a third-party app like Kanaha is unknown per phone and has to be checked on
@@ -24,21 +24,27 @@ because the phone cannot do it in real time. The resolution step itself, from 4K
 8K, adds no detail the sensor did not record.
 
 None of this is reachable from Kanaha. Video Boost belongs to the stock camera app and
-Google Photos; a Camera2 app records what the camera hands it, and on the Pixel 10 Pro
-XL the largest video stream is 4032×3024.
+Google Photos. A Camera2 app records through the phone's hardware encoders, which accept
+at most 3840×2160 for H.264 and 3840×2176 for HEVC (`/vendor/etc/media_codecs_c2.xml`,
+read from the device on 2026-10-19). The camera offers larger streams, up to 4032×3024 at
+4:3, but nothing can encode them; the full 12-megapixel frame is reachable only as RAW
+stills or RAW sequences (see [OPENGATE.md](OPENGATE.md), Part 2).
 
-## Open gate is the better answer for reframing
+## For reframing, shoot 4K
 
-| | Open gate (Kanaha today) | 4K | 8K |
+| | 4K (Kanaha today) | Open gate (Kanaha today) | 8K |
 |---|---|---|---|
-| Frame | 4032×3024 | 3840×2160 | 7680×4320 |
-| Megapixels | 12.2 | 8.3 | 33.2 |
-| Real sensor pixels | all | all | about a third (upscaled from 4K) |
+| Frame | 3840×2160 | 2560×1920 | 7680×4320 |
+| Megapixels | 8.3 | 4.9 | 33.2 |
+| 16:9 crop | 3840×2160 | 2560×1440 | 7680×4320, upscaled |
+| 9:16 vertical crop | 1215×2160 | 1080×1920 | 2430×4320, upscaled |
+| Recorded pixels | all | all | about a quarter (upscaled from 4K) |
 
-Open gate already lets you cut a full 16:9 4K-width frame (4032×2268) from anywhere in
-the 4:3 picture, or a vertical 9:16, from pixels the sensor actually captured. An
-upscaled 8K file gives more room to crop only in appearance: past 4K, the extra
-pixels are interpolated.
+4K is the most real resolution the phone records, and every crop from it beats the
+same crop from open gate, which on this phone is limited to 2560×1920 by the same
+encoder ceiling. Open gate's value is field of view, not pixels: it keeps the top and
+bottom of the scene that 16:9 never records. An upscaled 8K file gives more room to
+crop only in appearance, since past 4K the extra pixels are interpolated.
 
 ## If you want an 8K file anyway
 
@@ -50,7 +56,8 @@ locally. Upscale only the final cut, after grading.
 ffmpeg -i graded.mp4 -vf "scale=7680:4320:flags=lanczos" -c:v libx265 -crf 20 -preset medium -pix_fmt yuv420p10le -tag:v hvc1 -c:a copy out_8k.mp4
 ```
 
-An open gate source is 4:3, so crop to 16:9 first (`crop=4032:2268`, then scale).
+An open gate source is 4:3, so crop to 16:9 first (`crop=2560:1440`, then scale); from
+open gate that is a 3× upscale, against 2× from 4K.
 For something closer to Video Boost's look, an AI upscaler such as Real-ESRGAN, run
 through a frame-by-frame tool such as video2x, sharpens and denoises as it scales; it
 needs a GPU and is slow. Neither recovers detail that was never recorded.

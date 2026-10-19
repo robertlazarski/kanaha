@@ -444,10 +444,10 @@ public class RawProbeActivity extends Activity {
         r.put("white_level", chars.get(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL));
         r.put("fraction_divisible_by_4", Math.round(1000.0 * divisibleBy4 / samples) / 1000.0);
         r.put("fraction_over_1023", Math.round(1000.0 * over1023 / samples) / 1000.0);
-        String verdict;
-        if (max <= 1023) verdict = "values never exceed 10 bits (scene may be dark; point at a bright scene and rerun)";
-        else if (divisibleBy4 > 0.9 * samples) verdict = "10-bit data scaled to 12 bits";
-        else verdict = "uses all 12 bits";
+        // The low-bit test holds at any brightness: scaled 10-bit data is always a multiple
+        // of 4. Brightness only says how much of the 12-bit range the scene reached.
+        String verdict = divisibleBy4 > 0.9 * samples ? "10-bit data scaled to 12 bits" : "12-bit precision (low bits populated)";
+        if (max <= 1023) verdict += "; scene stayed under 1024, rerun on a bright scene to see the range used";
         r.put("verdict", verdict);
         return r;
     }

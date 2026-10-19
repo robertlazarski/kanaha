@@ -2,7 +2,9 @@
 
 ## BLUF
 
-Add `"open_gate": true` to a `startRecording` request. The camera reopens at its native 4:3 sensor resolution (**4032×3024** on the Pixel 10 Pro XL; 2560×1920 on the Pixel 9 Pro this was first built on) and records with no horizontal or vertical crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1 — without upscaling.
+Add `"open_gate": true` to a `startRecording` request. The camera reopens at its largest recordable 4:3 size, **2560×1920** on both the Pixel 10 Pro XL and the Pixel 9 Pro, and records the full sensor width and height with no 16:9 crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1.
+
+**Open gate trades resolution for field of view.** 2560×1920 is smaller than 4K (3840×2160) in both directions: a 16:9 crop from it is 2560×1440, a 9:16 crop 1080×1920, where 4K gives 3840×2160 and 1215×2160. What open gate adds is the top and bottom of the scene that 16:9 never records. Shoot 4K when the deliverable is 16:9 at 4K; shoot open gate when you need the vertical coverage. Why the ceiling is 2560×1920, not 4032×3024, is under [the encoder limit](#the-encoder-limit-measured-2026-10-19).
 
 **What you need to know:**
 - In the current rig only the **Pixel 10 Pro XL** supports open gate (the Pixel 9 Pro did too, and has been traded in). Moto G phones fall back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
@@ -23,7 +25,25 @@ Add `"open_gate": true` to a `startRecording` request. The camera reopens at its
 
 Open gate recording uses the **full active sensor area** — no horizontal or vertical crop. On a native 4:3 sensor, standard 16:9 video silently discards roughly the top and bottom 14% of sensor rows. Open gate preserves all of them, giving you a taller frame (~1.33:1) that you reframe in post-production (DaVinci Resolve, etc.) to whatever final aspect ratio you need: 16:9, 2.39:1 cinematic, 1:1 social, 9:16 vertical, or any custom crop.
 
-The practical benefit: shoot once, reframe for any deliverable without losing image quality to upscaling.
+The practical benefit: shoot once, reframe for any deliverable. On the Pixel 10 Pro XL the 4:3 frame is 2560×1920, so a 4K deliverable cut from it is upscaled; see the BLUF.
+
+### The encoder limit, measured 2026-10-19
+
+The Pixel 10 Pro XL's camera offers 4:3 video streams up to 4032×3024 (`dumpsys media.camera`,
+format 34), which is where an earlier version of this doc took "4032×3024 for video" from. It
+was never recorded at that size, and cannot be:
+
+- The phone's hardware encoders accept at most **3840×2160** (`c2.google.avc.encoder`) and
+  **3840×2176** (`c2.google.hevc.encoder`), per `/vendor/etc/media_codecs_c2.xml`. No frame
+  taller than 2176 lines can be encoded in hardware, by Kanaha or any other app.
+- Of the 4:3 sizes the camera offers, the largest that fits is **2560×1920**. An `open_gate`
+  take on 2026-10-19 recorded at exactly that, at a steady 30 fps.
+- OpenCamera independently drops every video size above 4096×2160
+  (`CameraController2.java`, a Nexus 6 workaround), so the cap holds even before the encoder
+  would refuse.
+
+The 12-megapixel 4:3 frame is reachable only as RAW (4080×3072, Part 2 below), which is
+encoded by nothing.
 
 ---
 
@@ -165,10 +185,10 @@ adb -s <pixel-serial> pull \
 |---|---|---|
 | Sensor | Samsung GNK, 1/1.31", 50MP | Samsung GNK successor, 1/1.31", 50MP |
 | Native aspect ratio | 4:3 | 4:3 |
-| Open gate resolution (Camera2) | 2560×1920 (confirmed) | **4032×3024** for video; 4080×3072 for RAW (measured 2026-09-04) |
+| Open gate resolution (Camera2) | 2560×1920 (confirmed) | **2560×1920** for video (encoder-limited, recorded 2026-10-19); 4080×3072 for RAW |
 | 10-bit HDR via Camera2 (third-party) | **No** — HAL-locked to stock Pixel Camera | **Yes** — unlocked |
 | 12-bit RAW open gate via Camera2 | **No** — HAL-locked | **Yes** — DCG unlocked |
-| DCG (Dual Conversion Gain) | Hardware present; software-locked for third-party | **Unlocked** — accessible to any Camera2 app |
+| DCG (Dual Conversion Gain) | Hardware present; software-locked for third-party | Not visible through public Camera2 keys; RAW samples are genuine 12-bit (probe, 2026-10-19), whether DCG produced them cannot be told from outside |
 | ADB / developer experience | Standard Pixel | Identical |
 | Moto G compatibility | Unchanged | Unchanged |
 
@@ -445,11 +465,11 @@ three separate edges:
    three times the file rate needed. Struck off the risk list; see the
    implementation plan below for the figures. **Capacity** is the constraint that
    replaces it: 180 GB free at 45 GB/min is four minutes of recording in total.
-2. **`DngCreator` is the likely wall.** It assembles a TIFF/DNG container on the
-   CPU, per image, and was designed for someone pressing the shutter. Thirty a
-   second is not what it is for. This is the piece most likely to fail first, and
-   the one with no easy answer short of writing frames raw and building DNGs
-   afterwards.
+2. **`DngCreator` was expected to be the wall, and measured inside budget.** It
+   assembles a DNG on the CPU per image; the probe timed it at 7–10 ms of CPU and
+   21–25 ms including the file write, against 33 ms per frame at 30 fps. Five frames,
+   not a sustained run, so this moves it from "likely wall" to "probably fine, confirm
+   at 30 a second"; see the probe results below.
 3. **Kanaha's model assumes one file per take.** The HTTP API returns a path. A
    DNG sequence is a directory of a few thousand files with no audio and no
    container, which every part of the pipeline — the service response, the
@@ -728,14 +748,12 @@ locked, but three things need building that do not exist.
 
 #### What does not exist
 
-**1. `DngCreator` at 30 fps — the real wall.** It assembles a TIFF/DNG container
-on the CPU, per image, for someone pressing a shutter. Thirty a second is not
-what it is for, and it is the piece most likely to fail first. The workaround is
-to write frames raw during the take and build DNGs afterwards, which turns one
-API call into a capture format, an index, and an offline converter. Measure it
-before designing around it: time `DngCreator.writeImage()` on one 4080×3072 frame.
-If it is under 33 ms the naive path works; if it is 100 ms it does not, and the
-deferred design is mandatory.
+**1. `DngCreator` at 30 fps, sustained.** It assembles a DNG on the CPU per image,
+for someone pressing a shutter. Measured per frame it fits the 30 fps budget (probe
+results below), which makes the simple design, one DNG per frame written during the
+take, the one to try first. Untested: 30 a second for minutes, alongside capture and
+a 750 MB/s write. If that fails, the fallback is to write frames raw during the take
+and build DNGs afterwards: a capture format, an index and an offline converter.
 
 **2. OpenCamera never requests RAW12 or RAW10.** It only ever asks for
 `RAW_SENSOR` (`CameraController2:2143`). `RAW_SENSOR` is a 16-bit container
@@ -775,6 +793,25 @@ How to read it: `dng_cpu_ms` under 33 means the simple DNG-per-frame design can
 work; over it, the deferred design is mandatory. `writer_drops` above zero means
 storage or the copy cannot keep up. `missing_frames` in the capture phase means
 the camera itself cannot sustain 30 fps at full size, which ends the question.
+
+#### Probe results, Pixel 10 Pro XL, 2026-10-19
+
+Android 17 (`CP3A.260905.009`), 5 s per timed phase, indoors and dim.
+
+| Question | Result |
+|---|---|
+| Full-size `RAW_SENSOR` (4080×3072) at 30 fps | **Yes**: 147 frames, none missing, no buffer lost |
+| Frames written as fast as they arrive | **Yes**: 753 MB/s sustained over 5 s, 3.77 GB, zero frames dropped |
+| `DngCreator` per frame | **7–10 ms CPU, 21–25 ms to a file**, against a 33 ms budget; 25.1 MB per DNG |
+| Genuine 12-bit samples | **Yes**: 25.8% of samples divisible by 4, where data shifted up from 10 bits gives ~100% |
+| `RAW10` and `RAW12` offered | Both, at 4080×3072 and 30 fps, stall 0 |
+| Dual conversion gain visible | **No**: no DCG-related key; the only vendor keys are Google HDR+ tags |
+
+What this settles: the camera, the storage and the DNG writer each keep up with 30 fps
+on their own. Still open: all three together for longer than 5 s, and heat over a long
+take. The 12-bit check shows the samples carry 12 bits of precision; whether the sensor
+used dual conversion gain to produce them cannot be seen from outside. The dim scene
+peaked at 417 of 4095, so a bright-scene run is still worth doing for the range used.
 
 #### The capacity question, honestly
 

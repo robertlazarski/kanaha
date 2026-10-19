@@ -15,7 +15,7 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 - **Software Sync Slate** - `playTone` API plays a synthesized sine wave on all cameras + laptop simultaneously; onset detection in post gives ~1–5 ms inter-camera sync with no hardware
 - **GPS Timestamping** - `getStatus` exposes GPS fix time and age for clock quality assessment
 - **Recording Start Sidecar** - Writes `kanaha_recording_start.json` at recording start (millisecond precision, GPS time); the post-processing analog of a BWF Time Reference
-- **Open Gate Recording** - Full 4:3 native sensor recording on supported devices (4032×3024 on Pixel 10 Pro XL) with no horizontal or vertical crop; see [Open Gate Recording](docs/OPENGATE.md)
+- **Open Gate Recording** - Full 4:3 sensor field of view on supported devices (2560×1920 on the Pixel 10 Pro XL, the largest 4:3 frame its encoder accepts; less resolution than 4K, more of the scene vertically); see [Open Gate Recording](docs/OPENGATE.md)
 - **On-Device Clip Description** - `describeClip` samples frames from a finished recording and describes them with Gemini Nano through ML Kit, writing a `<clip>.kanaha.json` sidecar that travels with the video. Opt-in `nano` build flavour; the default `foss` build keeps the operation and reports the model unavailable. See [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md)
 - **MCP (AI Assistant) Support** - [Model Context Protocol](https://modelcontextprotocol.io/) integration lets Claude Desktop and other AI assistants discover and control cameras as tools. 12 camera operations exposed with full parameter schemas. 117 KB native binary, no JVM; see [MCP Documentation](docs/MCP.md)
 
@@ -187,7 +187,7 @@ Request parameters:
 - `quality` *(optional)* — video quality hint (e.g. `"high"`, `"low"`). Default: app setting.
 - `duration` *(optional)* — recording duration in seconds. `0` = record until stopRecording.
 - `format` *(optional)* — container format. Default: `"MP4"`.
-- `open_gate` *(optional)* — `true` to record at the camera's native 4:3 sensor resolution (4032×3024 on Pixel 10 Pro XL) with no crop. The call blocks 3–5 s while the camera session reopens. Moto G phones ignore this flag and record normally. Default: `false`. See [Open Gate Recording](docs/OPENGATE.md).
+- `open_gate` *(optional)* — `true` to record the full 4:3 sensor field of view (2560×1920 on the Pixel 10 Pro XL, smaller than 4K in both directions; see OPENGATE.md). The call blocks 3–5 s while the camera session reopens. Moto G phones ignore this flag and record normally. Default: `false`. See [Open Gate Recording](docs/OPENGATE.md).
 - `hlg10` *(optional)* — `true` to record 10-bit HLG video (HEVC Main 10, BT.2020), whatever the `format`. Applies to this recording only; omitting it records 8-bit even if the Settings toggle is on. Refused with an error on cameras that lack 10-bit support (`supports_hlg10: false` in `getStatus`) rather than silently recording 8-bit. Combines with `open_gate`. Default: `false`.
 - `start_at` *(optional)* — UTC epoch milliseconds at which recording should begin. When provided, the camera schedules the start via `Handler.postDelayed()` and returns immediately with `"scheduled": true`. The camera fires at the specified wall-clock time regardless of when the request arrived. Valid range: 50 ms to 30 000 ms in the future. If zero or omitted, recording starts immediately.
 
@@ -241,11 +241,12 @@ $CURL -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
 - `focus_distance` (dioptres, `0` = infinity), or `"focus":"lock"` to hold the current distance, or `"focus":"auto"`.
 - `stabilization` — `true`/`false`. Electronic stabilization crops by a varying amount, so set it the same on every camera.
 - `tone` — a fixed tone curve, so contrast does not change with what is in frame: `rec709`, `srgb`, the flat log curves `fine`/`low`/`medium`/`strong`/`extra_strong`, or `jtvideo`/`jtlog`/`jtlog2`. `off` (the default) leaves contrast to the phone. A log curve also leaves more room to grade 8-bit footage. Not combinable with `hlg10`, which has its own transfer function; `startRecording` refuses that pairing.
+- `fps` — pin the recording frame rate to a fixed rate the camera offers (`getExposure` lists them in `ranges.fixed_fps`; 15, 24, 30, 60 on the Pixel 10 Pro XL), or `"default"` to let the camera choose. On default no rate is requested at all, so pin it on every camera that must cut together. The shutter-longer-than-a-frame check applies only to a pinned rate.
 - `lock` — freeze every value not given explicitly at its live value. `auto` — everything back to auto; not combinable with other fields.
 
 Values outside the camera's range are refused, never clamped, since a clamped value would leave cameras unmatched; so is a shutter longer than one frame, which would lower that camera's frame rate. Settings persist across takes and through the reopen `open_gate` causes, and are refused while recording. Manual exposure and kelvin need the Camera2 API; Motorola phones default to Camera1 (Settings > Camera API).
 
-`getExposure` returns `exposure_mode`, `wb_mode`, `focus_mode`, `stabilization`, `tone`, the live `iso`, `exposure_time_ns` (also as `shutter`, e.g. `"1/60"`), `wb_kelvin`, `focus_distance` and `frame_duration_ns`, plus `supports` and `ranges` objects. The live values can be sent unchanged to `setExposure` on other cameras; see [Multi-Camera Setup](#multi-camera-setup). `wb_kelvin` read from auto white balance is OpenCamera's estimate from the colour gains, so locking it can shift colour slightly on that camera; cameras given the same `wb_kelvin` still match.
+`getExposure` returns `exposure_mode`, `wb_mode`, `focus_mode`, `stabilization`, `tone`, `fps`, `settled` (whether the live values have caught up with pinned settings; `setExposure` waits up to 2 s for it), the live `iso`, `exposure_time_ns` (also as `shutter`, e.g. `"1/60"`), `wb_kelvin`, `focus_distance` and `frame_duration_ns`, plus `supports` and `ranges` objects. The live values can be sent unchanged to `setExposure` on other cameras; see [Multi-Camera Setup](#multi-camera-setup). `wb_kelvin` read from auto white balance is OpenCamera's estimate from the colour gains, so locking it can shift colour slightly on that camera; cameras given the same `wb_kelvin` still match.
 
 #### listFiles
 
@@ -398,7 +399,7 @@ no URL, so for them `"action"` is what selects the tool.
 | `/deleteFiles` | POST | `pattern` | Delete files matching glob pattern |
 | `/sftpTransfer` | POST | `storage_server_id`, `video_filename`, `destination_folder` | Push files to remote host via SFTP |
 | `/describeClip` | POST | `video_filename`, `frame_count`, `positions`, `write_sidecar`, `max_dimension` | Describe a recording with the on-device model (Gemini Nano, `nano` flavor only); writes `<basename>.kanaha.json` |
-| `/setExposure` | POST | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone` | Pin exposure, white balance, focus and stabilization so cameras match; refused out of range or while recording |
+| `/setExposure` | POST | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone`, `fps` | Pin exposure, white balance, focus and stabilization so cameras match; refused out of range or while recording |
 | `/getExposure` | POST | — | Modes in force, live values (feed them to `setExposure` on other cameras), support flags and ranges |
 | `/playTone` | POST | `frequency`, `duration_ms`, `start_at` | Play synthesized sine wave for software sync slate |
 

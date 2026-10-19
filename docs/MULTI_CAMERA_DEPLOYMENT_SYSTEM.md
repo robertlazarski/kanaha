@@ -255,7 +255,7 @@ Meter on one camera, then send its live values to all of them:
 ```bash
 VALUES=$($CURL -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
   "https://$A:8443/services/CameraControlService/getExposure" \
-  | jq -c '{action:"setExposure", iso, exposure_time_ns, wb_kelvin, focus_distance, stabilization:false, tone:"rec709"}')
+  | jq -c '{action:"setExposure", iso, exposure_time_ns, wb_kelvin, focus_distance, stabilization:false, tone:"rec709", fps:30}')
 for ip in $CAMS; do
   $CURL -H "Content-Type: application/json" -d "$VALUES" \
     "https://$ip:8443/services/CameraControlService/setExposure" &
@@ -266,6 +266,9 @@ wait
 - **Values are refused, never clamped.** A value outside a camera's range, or a
   shutter longer than one frame, fails on that camera with its range in the error.
   Check every response for `"success":true`.
+- **`fps` pinned on all.** On `"default"` OpenCamera requests no frame rate and each
+  camera chooses its own; `ranges.fixed_fps` in `getExposure` lists what a camera can
+  hold (15, 24, 30 and 60 on the Pixel 10 Pro XL).
 - **Stabilization the same on all**, or off. Electronic stabilization crops by a
   varying amount.
 - **`tone` fixes the contrast curve**, so the phone cannot adjust contrast to what each
