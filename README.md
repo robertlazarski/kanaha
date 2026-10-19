@@ -506,6 +506,7 @@ See [Security Documentation](docs/SECURITY.md) for threat model, certificate man
 | [Multi-Camera Deployment](docs/MULTI_CAMERA_DEPLOYMENT_SYSTEM.md) | Complete system guide, mTLS setup, API reference |
 | [SFTP File Transfer](docs/SFTP-FILE-TRANSFER.md) | SSH key setup for secure file retrieval |
 | [Open Gate Recording](docs/OPENGATE.md) | Full 4:3 sensor recording, device support, DaVinci Resolve workflow, LUT grading, C layer build process |
+| [8K Video](docs/8KVIDEO.md) | Why Kanaha has no 8K on Pixels, open gate as the alternative, local upscaling, and checking other phones for native 8K |
 | [APK Building](docs/ANDROID_APK_BUILDING.md) | Compiling from source |
 | [Cross-Compilation](docs/ANDROID_CROSS_COMPILATION.md) | Building native C libraries |
 | [SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) | iRig Pro I/O + Tentacle Sync hardware timecode setup |
