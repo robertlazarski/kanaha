@@ -444,8 +444,14 @@ static const char* extract_json_string(const char* json, const char* key, char* 
     if (!start) return NULL;
 
     start += strlen(search_key);
-    const char* end = strchr(start, '"');
-    if (!end || (size_t)(end - start) >= buffer_size) return NULL;
+    /* The closing quote is the first one not escaped: a value such as a Java error
+     * message can carry \" inside it, and stopping there left a lone backslash. */
+    const char* end = start;
+    while (*end && *end != '"') {
+        if (*end == '\\' && end[1]) end++;
+        end++;
+    }
+    if (*end != '"' || (size_t)(end - start) >= buffer_size) return NULL;
 
     strncpy(buffer, start, end - start);
     buffer[end - start] = '\0';
@@ -596,6 +602,7 @@ typedef struct {
     char wb[16];
     char focus[16];
     char tone[16];
+    char fps[16];
     int stabilization;
 } exposure_request_t;
 
@@ -873,6 +880,14 @@ int camera_control_service_invoke_json_impl(
         for (const char* t = req.tone; *t; t++) {
             if (!((*t >= 'a' && *t <= 'z') || (*t >= '0' && *t <= '9') || *t == '_')) {
                 create_error_response(json_response, response_size, "tone must be a profile name such as \\\"rec709\\\"");
+                return -1;
+            }
+        }
+        /* fps is a number, or the string "default" to hand the rate back to the camera */
+        if (extract_json_number_token(json_request, "fps", req.fps, sizeof(req.fps)) < 0) {
+            extract_json_string(json_request, "fps", req.fps, sizeof(req.fps));
+            if (strcmp(req.fps, "default") != 0) {
+                create_error_response(json_response, response_size, "fps must be a number or \\\"default\\\"");
                 return -1;
             }
         }
@@ -1507,6 +1522,7 @@ int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_re
         {"--es", "focus", req->focus},
         {"--es", "focus_distance", req->focus_distance},
         {"--es", "tone", req->tone},
+        {"--es", "fps", req->fps},
         {"--es", "stabilization", req->stabilization < 0 ? "" : (req->stabilization ? "1" : "0")}
     };
     return send_and_pass_through("set_exposure", operation_id, extras,

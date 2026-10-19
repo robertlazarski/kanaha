@@ -621,6 +621,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String focus = emptyToNull(intent.getStringExtra("focus"));
         String stabilization = emptyToNull(intent.getStringExtra("stabilization"));
         String tone = emptyToNull(intent.getStringExtra("tone"));
+        String fps = emptyToNull(intent.getStringExtra("fps"));
         final Long isoReq, exposureReq, kelvinReq;
         final Float focusReq;
         try {
@@ -639,7 +640,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (auto && (lock || anyValue)) {
             return createErrorResponse(operationId, "auto cannot be combined with lock or explicit values");
         }
-        if (!auto && !lock && !anyValue && stabilization == null && tone == null) {
+        if (fps != null && !fps.equals("default") && !fps.matches("[1-9][0-9]{0,2}")) {
+            return createErrorResponse(operationId, "fps must be a whole number of frames per second, or \"default\"");
+        }
+        if (!auto && !lock && !anyValue && stabilization == null && tone == null && fps == null) {
             return createErrorResponse(operationId, "Nothing to set: give auto, lock, or at least one value");
         }
         if (tone != null && !TONE_PROFILES.contains(tone)) {
@@ -680,7 +684,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             mainActivity.runOnUiThread(() -> {
                 try {
                     error.set(applyExposure(mainActivity, auto, lock, isoReq, exposureReq, kelvinReq, wb,
-                            focusReq, focus, stabilization, tone));
+                            focusReq, focus, stabilization, tone, fps));
                 } catch (Exception e) {
                     Log.e(TAG, "applyExposure failed", e);
                     error.set("Failed to apply exposure: " + e.getMessage());
@@ -700,7 +704,13 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 return createErrorResponse(operationId, "Camera did not come back after applying exposure");
             }
 
+            // The live values trail the new settings by a few frames, longer when the preview
+            // has slowed in dim light; report them once they have caught up.
             JSONObject response = exposureState(mainActivity);
+            for (int i = 0; i < 10 && response != null && !response.optBoolean("settled"); i++) {
+                Thread.sleep(200);
+                response = exposureState(mainActivity);
+            }
             if (response == null) {
                 return createErrorResponse(operationId, "Exposure set, but the camera did not report it");
             }
@@ -722,13 +732,32 @@ public class CameraControlReceiver extends BroadcastReceiver {
      */
     private static String applyExposure(MainActivity mainActivity, boolean auto, boolean lock,
                                         Long isoReq, Long exposureReq, Long kelvinReq, String wb,
-                                        Float focusReq, String focus, String stabilization, String tone) {
+                                        Float focusReq, String focus, String stabilization, String tone,
+                                        String fps) {
         Preview preview = mainActivity.getPreview();
         CameraController controller = preview.getCameraController();
         if (controller == null) {
             return "Camera not available";
         }
-        SharedPreferences.Editor editor = PreferenceManager.getDefaultSharedPreferences(mainActivity).edit();
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mainActivity);
+        SharedPreferences.Editor editor = prefs.edit();
+
+        // On "default" OpenCamera sets no frame rate under Camera2 and the camera chooses:
+        // in dim light auto exposure stretches frames and a 4K take ran at 29.8 fps. Cameras
+        // that must cut together need the rate pinned, and only to a fixed rate the camera
+        // offers, or it would still drift.
+        String fpsKey = PreferenceKeys.getVideoFPSPreferenceKey(preview.getCameraId(),
+                mainActivity.getApplicationInterface().getCameraIdSPhysicalPref());
+        if (fps != null && !fps.equals("default")) {
+            List<Integer> fixed = fixedFrameRates(controller);
+            if (!fixed.contains(Integer.parseInt(fps))) {
+                return "fps " + fps + " is not a fixed frame rate this camera offers: " + fixed;
+            }
+            editor.putString(fpsKey, fps);
+        } else if (fps != null) {
+            editor.putString(fpsKey, "default");
+        }
+        String fpsInForce = fps != null ? fps : prefs.getString(fpsKey, "default");
 
         // ISO and shutter go together: Camera2 has no shutter or ISO priority, so manual
         // exposure means both, and the one not given is taken from the live value.
@@ -754,10 +783,16 @@ public class CameraControlReceiver extends BroadcastReceiver {
                         + preview.getMinimumExposureTime() + "-" + preview.getMaximumExposureTime();
             }
             // A shutter longer than one frame makes the camera stretch the frame to fit it,
-            // which lowers the frame rate of that camera alone.
-            if (controller.captureResultHasFrameDuration() && exposure > controller.captureResultFrameDuration()) {
-                return "exposure_time_ns " + exposure + " is longer than one frame ("
-                        + controller.captureResultFrameDuration() + " ns) and would lower the frame rate";
+            // which lowers the frame rate of that camera alone. Checked against the pinned
+            // rate only: on "default" no rate is requested, and neither the live preview
+            // (15 fps in dim light) nor the video profile (60 for 4K on the Pixel 10 Pro XL,
+            // which recorded at 30) says what the recording will run at.
+            if (!fpsInForce.equals("default")) {
+                long frameNs = 1_000_000_000L / Integer.parseInt(fpsInForce);
+                if (exposure > frameNs) {
+                    return "exposure_time_ns " + exposure + " is longer than one frame at "
+                            + fpsInForce + " fps (" + frameNs + " ns) and would lower the frame rate";
+                }
             }
             editor.putString(PreferenceKeys.ISOPreferenceKey, String.valueOf(iso));
             editor.putLong(PreferenceKeys.ExposureTimePreferenceKey, exposure);
@@ -831,7 +866,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         mainActivity.updateForSettings(true, "");
         Log.i(TAG, "applyExposure: auto=" + auto + " lock=" + lock + " iso=" + iso + " exposure_ns=" + exposure
                 + " wb_kelvin=" + kelvin + " focus_distance=" + distance + " stabilization=" + stabilization
-                + " tone=" + tone);
+                + " tone=" + tone + " fps=" + fps);
         return null;
     }
 
@@ -898,6 +933,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 : focusPref.isEmpty() ? "default" : focusPref.replace("focus_mode_", ""));
         state.put("stabilization", prefs.getBoolean(PreferenceKeys.VideoStabilizationPreferenceKey, false));
         state.put("tone", prefs.getString(PreferenceKeys.VideoLogPreferenceKey, "off"));
+        state.put("fps", prefs.getString(PreferenceKeys.getVideoFPSPreferenceKey(preview.getCameraId(),
+                mainActivity.getApplicationInterface().getCameraIdSPhysicalPref()), "default"));
 
         // Live values from the latest capture result: what the sensor is doing now, in auto or manual.
         if (controller.captureResultHasIso()) {
@@ -917,6 +954,21 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (controller.captureResultHasFrameDuration()) {
             state.put("frame_duration_ns", controller.captureResultFrameDuration());
         }
+
+        // Whether the live values have caught up with the pinned settings. Exposure
+        // within 2%: the sensor rounds to its line time (16666666 reads back 16655607).
+        boolean settled = true;
+        if (!CameraController.ISO_DEFAULT.equals(isoPref)) {
+            long wantExposure = prefs.getLong(PreferenceKeys.ExposureTimePreferenceKey, 0);
+            settled = controller.captureResultHasIso() && controller.captureResultHasExposureTime()
+                    && String.valueOf(controller.captureResultIso()).equals(isoPref)
+                    && Math.abs(controller.captureResultExposureTime() - wantExposure) <= wantExposure / 50;
+        }
+        if ("manual".equals(wbPref) && controller.captureResultHasWhiteBalanceTemperature()) {
+            int wantKelvin = prefs.getInt(PreferenceKeys.WhiteBalanceTemperaturePreferenceKey, 0);
+            settled &= Math.abs(controller.captureResultWhiteBalanceTemperature() - wantKelvin) <= 100;
+        }
+        state.put("settled", settled);
 
         JSONObject supports = new JSONObject();
         JSONObject ranges = new JSONObject();
@@ -941,9 +993,22 @@ public class CameraControlReceiver extends BroadcastReceiver {
         }
         supports.put("stabilization", preview.supportsVideoStabilization());
         supports.put("tone_curve", preview.supportsTonemapCurve());
+        ranges.put("fixed_fps", new org.json.JSONArray(fixedFrameRates(controller)));
         state.put("supports", supports);
         state.put("ranges", ranges);
         return state;
+    }
+
+    /** Frame rates the camera can hold exactly: its fixed AE target ranges, such as [30, 30]. */
+    private static List<Integer> fixedFrameRates(CameraController controller) {
+        java.util.TreeSet<Integer> rates = new java.util.TreeSet<>();
+        List<int[]> ranges = controller.getSupportedPreviewFpsRange();
+        if (ranges != null) {
+            for (int[] r : ranges) {
+                if (r[0] == r[1]) rates.add(r[0] / 1000);
+            }
+        }
+        return new java.util.ArrayList<>(rates);
     }
 
     private static String emptyToNull(String s) {
