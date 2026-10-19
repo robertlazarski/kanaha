@@ -868,8 +868,8 @@ int camera_control_service_invoke_json_impl(
         }
         extract_json_string(json_request, "wb", req.wb, sizeof(req.wb));
         extract_json_string(json_request, "focus", req.focus, sizeof(req.focus));
-        if (req.wb[0] && strcmp(req.wb, "auto") != 0) {
-            create_error_response(json_response, response_size, "wb must be \\\"auto\\\"");
+        if (req.wb[0] && strcmp(req.wb, "auto") != 0 && strcmp(req.wb, "lock") != 0) {
+            create_error_response(json_response, response_size, "wb must be \\\"auto\\\" or \\\"lock\\\"");
             return -1;
         }
         if (req.focus[0] && strcmp(req.focus, "auto") != 0 && strcmp(req.focus, "lock") != 0) {

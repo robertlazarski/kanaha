@@ -385,6 +385,11 @@ public abstract class BasicApplicationInterface implements ApplicationInterface 
     }
 
     @Override
+    public String getWhiteBalanceLockPref() {
+        return "";
+    }
+
+    @Override
     public RawPref getRawPref() {
         return RawPref.RAWPREF_JPEG_ONLY;
     }

@@ -29,6 +29,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.util.Log;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -649,8 +650,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (tone != null && !TONE_PROFILES.contains(tone)) {
             return createErrorResponse(operationId, "tone must be one of " + TONE_PROFILES);
         }
-        if (wb != null && !wb.equals("auto")) {
-            return createErrorResponse(operationId, "wb must be \"auto\"; give a manual white balance as wb_kelvin");
+        if (wb != null && !wb.equals("auto") && !wb.equals("lock")) {
+            return createErrorResponse(operationId, "wb must be \"auto\" or \"lock\"; give a manual white balance as wb_kelvin");
         }
         if (kelvinReq != null && wb != null) {
             return createErrorResponse(operationId, "Give wb_kelvin or wb, not both");
@@ -801,19 +802,13 @@ public class CameraControlReceiver extends BroadcastReceiver {
             editor.putLong(PreferenceKeys.ExposureTimePreferenceKey, CameraController.EXPOSURE_TIME_DEFAULT);
         }
 
+        // White balance: an explicit kelvin, a lock, or auto. The lock freezes the gains and
+        // the calibrated colour transform the camera's own auto white balance chose. A kelvin
+        // value instead goes through OpenCamera's generic formula with an identity transform,
+        // which drops the sensor's colour calibration: consistent between identical phones,
+        // but neither as accurate nor comparable across different sensors.
         Long kelvin = kelvinReq;
-        if (kelvin == null && lock && wb == null) {
-            if (!controller.captureResultHasWhiteBalanceTemperature()) return "The camera has not reported its white balance yet; give wb_kelvin";
-            kelvin = (long) controller.captureResultWhiteBalanceTemperature();
-            // OpenCamera estimates kelvin from the auto white balance gains, and the estimate
-            // can pin at the end of the range: the Pixel 10 Pro XL reads 15000 K in daylight,
-            // where setting 15000 K visibly shifts the picture warmer. Locking that would change
-            // the white balance rather than freeze it.
-            if (kelvin <= preview.getMinimumWhiteBalanceTemperature() || kelvin >= preview.getMaximumWhiteBalanceTemperature()) {
-                return "The camera's white balance estimate (" + kelvin + " K) is at the limit of its range and "
-                        + "not reliable to lock. Give wb_kelvin (5600 for daylight), or wb \"auto\" to lock the rest";
-            }
-        }
+        boolean wbLock = "lock".equals(wb) || (lock && wb == null && kelvin == null);
         if (kelvin != null) {
             if (!preview.supportsWhiteBalanceTemperature()) {
                 return "This camera does not support white balance in kelvin";
@@ -824,8 +819,22 @@ public class CameraControlReceiver extends BroadcastReceiver {
             }
             editor.putString(PreferenceKeys.WhiteBalancePreferenceKey, "manual");
             editor.putInt(PreferenceKeys.WhiteBalanceTemperaturePreferenceKey, (int) (long) kelvin);
+            editor.remove(PreferenceKeys.WhiteBalanceLockPreferenceKey);
+        } else if (wbLock) {
+            // Manual white balance needs MANUAL_POST_PROCESSING, which is what OpenCamera
+            // checks before reporting temperature support.
+            if (!preview.supportsWhiteBalanceTemperature()) {
+                return "This camera does not support manual white balance, so it cannot be locked";
+            }
+            float [][] cc = controller.captureResultColorCorrection();
+            if (cc == null) {
+                return "The camera has not reported its colour correction yet; try again, or give wb_kelvin";
+            }
+            editor.putString(PreferenceKeys.WhiteBalancePreferenceKey, "manual");
+            editor.putString(PreferenceKeys.WhiteBalanceLockPreferenceKey, formatWhiteBalanceLock(cc));
         } else if (auto || wb != null) {
             editor.putString(PreferenceKeys.WhiteBalancePreferenceKey, CameraController.WHITE_BALANCE_DEFAULT);
+            editor.remove(PreferenceKeys.WhiteBalanceLockPreferenceKey);
         }
 
         List<String> focusModes = preview.getSupportedFocusValues();
@@ -873,7 +882,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         editor.apply();
         mainActivity.updateForSettings(true, "");
         Log.i(TAG, "applyExposure: auto=" + auto + " lock=" + lock + " iso=" + iso + " exposure_ns=" + exposure
-                + " wb_kelvin=" + kelvin + " focus_distance=" + distance + " stabilization=" + stabilization
+                + " wb_kelvin=" + kelvin + " wb_lock=" + wbLock + " focus_distance=" + distance + " stabilization=" + stabilization
                 + " tone=" + tone + " fps=" + fps);
         return null;
     }
@@ -935,7 +944,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String isoPref = prefs.getString(PreferenceKeys.ISOPreferenceKey, CameraController.ISO_DEFAULT);
         state.put("exposure_mode", CameraController.ISO_DEFAULT.equals(isoPref) ? "auto" : "manual");
         String wbPref = prefs.getString(PreferenceKeys.WhiteBalancePreferenceKey, CameraController.WHITE_BALANCE_DEFAULT);
-        state.put("wb_mode", wbPref);
+        boolean wbLocked = "manual".equals(wbPref)
+                && !prefs.getString(PreferenceKeys.WhiteBalanceLockPreferenceKey, "").isEmpty();
+        state.put("wb_mode", wbLocked ? "locked" : wbPref);
         String focusPref = prefs.getString(PreferenceKeys.getFocusPreferenceKey(preview.getCameraId(), true), "");
         state.put("focus_mode", "focus_mode_manual2".equals(focusPref) ? "manual"
                 : focusPref.isEmpty() ? "default" : focusPref.replace("focus_mode_", ""));
@@ -956,6 +967,14 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (controller.captureResultHasWhiteBalanceTemperature()) {
             state.put("wb_kelvin", controller.captureResultWhiteBalanceTemperature());
         }
+        // The gains themselves: what a white balance lock freezes, and the exact way to tell
+        // whether two cameras, or one camera before and after a reopen, are applying the same.
+        float[][] cc = controller.captureResultColorCorrection();
+        if (cc != null) {
+            JSONArray gains = new JSONArray();
+            for (float g : cc[0]) gains.put(Math.round(g * 1000) / 1000.0);
+            state.put("wb_gains", gains);
+        }
         if (controller.captureResultHasFocusDistance()) {
             state.put("focus_distance", (double) controller.captureResultFocusDistance());
         }
@@ -972,7 +991,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     && String.valueOf(controller.captureResultIso()).equals(isoPref)
                     && Math.abs(controller.captureResultExposureTime() - wantExposure) <= wantExposure / 50;
         }
-        if ("manual".equals(wbPref) && controller.captureResultHasWhiteBalanceTemperature()) {
+        if ("manual".equals(wbPref) && !wbLocked && controller.captureResultHasWhiteBalanceTemperature()) {
             int wantKelvin = prefs.getInt(PreferenceKeys.WhiteBalanceTemperaturePreferenceKey, 0);
             settled &= Math.abs(controller.captureResultWhiteBalanceTemperature() - wantKelvin) <= 100;
         }
@@ -1017,6 +1036,15 @@ public class CameraControlReceiver extends BroadcastReceiver {
             }
         }
         return new java.util.ArrayList<>(rates);
+    }
+
+    /** PreferenceKeys.WhiteBalanceLockPreferenceKey's format, read by Preview.parseWhiteBalanceLock(). */
+    private static String formatWhiteBalanceLock(float[][] cc) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < cc[0].length; i++) b.append(i == 0 ? "" : ",").append(cc[0][i]);
+        b.append(';');
+        for (int i = 0; i < cc[1].length; i++) b.append(i == 0 ? "" : ",").append(cc[1][i]);
+        return b.toString();
     }
 
     private static String emptyToNull(String s) {

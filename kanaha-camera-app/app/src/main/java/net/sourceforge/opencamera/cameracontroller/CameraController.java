@@ -541,6 +541,21 @@ public abstract class CameraController {
     public void setHlg10(boolean want_hlg10) {
     }
 
+    /** Kanaha: freeze white balance at gains and a colour transform the camera's own auto
+     *  white balance chose, instead of deriving gains from a temperature. Applies while the
+     *  white balance mode is manual. gains is R, G even, G odd, B; transform is 3x3 row-major.
+     *  Null clears it. No-op on the old camera API, which has no manual colour correction.
+     */
+    public void setWhiteBalanceLockedGains(float [] gains, float [] transform) {
+    }
+
+    /** Kanaha: the colour correction the camera applied to the latest frame, gains then
+     *  transform, as for setWhiteBalanceLockedGains(); null if not reported.
+     */
+    public float [][] captureResultColorCorrection() {
+        return null;
+    }
+
     /**
      * @param want_raw       Whether to enable taking photos in RAW (DNG) format.
      * @param max_raw_images The maximum number of unclosed DNG images that may be held in memory at any one

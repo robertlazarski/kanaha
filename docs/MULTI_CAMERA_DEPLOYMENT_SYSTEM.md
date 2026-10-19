@@ -250,13 +250,13 @@ sensors, bit depths and colour.
 
 ### Pinning the settings
 
-Meter exposure and focus on one camera, choose the white balance yourself, then send the
-same values to all of them:
+Meter exposure and focus on one camera and send the same values to all of them; lock
+white balance on each camera separately, below:
 
 ```bash
 VALUES=$($CURL -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
   "https://$A:8443/services/CameraControlService/getExposure" \
-  | jq -c '{action:"setExposure", iso, exposure_time_ns, focus_distance, wb_kelvin:5600, stabilization:false, tone:"rec709", fps:30}')
+  | jq -c '{action:"setExposure", iso, exposure_time_ns, focus_distance, stabilization:false, tone:"rec709", fps:30}')
 for ip in $CAMS; do
   $CURL -H "Content-Type: application/json" -d "$VALUES" \
     "https://$ip:8443/services/CameraControlService/setExposure" &
@@ -264,11 +264,18 @@ done
 wait
 ```
 
-- **Choose `wb_kelvin`, do not copy it.** Under auto white balance `getExposure` reports
-  OpenCamera's estimate from the colour gains, and on the Pixel 10 Pro XL it read 15000 K in
-  daylight, where setting 15000 K visibly shifts the picture warmer. Use 5600 for daylight,
-  around 6500 for overcast or shade, 3200 for tungsten. `lock` refuses an estimate at the edge
-  of the range for the same reason.
+- **White balance: lock each camera on the same gray card.** Hold one gray card in the
+  shared light so it fills the centre of every camera's frame, let auto white balance settle,
+  then send `{"action":"setExposure","wb":"lock"}` to each camera. Each freezes its own gains
+  and its own factory colour calibration, so gray comes out gray on every camera, whatever
+  the model. The lock survives open gate reopens and app restarts (`wb_mode` reads `locked`;
+  `wb_gains` shows the frozen gains). Do not copy `wb_gains` or `wb_kelvin` between cameras:
+  gains belong to one sensor, and the kelvin reading is an estimate that sat at 15000 K in
+  daylight on both test phones.
+- **`wb_kelvin` is the fallback**, for when no card is to hand: give every camera the same
+  value (5600 daylight, about 6500 overcast, 3200 tungsten). OpenCamera turns it into gains with
+  a generic formula and applies no colour calibration, so identical phones match each other
+  but colour is less accurate, and different models do not match.
 - **Values are refused, never clamped.** A value outside a camera's range, or a
   shutter longer than one frame, fails on that camera with its range in the error.
   Check every response for `"success":true`.
@@ -304,16 +311,18 @@ ffmpeg -i moto_take.mp4 -vf "colorspace=all=bt709:iall=bt601-6-625:irange=pc:ran
 ```
 
 Checked on test footage: full-range black (0) and white (255) land on 16 and 235. Do this
-before the gray-card gains below. Different sensors also render saturation and hue
+before the gray-card correction below. Different sensors also render saturation and hue
 differently, which settings cannot fix; expect a per-camera grade on top.
 
-### One-time gray-card calibration
+### Gray-card check and correction
 
-Two phones from the same factory still differ slightly in colour calibration. Measure
-it once per phone and correct it in post.
+Locking white balance on a shared gray card removes most of the difference between
+cameras. This measures what remains and corrects it in post; with kelvin instead of a
+lock, it is the main correction.
 
-1. Under one light, with both cameras on identical `setExposure` values, record a
-   few seconds of a gray card filling the centre of each frame.
+1. Under one light, with both cameras on identical `setExposure` values and white
+   balance locked on the card, record a few seconds of the card filling the centre of
+   each frame.
 2. Measure the mean colour of the centre of each clip (16-bit values, R G B):
 
    ```bash

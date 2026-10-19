@@ -489,6 +489,11 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     }
 
     @Override
+    public String getWhiteBalanceLockPref() {
+        return sharedPreferences.getString(PreferenceKeys.WhiteBalanceLockPreferenceKey, "");
+    }
+
+    @Override
     public String getAntiBandingPref() {
         return sharedPreferences.getString(PreferenceKeys.AntiBandingPreferenceKey, CameraController.ANTIBANDING_DEFAULT);
     }

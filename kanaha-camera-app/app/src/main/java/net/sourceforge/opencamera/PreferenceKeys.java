@@ -350,6 +350,10 @@ public class PreferenceKeys {
     // concurrent-use constraint), so it is not a safe default.
     public static final String Hlg10PreferenceKey = "preference_kanaha_hlg10";
 
+    /** Kanaha: white balance frozen at the camera's own gains and colour transform, as
+     *  "r,ge,go,b;m00,m01,...,m22"; empty when not locked. Applies while white balance is "manual". */
+    public static final String WhiteBalanceLockPreferenceKey = "preference_kanaha_wb_lock";
+
     public static final String VideoMaxDurationPreferenceKey = "preference_video_max_duration";
 
     public static final String VideoRestartPreferenceKey = "preference_video_restart";

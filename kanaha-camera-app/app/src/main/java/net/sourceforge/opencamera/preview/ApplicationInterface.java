@@ -183,6 +183,7 @@ public interface ApplicationInterface {
     float getAperturePref(); // get desired aperture (called if Preview.getSupportedApertures() returns non-null); return -1.0f for no preference
     boolean getJpegRPref(); // whether to request JPEG_R (Ultra HDR) photos
     boolean getHlg10Pref(); // Kanaha: whether to record 10-bit HLG video
+    String getWhiteBalanceLockPref(); // Kanaha: frozen white balance, see PreferenceKeys.WhiteBalanceLockPreferenceKey; "" if none
     enum RawPref {
         RAWPREF_JPEG_ONLY, // JPEG only
         RAWPREF_JPEG_DNG // JPEG and RAW (DNG)

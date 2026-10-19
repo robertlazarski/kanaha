@@ -37,6 +37,7 @@ import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.DngCreator;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.Capability;
+import android.hardware.camera2.params.ColorSpaceTransform;
 import android.hardware.camera2.params.DynamicRangeProfiles;
 import android.hardware.camera2.params.ExtensionSessionConfiguration;
 import android.hardware.camera2.params.MeteringRectangle;
@@ -315,6 +316,7 @@ public class CameraController2 extends CameraController {
         // exposure modified from the normal ones in camera_settings
     private boolean capture_result_has_white_balance_rggb;
     private RggbChannelVector capture_result_white_balance_rggb;
+    private ColorSpaceTransform capture_result_color_transform; // Kanaha: for the white balance lock
     private boolean capture_result_has_iso;
     private int capture_result_iso;
     private boolean capture_result_has_exposure_time;
@@ -342,6 +344,7 @@ public class CameraController2 extends CameraController {
         capture_result_ae = null;
         is_flash_required = false;
         capture_result_has_white_balance_rggb = false;
+        capture_result_color_transform = null;
         capture_result_has_iso = false;
         capture_result_has_exposure_time = false;
         capture_result_has_frame_duration = false;
@@ -3297,6 +3300,37 @@ public class CameraController2 extends CameraController {
             return null;
         int value2 = previewBuilder.get(CaptureRequest.CONTROL_AWB_MODE);
         return convertWhiteBalance(value2);
+    }
+
+    @Override
+    public void setWhiteBalanceLockedGains(float [] gains, float [] transform) {
+        if( MyDebug.LOG )
+            Log.d(TAG, "setWhiteBalanceLockedGains: " + Arrays.toString(gains));
+        camera_settings.locked_wb_gains = gains;
+        camera_settings.locked_wb_transform = transform;
+        try {
+            if( camera_settings.setWhiteBalance(previewBuilder) ) {
+                setRepeatingRequest();
+            }
+        }
+        catch(CameraAccessException e) {
+            MyDebug.logStackTrace(TAG, "failed to set locked white balance", e);
+        }
+    }
+
+    @Override
+    public float [][] captureResultColorCorrection() {
+        RggbChannelVector g = capture_result_white_balance_rggb;
+        ColorSpaceTransform t = capture_result_color_transform;
+        if( !capture_result_has_white_balance_rggb || g == null || t == null )
+            return null;
+        float [] transform = new float[9];
+        for(int row=0;row<3;row++) {
+            for(int col=0;col<3;col++) {
+                transform[row*3+col] = t.getElement(col, row).floatValue();
+            }
+        }
+        return new float[][]{ {g.getRed(), g.getGreenEven(), g.getGreenOdd(), g.getBlue()}, transform };
     }
 
     @Override
@@ -8616,6 +8650,7 @@ public class CameraController2 extends CameraController {
                 else if( vector != null ) {
                     capture_result_has_white_balance_rggb = true;
                     capture_result_white_balance_rggb = vector;
+                    capture_result_color_transform = result.get(CaptureResult.COLOR_CORRECTION_TRANSFORM);
                 }
             }
 

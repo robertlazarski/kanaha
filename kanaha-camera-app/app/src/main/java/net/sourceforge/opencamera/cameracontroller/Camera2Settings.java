@@ -49,6 +49,8 @@ public class Camera2Settings {
     private boolean has_default_noise_reduction_mode;
     private Integer default_noise_reduction_mode;
     int white_balance_temperature = 5000; // used for white_balance == CONTROL_AWB_MODE_OFF
+    float [] locked_wb_gains; // Kanaha: if set, used for CONTROL_AWB_MODE_OFF instead of white_balance_temperature
+    float [] locked_wb_transform; // Kanaha: the camera's own colour transform to go with locked_wb_gains
     String flash_value = "flash_off";
     boolean has_iso;
     //private int ae_mode = CameraMetadata.CONTROL_AE_MODE_ON;
@@ -330,8 +332,23 @@ public class Camera2Settings {
                     Log.d(TAG, "default_color_correction: " + default_color_correction);
             }
 
-            RggbChannelVector rggbChannelVector = CameraController2.convertTemperatureToRggbVector(white_balance_temperature);
             builder.set(CaptureRequest.COLOR_CORRECTION_MODE, CameraMetadata.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX);
+            if( locked_wb_gains != null && locked_wb_transform != null ) {
+                // Kanaha: the gains and calibrated colour transform the camera's own auto white
+                // balance chose, frozen. The temperature path below applies generic gains and an
+                // identity transform, which discards the sensor's colour calibration.
+                builder.set(CaptureRequest.COLOR_CORRECTION_GAINS, new RggbChannelVector(
+                        locked_wb_gains[0], locked_wb_gains[1], locked_wb_gains[2], locked_wb_gains[3]));
+                int [] elements = new int[18];
+                for(int i=0;i<9;i++) {
+                    elements[i*2] = Math.round(locked_wb_transform[i] * 10000.0f);
+                    elements[i*2+1] = 10000;
+                }
+                builder.set(CaptureRequest.COLOR_CORRECTION_TRANSFORM, new ColorSpaceTransform(elements));
+                changed = true;
+                return changed;
+            }
+            RggbChannelVector rggbChannelVector = CameraController2.convertTemperatureToRggbVector(white_balance_temperature);
             builder.set(CaptureRequest.COLOR_CORRECTION_GAINS, rggbChannelVector);
             if( MyDebug.LOG ) {
                 Log.d(TAG, "original color_correction_transform: " + builder.get(CaptureRequest.COLOR_CORRECTION_TRANSFORM));

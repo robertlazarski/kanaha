@@ -2838,6 +2838,10 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
                 applicationInterface.setWhiteBalancePref(supported_values.selected_value);
 
                 if( supported_values.selected_value.equals("manual") && this.supports_white_balance_temperature ) {
+                    // Kanaha: a frozen white balance takes precedence over the temperature; set
+                    // (or clear) it first, since the controller keeps it across settings updates
+                    float [][] locked = parseWhiteBalanceLock(applicationInterface.getWhiteBalanceLockPref());
+                    camera_controller.setWhiteBalanceLockedGains(locked == null ? null : locked[0], locked == null ? null : locked[1]);
                     int temperature = applicationInterface.getWhiteBalanceTemperaturePref();
                     camera_controller.setWhiteBalanceTemperature(temperature);
                     if( MyDebug.LOG )
@@ -4679,6 +4683,34 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
                 applicationInterface.setWhiteBalanceTemperaturePref(new_temperature);
                 showToast(null, getResources().getString(R.string.white_balance) + " " + new_temperature, 0, true);
             }
+        }
+    }
+
+    /** Kanaha: parses PreferenceKeys.WhiteBalanceLockPreferenceKey into {gains[4], transform[9]};
+     *  null if empty or malformed, which falls back to the white balance temperature.
+     */
+    public static float [][] parseWhiteBalanceLock(String value) {
+        if( value == null || value.isEmpty() )
+            return null;
+        try {
+            String [] parts = value.split(";");
+            if( parts.length != 2 )
+                return null;
+            String [] g = parts[0].split(",");
+            String [] m = parts[1].split(",");
+            if( g.length != 4 || m.length != 9 )
+                return null;
+            float [] gains = new float[4];
+            float [] transform = new float[9];
+            for(int i=0;i<4;i++)
+                gains[i] = Float.parseFloat(g[i]);
+            for(int i=0;i<9;i++)
+                transform[i] = Float.parseFloat(m[i]);
+            return new float[][]{gains, transform};
+        }
+        catch(NumberFormatException e) {
+            Log.e(TAG, "malformed white balance lock: " + value);
+            return null;
         }
     }
 
