@@ -805,6 +805,14 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (kelvin == null && lock && wb == null) {
             if (!controller.captureResultHasWhiteBalanceTemperature()) return "The camera has not reported its white balance yet; give wb_kelvin";
             kelvin = (long) controller.captureResultWhiteBalanceTemperature();
+            // OpenCamera estimates kelvin from the auto white balance gains, and the estimate
+            // can pin at the end of the range: the Pixel 10 Pro XL reads 15000 K in daylight,
+            // where setting 15000 K visibly shifts the picture warmer. Locking that would change
+            // the white balance rather than freeze it.
+            if (kelvin <= preview.getMinimumWhiteBalanceTemperature() || kelvin >= preview.getMaximumWhiteBalanceTemperature()) {
+                return "The camera's white balance estimate (" + kelvin + " K) is at the limit of its range and "
+                        + "not reliable to lock. Give wb_kelvin (5600 for daylight), or wb \"auto\" to lock the rest";
+            }
         }
         if (kelvin != null) {
             if (!preview.supportsWhiteBalanceTemperature()) {

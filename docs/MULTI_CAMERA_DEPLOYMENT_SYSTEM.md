@@ -250,12 +250,13 @@ sensors, bit depths and colour.
 
 ### Pinning the settings
 
-Meter on one camera, then send its live values to all of them:
+Meter exposure and focus on one camera, choose the white balance yourself, then send the
+same values to all of them:
 
 ```bash
 VALUES=$($CURL -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
   "https://$A:8443/services/CameraControlService/getExposure" \
-  | jq -c '{action:"setExposure", iso, exposure_time_ns, wb_kelvin, focus_distance, stabilization:false, tone:"rec709", fps:30}')
+  | jq -c '{action:"setExposure", iso, exposure_time_ns, focus_distance, wb_kelvin:5600, stabilization:false, tone:"rec709", fps:30}')
 for ip in $CAMS; do
   $CURL -H "Content-Type: application/json" -d "$VALUES" \
     "https://$ip:8443/services/CameraControlService/setExposure" &
@@ -263,6 +264,11 @@ done
 wait
 ```
 
+- **Choose `wb_kelvin`, do not copy it.** Under auto white balance `getExposure` reports
+  OpenCamera's estimate from the colour gains, and on the Pixel 10 Pro XL it read 15000 K in
+  daylight, where setting 15000 K visibly shifts the picture warmer. Use 5600 for daylight,
+  around 6500 for overcast or shade, 3200 for tungsten. `lock` refuses an estimate at the edge
+  of the range for the same reason.
 - **Values are refused, never clamped.** A value outside a camera's range, or a
   shutter longer than one frame, fails on that camera with its range in the error.
   Check every response for `"success":true`.

@@ -246,7 +246,7 @@ $CURL -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
 
 Values outside the camera's range are refused, never clamped, since a clamped value would leave cameras unmatched; so is a shutter longer than one frame, which would lower that camera's frame rate. Settings persist across takes and through the reopen `open_gate` causes, and are refused while recording. Manual exposure and kelvin need the Camera2 API; Motorola phones default to Camera1 (Settings > Camera API).
 
-`getExposure` returns `exposure_mode`, `wb_mode`, `focus_mode`, `stabilization`, `tone`, `fps`, `settled` (whether the live values have caught up with pinned settings; `setExposure` waits up to 2 s for it), the live `iso`, `exposure_time_ns` (also as `shutter`, e.g. `"1/60"`), `wb_kelvin`, `focus_distance` and `frame_duration_ns`, plus `supports` and `ranges` objects. The live values can be sent unchanged to `setExposure` on other cameras; see [Multi-Camera Setup](#multi-camera-setup). `wb_kelvin` read from auto white balance is OpenCamera's estimate from the colour gains, so locking it can shift colour slightly on that camera; cameras given the same `wb_kelvin` still match.
+`getExposure` returns `exposure_mode`, `wb_mode`, `focus_mode`, `stabilization`, `tone`, `fps`, `settled` (whether the live values have caught up with pinned settings; `setExposure` waits up to 2 s for it), the live `iso`, `exposure_time_ns` (also as `shutter`, e.g. `"1/60"`), `wb_kelvin`, `focus_distance` and `frame_duration_ns`, plus `supports` and `ranges` objects. The live values can be sent unchanged to `setExposure` on other cameras; see [Multi-Camera Setup](#multi-camera-setup). `wb_kelvin` read from auto white balance is OpenCamera's estimate from the colour gains and can be far off: the Pixel 10 Pro XL reports 15000 K in daylight, where setting 15000 K shifts the picture warmer. Choose `wb_kelvin` rather than copying it (5600 for daylight), and `lock` refuses an estimate at the edge of the range. Cameras given the same `wb_kelvin` match.
 
 #### listFiles
 
@@ -437,7 +437,7 @@ The same client certificate works for all cameras when they share a CA.
 VALUES=$(curl -s --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
   -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
   "https://192.168.1.100:8443/services/CameraControlService/getExposure" \
-  | jq -c '{action:"setExposure", iso, exposure_time_ns, wb_kelvin, focus_distance, stabilization:false}')
+  | jq -c '{action:"setExposure", iso, exposure_time_ns, focus_distance, wb_kelvin:5600, stabilization:false, fps:30}')
 
 for cam in 192.168.1.{100,101,102}; do
   curl -s --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
