@@ -1,2352 +1,388 @@
-# Multi-Camera Deployment System with mTLS
+# Multi-Camera Deployment
 
-## Overview
+How to bring up several Kanaha cameras, secure them, find them, drive them together
+and make their footage match. Every command here was checked against the code as of
+October 2026; the API itself is documented in the [README](../README.md#5-control-via-api).
 
-Kanaha turns Android phones into remotely-controlled production cameras. Any Android 6.0+ device becomes a professional camera unit controllable via HTTP/2 API with mTLS security.
+**The rig this is written for:** a Pixel 10 Pro XL as A-camera, with a second one
+planned, and Moto G phones as B-cameras. The Pixel 9 Pro and Moto X4 that the
+January 2026 tests used have been retired; their results are kept under
+[Tested devices](#tested-devices) as history.
 
-This system enables professional camera crews to coordinate multiple Android phones in secure production environments with real-time control, synchronized operations, and automated file transfers.
+## What it is
 
-**Built in C for Performance:** The core server (Apache httpd + Axis2/C) is written entirely in C, delivering native execution speed with minimal memory footprint. This enables Kanaha to run efficiently on devices spanning 7+ years of Android development—from a 2017 Moto X4 to a 2024 Pixel 9 Pro—with identical functionality and no code changes. Where Java-based servers would struggle on older devices, C's efficiency ensures responsive API handling even on resource-constrained hardware.
+Each phone runs its own Apache httpd (HTTP/2, mTLS, Axis2/C) on port 8443. There is
+no central server and no camera-to-camera traffic: the control station talks to
+each camera directly, and the cameras are aligned afterwards, in post, from a shared
+start time, an audio slate and a timestamp sidecar. Adding a camera adds an endpoint
+and nothing else.
 
-## Single Camera vs Multi-Camera Value
+The APK is **arm64-v8a only**, minimum Android 6.0 (API 23); 32-bit phones cannot
+install it.
 
-**✅ One Camera is Fully Supported** - Kanaha has **no multi-camera dependency**. Every feature works perfectly with a single camera device, providing immediate value for solo productions.
+## Architecture
 
-**Value Scaling by Camera Count:**
-- **1 Camera**: Eliminates tedious manual file transfers and provides remote control capabilities
-- **2-3 Cameras**: Transforms painful multi-device coordination into simple script execution
-- **4+ Cameras**: Essential automation - manual coordination becomes practically impossible
-- **No Upper Limit**: Just like professional film productions that use multiple cameras simultaneously, there's no theoretical limit to how many cameras Kanaha can control - the only limit is how many cameras you have. This is supported by the underlying technologies: SMPTE timecode itself has no inherent limit to the number of cameras that can use it in a production, with limits determined only by practical equipment considerations rather than technical standards
-
-**Pure Horizontal Scaling Architecture:**
-
-Kanaha achieves **pure horizontal scaling** - performance and capacity increase linearly by simply adding more camera units, with no architectural bottlenecks or diminishing returns.
-
-**What This Means:**
-- **Independent Endpoints**: Each camera operates its own HTTP/2 server with unique IP address
-- **No Central Bottleneck**: No single server handling requests for multiple cameras
-- **Parallel Processing**: File transfers, recording operations, and status checks all happen simultaneously across cameras
-- **Linear Performance**: 10 cameras perform 10x the work of 1 camera, not 10x the load on 1 system
-- **Zero Shared State**: Cameras don't coordinate in real-time - they're temporally synchronized in post-production via SMPTE timecode
-
-**Contrast with Traditional Systems:**
-- **Vertical Scaling**: Making individual cameras more powerful (higher resolution, more streams)
-- **Centralized Systems**: One server handling multiple camera feeds (creates bottlenecks)
-- **Kanaha Approach**: Each camera is a complete, independent production unit that scales by adding more units
-
-**The Pain Point Progression:**
-- **Single Camera**: Manual file management is annoying but tolerable
-- **Multi-Camera**: Same tedious tasks become **unbearable** - walking between devices, managing multiple Android UIs, coordinating timing, organizing files from different sources
-- **Kanaha Solution**: Same 30-second script works for 1 camera or 20 cameras
-
-**Key Insight**: While the system is designed for multi-camera video production, it provides value starting with your first camera and **gains exponentially more value for every additional camera**. The automation that's "convenient" for one camera becomes "essential" for multiple cameras.
-
-## System Architecture
-
-### Architectural Model
-
-**Important:** This is a **distributed camera network** with individual endpoints, not a traditional Apache cluster. Each camera device operates as an independent HTTP service accessible via its own private IP address, with temporal synchronization achieved through SMPTE timecode recording for post-production alignment.
-
-**Key Architectural Distinctions:**
-- **Spatially distributed**: Different physical locations with individual IP addresses
-- **Temporally synchronized**: SMPTE timecode for frame-accurate post-production alignment
-- **Independently accessible**: Each camera is a separate endpoint, not clustered behind a single URL
-- **No unified "blackbox"**: Coordination is logical/temporal, not network-level clustering
-
-### Core Components
-
-1. **CameraControlService (Axis2/C)** - JSON-RPC service for camera operations (record, status, transfer)
-2. **Certificate Authority System** - mTLS security and certificate management
-3. **HTTP/2 Performance Optimization** - High-throughput communication per device
-4. **Apache httpd + Axis2/C Integration** - JSON services over HTTP/2+mTLS
-5. **Discovery Script** - mDNS-based camera discovery (`kanaha-discover.sh`)
-
-### Apache httpd Daemon Configuration
-
-**Apache httpd on Android** runs as a persistent foreground service (daemon) with IPC-based communication. This avoids JNI complexity and provides reliable server operation with clean process boundaries.
-
-#### AndroidManifest.xml Configuration
-
-**Service Declaration:**
-```xml
-<!-- Apache httpd Service for HTTP/2+mTLS server -->
-<service
-    android:name="org.kanaha.camera.ApacheService"
-    android:enabled="true"
-    android:exported="false"
-    android:foregroundServiceType="specialUse"
-    android:process=":apache_httpd">
-    <property
-        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-        android:value="Local HTTPS (mutual TLS) server for remote camera control from devices on the same network" />
-    <intent-filter>
-        <action android:name="org.kanaha.camera.START_APACHE_HTTPD" />
-    </intent-filter>
-</service>
+```
+control station ──HTTP/2 + mTLS──▶ httpd (child process of ApacheService, port 8443)
+                                      │ mod_axis2 → camera_control_service.c
+                                      │ fork/execvp("/system/bin/am", "broadcast", …)
+                                      ▼
+                          CameraControlReceiver (Java, signature permission)
+                                      │ drives OpenCamera, writes a response file
+                                      ▼
+                          native side reads the response file → HTTP/2 response
 ```
 
-**Required Permissions:**
-```xml
-<!-- Network permissions for HTTP/2+mTLS camera control -->
-<uses-permission android:name="android.permission.INTERNET" />
-<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+- `ApacheService` is a `specialUse` foreground service, **not exported**. The app
+  starts it from `MainActivity`; nothing outside the app can start or stop it.
+- The native side reaches Java with `am broadcast` through `fork`/`execvp`, so no
+  caller-supplied string passes through a shell. On devices that refuse `am` from
+  an app process (the Moto G Play 2024), it falls back to a request file that
+  `CameraIpcPoller` picks up, which adds up to 500 ms per call.
+- `CameraControlReceiver` is exported but guarded by the signature permission
+  `org.kanaha.camera.permission.CAMERA_CONTROL`, so other apps on the phone cannot
+  drive it.
+- The httpd configuration ships as templates in `assets/apache/conf/`
+  (`httpd.conf`, `ssl.conf`, `http2-performance.conf`, `axis2.conf`); at start the
+  service substitutes only the device's hostname. See [SECURITY.md](SECURITY.md)
+  for what those files enforce.
 
-<!-- Foreground service permission for Apache httpd -->
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-<uses-permission android:name="android.permission.WAKE_LOCK" />
-```
+## Bringing a camera up
 
-**Key Configuration Features:**
-- **Process Isolation**: `android:process=":apache_httpd"` runs Apache in separate process
-- **Foreground Service**: `android:foregroundServiceType="specialUse"` prevents Android from killing the daemon, with no time limit (Android 15 caps `dataSync` at 6 hours in any 24; see `CPP_AND_JAVA_DESIGN.md`)
-- **Wake Lock**: Prevents device sleep from interrupting HTTP/2 connections
-- **Auto-restart**: `START_STICKY` service restarts automatically if killed
-
-#### Start and Stop Commands
-
-**Start Apache httpd:**
-```bash
-# Via Android Intent (from adb shell or other apps)
-am start-service -a "org.kanaha.camera.START_APACHE_HTTPD" \
-  org.kanaha.camera/org.kanaha.camera.ApacheService
-
-# Alternative: Direct service start
-am startservice org.kanaha.camera/.ApacheService
-```
-
-**Stop Apache httpd:**
-```bash
-# Graceful shutdown via Intent
-am start-service -a "org.kanaha.camera.STOP_APACHE_HTTPD" \
-  org.kanaha.camera/org.kanaha.camera.ApacheService
-
-# Alternative: Force stop service
-am stopservice org.kanaha.camera/.ApacheService
-```
-
-**Restart Apache httpd** (for certificate reloading):
-```bash
-# Restart with new certificates/configuration
-am start-service -a "org.kanaha.camera.RESTART_APACHE_HTTPD" \
-  org.kanaha.camera/org.kanaha.camera.ApacheService
-```
-
-**Check Status:**
-```bash
-# Check if Apache service is running
-am service-check org.kanaha.camera/.ApacheService
-
-# View service logs
-am logcat | grep "KanahaApacheService"
-```
-
-#### IPC Architecture (NO JNI for OpenCamera Integration)
-
-**Note**: "No JNI" refers to the communication between Axis2/C native services and the OpenCamera Android layer, which uses Internal Intent IPC instead of JNI callbacks. This provides process isolation and memory safety for camera operations.
-
-**Process Communication Flow:**
-```
-HTTP/2 Request → Apache httpd (native process)
-                    ↓
-                mod_axis2 → camera_device_*_impl()
-                    ↓
-                system("am broadcast --user 0 -n ...CameraControlReceiver -a org.kanaha.CAMERA_CONTROL --es action ...")
-                    ↓
-                CameraControlReceiver.onReceive() (Android layer)
-                    ↓
-                OpenCamera MainActivity methods
-                    ↓
-                Response written to file
-                    ↓
-                Native code reads response → HTTP/2 Response
-```
-
-**IPC Benefits over JNI:**
-- **Process Isolation**: Apache crash doesn't affect camera app
-- **Memory Safety**: No JNI memory leaks or cross-boundary issues
-- **Clean Architecture**: Well-defined IPC contracts via Android Intents
-- **Android Native**: Uses Android's Intent system instead of foreign JNI
-
-#### Configuration Management
-
-**Directory Structure:**
-```
-/data/data/org.kanaha.camera/files/apache/
-├── conf/
-│   ├── httpd.conf          # Main Apache configuration
-│   ├── ssl.conf            # mTLS/HTTPS settings
-│   ├── axis2.conf          # mod_axis2 configuration
-│   └── services.xml        # Camera control service definitions
-├── htdocs/                 # Document root (static files)
-├── logs/                   # Apache access/error logs
-└── ssl/                    # mTLS certificates
-    ├── server.crt          # Server certificate
-    ├── server.key          # Server private key
-    └── ca.crt              # Certificate authority
-```
-
-**Daemon Process Launch:**
-```java
-// Apache launched as separate native process (NOT JNI)
-String[] command = {
-    getApplicationInfo().nativeLibraryDir + "/libhttpd",
-    "-D", "FOREGROUND",      // Daemon mode
-    "-D", "HTTP2_ENABLED",   // Enable HTTP/2
-    "-D", "SSL_ENABLED",     // Enable mTLS
-    "-D", "AXIS2_ENABLED",   // Enable camera control API
-    "-f", configDirectory + "/httpd.conf",
-    "-d", documentRoot
-};
-
-ProcessBuilder processBuilder = new ProcessBuilder(command);
-apacheProcess = processBuilder.start();  // Pure process launch
-```
-
-#### Daemon Features
-
-**Automatic Management:**
-- **Auto-start**: Service starts when Android boots (configurable)
-- **Crash Recovery**: Automatically restarts Apache if process crashes
-- **Resource Protection**: Wake locks prevent system sleep interruption
-- **Health Monitoring**: Continuous process status checking
-- **Certificate Reload**: Restart capability for certificate updates
-
-**Production Ready:**
-- **Persistent Operation**: Runs 24/7 for always-available camera control
-- **Enterprise Security**: mTLS certificate authentication
-- **HTTP/2 Performance**: Optimized for low-latency camera operations
-- **Logging**: Comprehensive Apache access/error logs for debugging
-
-#### Android-Specific Architecture
-
-**Key Adaptations for Android:**
-
-1. **No Root/Sudo Access**: Uses Android Service lifecycle instead of systemctl
-2. **Sandboxed File System**: All files in app-specific directories (`/data/data/org.kanaha.camera/`)
-3. **Static Linking**: Apache modules compiled into single binary (no LoadModule directives)
-4. **mTLS PKI System**: Private CA with certificate-based authentication
-
-#### Apache httpd Configuration
-
-**1. Module Loading:**
-
-Apache httpd includes HTTP/2, SSL, and Axis2 modules compiled directly into the native library. **No separate module loading is required** - all modules are statically linked during the NDK build process.
-
-**Android Implementation:**
-```java
-// ApacheService.java - Launch Apache with pre-compiled modules
-String[] command = {
-    getApplicationInfo().nativeLibraryDir + "/libhttpd",  // Apache with compiled-in modules
-    "-D", "HTTP2_ENABLED",     // mod_http2 statically linked
-    "-D", "SSL_ENABLED",       // mod_ssl statically linked
-    "-D", "AXIS2_ENABLED",     // mod_axis2 statically linked
-    "-f", configDirectory + "/httpd.conf"
-};
-
-// Execute Apache httpd as separate Android process
-ProcessBuilder processBuilder = new ProcessBuilder(command);
-processBuilder.environment().put("LD_LIBRARY_PATH",
-    getApplicationInfo().nativeLibraryDir);
-Process apacheProcess = processBuilder.start();
-```
-
-**Why static linking for Android:**
-- ✅ **Simplified deployment**: No separate .so files to manage
-- ✅ **Faster startup**: No dynamic loading overhead
-- ✅ **Guaranteed compatibility**: All modules built together with same toolchain
-- ✅ **Android-optimized**: Built with NDK for arm64-v8a architecture
-- ✅ **HTTP/2 guaranteed**: mod_h2 always available, no distro dependency
-
-**Apache httpd Dependency and HTTP/2 Support:**
-
-⚠️ **Critical Build Requirement**: Kanaha requires Apache httpd 2.4.x **compiled from source** with HTTP/2 support (mod_h2). This is a **build-time dependency only** for cross-compiling the native library.
-
-**Ubuntu 25.10 Issue**: The default Ubuntu 25.10 Apache package (apache2 2.4.64) **does NOT include mod_h2**. You cannot use system Apache for building Kanaha. See "Step 3: Build Apache httpd with HTTP/2 for Android" in the installation section for detailed build instructions.
-
-**What ships in the APK**: the native binaries `libhttpd.so` (Apache httpd with mod_h2, mod_ssl and mod_axis2 statically linked, ~9.8 MB) and `libkanaha_mcp.so` (the MCP stdio server). Android devices do **not** need Apache installed - everything is self-contained in the APK.
-
-**2. SSL Certificate Configuration:**
-
-The app uses a production-grade mTLS PKI system with CA-signed certificates deployed to app-specific storage. **No local Apache installation is required** - all components run on the device.
-
-**Certificate Deployment:**
-```java
-// CertificateService.java - Deploy production PKI certificates to Android device
-private void deployProductionCertificates() {
-    // Target: /data/data/org.kanaha.camera/files/apache/ssl/
-    File sslDirectory = new File(context.getFilesDir(), "apache/ssl");
-    sslDirectory.mkdirs();
-
-    // Deploy CA-signed certificates for mTLS authentication
-    deployAssetToFile("ssl/ca.crt", new File(sslDirectory, "ca.crt"));
-    deployAssetToFile("ssl/server.crt", new File(sslDirectory, "server.crt"));
-    deployAssetToFile("ssl/server.key", new File(sslDirectory, "server.key"));
-}
-```
-
-**Certificate setup — per-device provisioning:**
-
-Each device mints its **own** key + CSR on first run; the private key never leaves
-the device and nothing is bundled in `assets/ssl/`. You run a private CA off-device
-and sign each device's CSR once (see
-[SECURITY.md](SECURITY.md#certificate-model-per-device-provisioning) for the full flow):
+The camera must be **in the foreground**: Android gives the camera only to the app on
+screen, and `startRecording` refuses with an explicit error while the app is in the
+background. Over ADB:
 
 ```bash
-# One-time: create the CA (its key stays on your machine, never ships)
-openssl genrsa -out ca.key 4096
-openssl req -new -x509 -days 3650 -key ca.key -out ca.crt -subj "/CN=Kanaha CA"
-
-# Per device: sign the CSR it generated on first run, push the cert back, restart
-adb shell "run-as org.kanaha.camera cat files/csr/camera.csr" > camera.csr
-openssl x509 -req -in camera.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
-  -out camera.crt -days 365 \
-  -extfile <(printf "subjectAltName=IP:<ip>,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth")
-adb push camera.crt /data/local/tmp/server.crt && adb push ca.crt /data/local/tmp/ca.crt
-adb shell "run-as org.kanaha.camera sh -c 'cp /data/local/tmp/server.crt files/apache/ssl/server.crt && cp /data/local/tmp/ca.crt files/apache/ssl/ca.crt'"
-```
-
-**Key point:** each device cert carries the device's IP / `.local` in its SANs and a
-per-device CN; clients trust the single CA. curl uses `-k` only to skip hostname
-matching on the loopback / `adb forward` path — authentication is via the mTLS
-client certificate.
-
-**Why use a self-signed CA with PKI instead of individual self-signed certificates:**
-
-Kanaha uses a **private self-signed Certificate Authority (CA)** that you create once and use to sign certificates for all devices. **No commercial CA purchases required** - this is a private network PKI system suitable for production environments.
-
-**Architecture:**
-```
-Self-Signed CA (you create)
-    ├── Server Certificate 1 (Camera Device 1) - signed by your CA
-    ├── Server Certificate 2 (Camera Device 2) - signed by your CA
-    ├── Server Certificate N (Camera Device N) - signed by your CA
-    └── Client Certificate (Control Station)   - signed by your CA
-```
-
-**Benefits of private CA approach vs. individual self-signed certificates:**
-- ✅ **Single trust anchor**: One CA certificate trusted by all devices, not N individual certificates
-- ✅ **Scalable**: Add cameras by signing new certificates with existing CA
-- ✅ **Proper mTLS**: Control station and cameras authenticate each other via CA trust chain
-- ✅ **Revocation capability**: Revoke compromised device certificates without regenerating everything
-- ✅ **Production-grade security**: Same PKI model used by enterprises, just with private CA
-- ✅ **No external dependencies**: No commercial CA purchases, DNS validation, or internet connectivity required
-
-**3. HTTP/2 Virtual Host Configuration:**
-
-The httpd.conf file is dynamically generated and deployed to app-specific storage at runtime. **No manual configuration editing is required** - ApacheService automatically configures the virtual host with the device's network settings.
-
-**httpd.conf Template Generation:**
-```java
-// ApacheService.java - Generate httpd.conf for Android device
-private void deployHttpdConfiguration() {
-    File configFile = new File(configDirectory, "httpd.conf");
-    String deviceIP = getDeviceIPAddress();  // e.g., 192.168.10.10
-    String appDir = context.getFilesDir().getAbsolutePath();
-
-    String httpdConf = String.format("""
-        # Kanaha Camera Control - HTTP/2+mTLS Configuration
-        ServerRoot "%s/apache"
-        Listen 8443
-
-        <VirtualHost *:8443>
-            ServerName %s:8443
-            Protocols h2 http/1.1
-
-            # HTTP/2 Performance Optimization
-            H2MaxSessionStreams 100
-            H2WindowSize 1048576
-
-            # SSL/TLS with mTLS client authentication
-            SSLEngine on
-            SSLCertificateFile %s/apache/ssl/server.crt
-            SSLCertificateKeyFile %s/apache/ssl/server.key
-            SSLCACertificateFile %s/apache/ssl/ca.crt
-
-            # Require client certificate (mTLS)
-            SSLVerifyClient require
-            SSLVerifyDepth 3
-
-            # Axis2/C JSON Services
-            <Location /services>
-                SetHandler axis2_module
-                SSLRequireSSL
-            </Location>
-        </VirtualHost>
-        """, appDir, deviceIP, appDir, appDir, appDir);
-
-    writeToFile(configFile, httpdConf);
-}
-```
-
-**Android-Specific httpd.conf Template:**
-```apache
-# Deployed to: /data/data/org.kanaha.camera/files/apache/conf/httpd.conf
-ServerRoot "/data/data/org.kanaha.camera/files/apache"
-Listen 8443
-
-<VirtualHost *:8443>
-    ServerName 192.168.10.10:8443
-    Protocols h2 http/1.1
-
-    # HTTP/2 optimization for camera control
-    H2MaxSessionStreams 100
-    H2WindowSize 1048576
-    H2StreamMaxMemSize 65536
-
-    # SSL/TLS Configuration
-    SSLEngine on
-    SSLCertificateFile /data/data/org.kanaha.camera/files/apache/ssl/server.crt
-    SSLCertificateKeyFile /data/data/org.kanaha.camera/files/apache/ssl/server.key
-    SSLCACertificateFile /data/data/org.kanaha.camera/files/apache/ssl/ca.crt
-
-    # mTLS client authentication (production security)
-    SSLVerifyClient require
-    SSLVerifyDepth 3
-    SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1
-    SSLCipherSuite HIGH:!aNULL:!MD5
-
-    # Axis2/C JSON service endpoints
-    <Location /services>
-        SetHandler axis2_module
-        SSLRequireSSL
-    </Location>
-</VirtualHost>
-```
-
-**Key features:**
-- ✅ **Dynamic IP configuration**: ServerName set to device's actual network IP
-- ✅ **App sandbox paths**: All files in /data/data/org.kanaha.camera/files/
-- ✅ **mTLS enforcement**: Client must authenticate with valid certificate
-- ✅ **HTTP/2 optimization**: Tuned for camera control latency and throughput
-- ✅ **Runtime generation**: Configuration created at startup, not bundled
-
-**4. Service Endpoint Access:**
-
-Camera control services run on the Android device and are accessed via HTTP/2+mTLS from your control station. **The Android device acts as the HTTP/2 server**, not the client.
-
-**Accessing Camera Services from Control Station:**
-
-There are two ways to connect to the camera:
-
-1. **Via WiFi/mDNS** (production use) - Connect directly to camera's mDNS hostname
-2. **Via USB/ADB** (development/testing) - Use port forwarding through USB cable
-
-**Connection Method 1: WiFi (Production)**
-```bash
-# Discover cameras on the network via mDNS:
-avahi-browse -rpt _https._tcp | grep kanaha
-
-# Output format: ...;service_name;...;HOSTNAME.local;IP;PORT;...
-# Example: =;wlp0s20f3;IPv4;pixel9pro;...;Android_NFUDZ8TD.local;192.168.8.168;8443;...
-
-# Extract the mDNS hostname (resolves automatically):
-CAMERA=$(avahi-browse -rpt _https._tcp | grep pixel9pro | grep "^=" | cut -d';' -f7 | head -1)
-echo $CAMERA  # Android_NFUDZ8TD.local
-
-# Connect using the mDNS hostname:
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-curl -sk --http2 \
-     --cert "$SSL/client.crt" \
-     --key "$SSL/client.key" \
-     --cacert "$SSL/server.crt" \
-     -H "Content-Type: application/json" \
-     -d '{"action":"getStatus"}' \
-     https://$CAMERA:8443/services/CameraControlService/getStatus
-```
-
-**Note:** The friendly name (e.g., `pixel9pro`) is a service name that doesn't resolve directly. Use the actual mDNS hostname (e.g., `Android_NFUDZ8TD.local`) which resolves via standard mDNS on Linux.
-
-**Connection Method 2: USB/ADB (Development)**
-```bash
-# Set up ADB port forwarding (USB cable required)
-adb forward tcp:18443 tcp:8443
-
-# Now localhost:18443 tunnels to device:8443
-SSL=/path/to/ssl/certs
-curl -sk --http2 \
-     --cert "$SSL/client.crt" \
-     --key "$SSL/client.key" \
-     --cacert "$SSL/ca.crt" \
-     -H "Content-Type: application/json" \
-     -d '{"action":"getStatus"}' \
-     https://localhost:18443/services/CameraControlService/getStatus
-```
-
-### Camera Readiness Prerequisites
-
-**Important**: Recording requires the camera app to be in the foreground with an active preview. The API will return `"success": true` for recording commands even if the camera isn't ready, but no video will be created.
-
-**Verify Camera Readiness:**
-Check that `camera_available` and `preview_active` are both `true` before recording:
-```bash
-curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-  -H "Content-Type: application/json" -d '{"action":"getStatus"}' \
-  "https://$CAMERA/services/CameraControlService/getStatus"
-
-# Required for recording:
-# "camera_available": true,
-# "preview_active": true
-```
-
-**Wake Up Device (ADB Required):**
-
-Android devices lock their screen after inactivity, which releases the camera. Use ADB to wake the device:
-
-```bash
-# 1. Keep screen awake while USB connected (run once per session)
-adb shell svc power stayon usb
-
-# 2. Wake up the screen
+adb shell svc power stayon usb                 # keep the screen on while plugged in
 adb shell input keyevent KEYCODE_WAKEUP
+adb shell am start -n org.kanaha.camera/net.sourceforge.opencamera.MainActivity
+```
 
-# 3. Swipe to dismiss lock screen (user may need to enter PIN/pattern)
-adb shell input swipe 500 1500 500 500
+Stop or restart (for example after provisioning a certificate):
 
-# 4. Launch/restart camera app
+```bash
 adb shell am force-stop org.kanaha.camera
 adb shell am start -n org.kanaha.camera/net.sourceforge.opencamera.MainActivity
-
-# 5. Wait for camera to initialize (5 seconds recommended)
-sleep 5
 ```
 
-**WiFi-Only Operation:**
+Logs: `adb logcat -s KanahaApacheService KanahaCameraReceiver KanahaCameraService`.
+The httpd's own logs are inside the app sandbox:
+`adb shell run-as org.kanaha.camera ls files/apache/logs`.
 
-Wake-up commands require ADB (USB or ADB-over-WiFi). For pure WiFi operation:
-1. User manually unlocks phone and launches camera app
-2. Once camera is in foreground, all API commands work over WiFi
-3. Use `svc power stayon usb` while charging to prevent screen lock
+Before recording, `getStatus` should show `"camera_available": true` and
+`"preview_active": true`. Over WiFi alone there is no way to wake or unlock a phone;
+someone has to bring the app to the front once.
 
-**After Recording Starts:**
-Verify `is_recording` is `true` immediately after `startRecording`:
-```bash
-# Start recording
-curl ... -d '{"action":"startRecording"}' ...
+## mTLS certificate architecture
 
-# Immediately verify (within 1-2 seconds)
-curl ... -d '{"action":"getStatus"}' ...
-# Should show: "is_recording": true, "state": "recording"
-```
+One private CA, kept off every device. Each camera makes its own key; each control
+station has a client certificate from the same CA. No private key ships in the APK.
 
----
+1. On first run the app generates an RSA key and a CSR (`files/csr/camera.csr`) and
+   keeps port 8443 closed; the notification reads "Awaiting provisioning".
+2. Sign the CSR and push the certificate back:
 
-**Complete Workflow Example (Verified 2026-01-05):**
-
-The following commands were tested on **two devices spanning 7 years of Android development**:
-- **Google Pixel 9 Pro (2024)** - Android 15, tested via ADB and WiFi
-- **Motorola Moto X4 (2017)** - Android 9, tested via ADB and WiFi with **zero code adjustments**
-
-Both devices were tested with the same APK and identical API calls. The Moto X4 WiFi test (2026-01-05) successfully completed all operations including SFTP file transfer over the network, demonstrating Kanaha's broad device compatibility across different manufacturers and Android versions.
-
-**Simultaneous Multi-Camera Recording Test (2026-01-05):**
-
-Both cameras were controlled simultaneously over WiFi, demonstrating true multi-camera coordination:
-
-| Camera | Video File | Size | Timestamp |
-|--------|-----------|------|-----------|
-| Pixel 9 Pro | VID_20260105_085605.mp4 | 136MB | 08:56:42 |
-| Moto X4 | VID_20260105_085604.mp4 | 75MB | 08:56:41 |
-
-Timestamps differ by only 1 second, confirming simultaneous start/stop capability across devices of different generations (2017 vs 2024).
-
-> **Automated Test Script:** Use `test-single-camera-workflow.sh`or `test-dual-camera-workflow.sh` to run the complete multi-camera workflow:
-> ```bash
-> # Basic usage - 10 second recording on both cameras
-> ./test-dual-camera-workflow.sh
->
-> # Custom duration and clip name
-> ./test-dual-camera-workflow.sh --duration 30 --clip-name scene_001
->
-> # Use mDNS discovery
-> ./test-dual-camera-workflow.sh --discover
->
-> # Skip SFTP transfer
-> ./test-dual-camera-workflow.sh --skip-transfer
-> ```
-
-```bash
-# Setup - define certificate path and connection
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERA="localhost:18443"  # Via ADB, or use "pixel9pro.local:8443" for WiFi
-
-# Step 1: Check camera status
-curl -sk --http2 \
-     --cert "$SSL/client.crt" \
-     --key "$SSL/client.key" \
-     --cacert "$SSL/ca.crt" \
-     -H "Content-Type: application/json" \
-     -d '{"action":"getStatus"}' \
-     "https://$CAMERA/services/CameraControlService/getStatus"
-
-# Response:
-# { "success": true, "status": { "device_name": "pixel9pro", "device_model": "Pixel 9 Pro",
-#   "state": "idle", "is_recording": false, "battery_level": 100, "storage_available_mb": 197172 } }
-
-# Step 2: Start recording (ensure camera preview is active on device!)
-curl -sk --http2 \
-     --cert "$SSL/client.crt" \
-     --key "$SSL/client.key" \
-     --cacert "$SSL/ca.crt" \
-     -H "Content-Type: application/json" \
-     -d '{"action":"startRecording","clip_name":"scene_001","quality":"4K"}' \
-     "https://$CAMERA/services/CameraControlService/startRecording"
-
-# Response: { "success": true, "message": "Recording started", "clip_name": "scene_001", "quality": "4K" }
-
-# Step 3: Wait for desired duration, then stop recording
-sleep 30
-curl -sk --http2 \
-     --cert "$SSL/client.crt" \
-     --key "$SSL/client.key" \
-     --cacert "$SSL/ca.crt" \
-     -H "Content-Type: application/json" \
-     -d '{"action":"stopRecording"}' \
-     "https://$CAMERA/services/CameraControlService/stopRecording"
-
-# Response: { "success": true, "message": "Recording stopped" }
-
-# Step 4: Transfer video to storage server via SFTP
-curl -sk --http2 \
-     --cert "$SSL/client.crt" \
-     --key "$SSL/client.key" \
-     --cacert "$SSL/ca.crt" \
-     -H "Content-Type: application/json" \
-     -d '{"action":"sftpTransfer","storage_server_id":"control1","video_filename":"*.mp4","destination_folder":"/footage/scene_001"}' \
-     "https://$CAMERA/services/CameraControlService/sftpTransfer"
-
-# Response: { "success": true, "message": "File transferred successfully" }
-```
-
-**Available Service Endpoints:**
-```
-/services/CameraControlService/getStatus        - Get camera status, battery, storage
-/services/CameraControlService/startRecording   - Start video recording
-/services/CameraControlService/stopRecording    - Stop video recording
-/services/CameraControlService/listFiles        - List video files on device
-/services/CameraControlService/deleteFiles      - Delete video files from device
-/services/CameraControlService/sftpTransfer     - Transfer files via SFTP
-/services/CameraControlService/configure        - Configure camera settings
-```
-
-**Request Format (action-based):**
-```json
-{"action":"<action_name>", ...additional_params}
-```
-
-**List Files Parameters:**
-```json
-{"action": "listFiles"}
-```
-Response:
-```json
-{
-  "success": true,
-  "file_count": 2,
-  "total_size": 293020170,
-  "files": [
-    {"name": "VID_20260104_105049.mp4", "size": 178613590, "modified": "2026-01-04 10:51:36"},
-    {"name": "VID_20260104_112809.mp4", "size": 114406580, "modified": "2026-01-04 11:28:55"}
-  ]
-}
-```
-
-**Delete Files Parameters:**
-```json
-{"action": "deleteFiles", "pattern": "<pattern>"}
-```
-Supported patterns:
-- Specific file: `"VID_20260104_105049.mp4"`
-- Wildcard: `"*.mp4"`, `"VID_2026*"`
-- Date: `"2026-01-04"` (all files from that date)
-- All: `"*"` (delete all video files)
-
-**SFTP Transfer Parameters:**
-```json
-{
-  "action": "sftpTransfer",
-  "storage_server_id": "control1",     // Server ID from servers.json
-  "video_filename": "*.mp4",           // Specific file or wildcard pattern
-  "destination_folder": "/footage"     // Remote destination directory
-}
-```
-
-> **📖 For SFTP setup (SSH keys, server config), see [SFTP-FILE-TRANSFER.md](./SFTP-FILE-TRANSFER.md)**
-
-**Important Notes:**
-- **Camera preview must be active**: Recording requires the camera preview to be running on the device
-- **-sk flag**: `-s` for silent, `-k` to skip CA verification (use `--cacert` for production)
-- **HTTP/2 required**: The `--http2` flag enables HTTP/2 protocol
-
-**Security Requirements:**
-- ✅ **mTLS authentication required**: Control station must present valid client certificate
-- ✅ **Certificate validation**: Use `--cacert` to verify server certificate
-- ✅ **HTTPS only**: Plain HTTP connections rejected
-- ✅ **Dual-layer auth for SFTP**: mTLS for API + SSH PKI for file transfer
-
-#### Key Android Components
-
-| Component | Purpose |
-|---|---|
-| **ApacheService.java** | Service lifecycle management for Apache httpd daemon |
-| **CertificateService.java** | mTLS certificate deployment and management |
-| **CameraControlReceiver.java** | IPC communication bridge for camera operations |
-| **AndroidManifest.xml** | Service permissions and foreground service configuration |
-
-#### Android Implementation Architecture
-
-**Process Isolation:**
-- Apache httpd runs as separate native process (ProcessBuilder)
-- No JNI bridge between Java and native code for improved stability
-- Crash isolation: Apache failures don't affect main camera app
-
-**Security Model:**
-- mTLS PKI with self-signed CA for private network
-- Certificate-based mutual authentication
-- No passwords or tokens required
-
-**File System:**
-- All files in app sandbox: `/data/data/org.kanaha.camera/files/apache/`
-- Paths translated through ApacheService deployment at runtime
-
-**Process Management:**
-- Intent-based service control: `am start-service`
-- Persistent foreground service for reliability
-
-### mTLS Certificate System
-
-**Per-device PKI (provisioned on-device):**
-
-Kanaha uses a private Certificate Authority for mutual TLS. Each device generates
-its own key + CSR on first run and is provisioned with a CA-signed cert — the
-private key never leaves the device and none ships in the APK; the CA key lives
-off-device. See [SECURITY.md](SECURITY.md#certificate-model-per-device-provisioning)
-for the signing/provisioning commands. Once provisioned, clients connect with a
-CA-issued client cert:
-
-```bash
-curl --http2 --cert client.crt --key client.key --cacert ca.crt \
-     -H "Content-Type: application/json" \
-     -d '{"action":"getStatus"}' \
-     https://192.168.1.10:8443/services/CameraControlService/getStatus
-```
-
-**mTLS Benefits:**
-- ✅ **Mutual Authentication**: Both client and server verify identity
-- ✅ **Certificate Chain**: Proper PKI chain of trust
-- ✅ **Enterprise Security**: Same level as banking systems
-- ✅ **Zero-Trust**: Every device must prove identity
-
-### Modern HTTP/2 + mTLS + IPC Request Flow
-
-**Complete request/response flow chart** showing how modern technologies enable enterprise-grade camera control on Android devices, including legacy phones:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                           🌐 MODERN HTTP/2 + mTLS REQUEST FLOW                        │
-│                     (Technologies Not Possible a Decade Ago)                           │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
-
-    💻 Control Station                                   📱 Android Camera Device
-         (Client)                                            (Server)
-
-    ┌─────────────────┐                           ┌─────────────────────────────────────┐
-    │  curl --http2   │                           │       Apache httpd Daemon          │
-    │  --cert client  │ ────────────────────────► │    🚀 MODERN: HTTP/2 Multiplexed   │
-    │  --key client   │   🔒 mTLS Certificate     │    🔒 MODERN: TLS 1.3 + ALPN       │
-    │  --cacert ca    │      Authentication       │    ⚡ C SPEED: Sub-5ms Response     │
-    │  -d '{"action"  │   (Enterprise Security    │    📻 OLD PHONE: ARM v7 Compatible │
-    │  :"get_status"}'│    Not Possible 2014)     │                                     │
-    └─────────────────┘                           └─────────────┬───────────────────────┘
-                                                                │
-    🔐 mTLS Handshake (Modern Security)                        │
-    • Client cert validation                                    │
-    • Server cert validation                                    │
-    • TLS 1.3 + Perfect Forward Secrecy                       │
-    • HTTP/2 ALPN negotiation                                  │
-                                                                │
-                                                                ▼
-                                               ┌─────────────────────────────────────┐
-                                               │         mod_axis2 (C Module)        │
-    ┌──────────────────────────────────────────► 🚀 NATIVE C PERFORMANCE:           │
-    │  🌐 HTTP/2 JSON Request Received          │   • Zero JVM overhead               │
-    │  • Binary framing (efficient)             │   • 240MB peak memory (vs 2GB JVM) │
-    │  • Header compression (HPACK)             │   • Direct JSON-C processing       │
-    │  • Stream multiplexing                    │   • 📱 Runs on Android 6.0+        │
-    │  • Server push capable                    │   • 🏎️ 26.56 MB/s JSON throughput  │
-    └──────────────────────────────────────────┐ └─────────────────┬───────────────────┘
-                                               │                   │
-    ⚡ MODERN JSON Processing (C Speed):        │                   │
-    • json-c library direct parsing           │                   │
-    • No XML/SOAP overhead                    │                   │
-    • Zero serialization layers               │                   │
-    • Memory-mapped JSON access               │                   │
-                                               │                   ▼
-                                               │  ┌─────────────────────────────────────┐
-                                               │  │   camera_device_*_impl() Functions  │
-                                               │  │  🔌 NO JNI BRIDGE (Modern IPC):    │
-                                               └──► • system("am broadcast") calls    │
-                                                  │ • Internal Intent IPC              │
-                                                  │ • Process isolation                │
-                                                  │ • Memory safety                   │
-                                                  │ • 🚫 No JNI complexity            │
-                                                  └─────────────────┬───────────────────┘
-                                                                    │
-    📡 Modern Android IPC:                                         │
-    • Internal Intent broadcasts                                    │
-    • File-based response system                                   │
-    • Process boundary security                                    │
-    • No cross-JNI memory leaks                                   │
-                                                                    │
-                                                                    ▼
-                                                   ┌─────────────────────────────────────┐
-                                                   │    CameraControlReceiver.java       │
-                                                   │  ☕ ANDROID JAVA LAYER:            │
-                                                   │   • Intent.onReceive()             │
-                                                   │   • OpenCamera integration         │
-                                                   │   • Camera2 API usage              │
-                                                   │   • 🎬 Professional camera control  │
-                                                   │   • File response generation       │
-                                                   └─────────────────┬───────────────────┘
-                                                                     │
-    📱 Modern Camera Integration:                                   │
-    • Camera2 API (Android 5.0+)                                  │
-    • Hardware abstraction layer                                   │
-    • Professional recording features                              │
-    • 4K+ video support                                           │
-                                                                    │
-                                                                    ▼
-                                                   ┌─────────────────────────────────────┐
-                                                   │     OpenCamera MainActivity        │
-                                                   │  📹 CAMERA OPERATIONS:             │
-                                                   │   • takePicture(false) [video]     │
-                                                   │   • getPreview().stopVideo(false)  │
-                                                   │   • getPreview().isVideoRecording()│
-                                                   │   • clickedSwitchVideo(null)       │
-                                                   │   • 🎥 Professional features       │
-                                                   └─────────────────┬───────────────────┘
-                                                                     │
-                                                                     │ Response File Created
-                                                                     ▼
-                                                   ┌─────────────────────────────────────┐
-                                                   │      Response File System           │
-    ┌──────────────────────────────────────────────  📁 MODERN FILE IPC:              │
-    │  📄 JSON Response Written                    │   • /data/.../cache/response_*.json│
-    │  • Unique operation ID                       │   • Atomic file operations         │
-    │  • Structured JSON format                   │   • Process-safe communication     │
-    │  • Status and data payload                  │   • 🛡️ Sandboxed security         │
-    │  • Timestamp and metadata                   │                                     │
-    └──────────────────────────────────────────────► └─────────────────────────────────────┘
-                                                                     │
-                                                                     │ Native Code Reads Response
-                                                                     ▼
-                                                   ┌─────────────────────────────────────┐
-                                                   │     mod_axis2 Response Builder      │
-    ┌──────────────────────────────────────────────  ⚡ C PERFORMANCE ADVANTAGE:       │
-    │  🚀 JSON Response Generation (C Speed)       │   • Direct json-c object creation  │
-    │  • Native JSON-C object building             │   • Zero Java→C marshalling        │
-    │  • Memory-efficient serialization            │   • Streaming JSON generation      │
-    │  • HTTP/2 server push preparation           │   • 📱 Low memory footprint        │
-    │  • Optimized for mobile hardware            │                                     │
-    └──────────────────────────────────────────────► └─────────────────┬───────────────────┘
-                                                                         │
-                                                                         │
-                                                                         ▼
-                                                   ┌─────────────────────────────────────┐
-                                                   │      Apache httpd Response         │
-    ┌──────────────────────────────────────────────  🌐 MODERN HTTP/2 FEATURES:        │
-    │  📡 HTTP/2 Response Transmission             │   • Binary framing protocol        │
-    │  • Compressed headers (HPACK)                │   • Stream multiplexing            │
-    │  • Binary framing efficiency                 │   • Header table compression       │
-    │  • Connection reuse optimization             │   • Server push capability         │
-    │  • Flow control and prioritization          │   • 🔒 Mandatory TLS encryption    │
-    └──────────────────────────────────────────────► └─────────────────────────────────────┘
-                                                                         │
-                                                                         │ Encrypted Response
-                                                                         ▼
-    ┌─────────────────┐                                                │
-    │  curl receives  │ ◄──────────────────────────────────────────────┘
-    │  HTTP/2 JSON    │   🔒 mTLS Encrypted Channel
-    │  Response:      │   🚀 Modern Performance:
-    │  {              │   • 30% faster than HTTP/1.1
-    │   "success":true│   • 50% less connection overhead
-    │   "message":    │   • Header compression
-    │   "Recording    │   • Stream multiplexing
-    │   started"      │   • Binary efficiency
-    │  }              │
-    └─────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                               🚀 MODERN TECHNOLOGY STACK                               │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ 🌐 HTTP/2 (2015): Binary protocol, multiplexing, header compression, server push       │
-│ 🔒 TLS 1.3 (2018): Perfect Forward Secrecy, 0-RTT handshakes, enhanced security       │
-│ 📱 Camera2 API (2014): Professional camera control, RAW capture, manual controls       │
-│ ⚡ JSON-C Direct (2023): Zero XML/SOAP overhead, native C performance                  │
-│ 🛡️ mTLS PKI (Enterprise): Mutual authentication, certificate chains, zero passwords   │
-│ 🔌 Intent IPC: Process isolation, memory safety, no JNI complexity                    │
-│ 📻 ARM Compatibility: Runs on Android 6.0+ devices, includes legacy phones            │
-│ 🏗️ Modern Architecture: Microservices, REST APIs, cloud-native patterns               │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                             📊 PERFORMANCE ADVANTAGES                                  │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ • 🚀 Native C Speed: 26.56 MB/s JSON throughput vs Java JVM overhead                  │
-│ • 📱 Old Phone Support: Runs on Moto X4 (2017) and 1GB RAM devices (impossible with JVM) │
-│ • ⚡ HTTP/2 Efficiency: 30% latency reduction, 50% connection overhead reduction        │
-│ • 🔒 Enterprise Security: mTLS authentication not practical in 2014 mobile landscape   │
-│ • 🛡️ Memory Safety: Process isolation prevents crashes affecting camera operations     │
-│ • 🔌 IPC Reliability: Intent-based communication survives app restarts and updates     │
-│ • 🌐 Modern Standards: Compliant with 2026 web security and performance best practices │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-#### Key Modern Technologies Not Possible in 2014
-
-**🔒 Advanced Security Stack:**
-- **mTLS with PKI**: Enterprise certificate authentication on mobile devices
-- **TLS 1.3**: Perfect Forward Secrecy and 0-RTT handshakes
-- **HTTP/2 Mandatory TLS**: Security-by-design architecture
-
-**⚡ Performance Innovations:**
-- **HTTP/2 Binary Protocol**: 30% performance improvement over HTTP/1.1
-- **Native JSON-C Processing**: Direct C parsing without JVM overhead
-- **Stream Multiplexing**: Multiple camera operations over single connection
-
-**📱 Mobile-Optimized Architecture:**
-- **Process Isolation**: Apache httpd as separate process prevents app crashes
-- **Intent IPC**: Modern Android communication pattern (no JNI complexity)
-- **Low Memory Footprint**: 240MB peak vs 2GB+ for equivalent JVM stack
-
-**🎬 Professional Camera Integration:**
-- **Camera2 API**: Professional manual controls and RAW capture
-- **4K+ Video Support**: Modern codec support on mobile hardware
-- **Real-time Control**: Sub-5ms response times for live production
-
-#### Why This Wasn't Possible a Decade Ago (2016)
-
-| Technology | 2014 Status | 2026 Status (Kanaha) |
-|---|---|---|
-| **HTTP/2** | RFC draft, no mobile support | Production standard, universal support |
-| **TLS 1.3** | Didn't exist | Standard, with Perfect Forward Secrecy |
-| **mTLS on Mobile** | Complex, impractical | Standard enterprise practice |
-| **Android Camera2** | Brand new API | Mature, professional features |
-| **JSON-C Direct** | XML/SOAP dominated | Native JSON processing standard |
-| **Mobile Performance** | Limited by hardware | Modern ARM processors + optimization |
-| **PKI Infrastructure** | Server-only | Mobile PKI management possible |
-
-**Result**: A modern camera control system that leverages 2020s technology to provide enterprise-grade performance and security on mobile devices, including phones from 2015! 🎬📱⚡
-
-**🎯 Real-World Example: Moto X4 (2017)**
-- **Hardware**: Snapdragon 630, 3-4GB RAM, Android 7.1+
-- **Runs**: Complete HTTP/2 + mTLS + Axis2/C + Apache httpd stack
-- **Performance**: Sub-5ms camera control responses with enterprise security
-- **Impossible Alternative**: Equivalent JVM-based system would require 6-8GB RAM
-- **Modern Achievement**: 2026 web standards running smoothly on 9-year-old budget phone!
-
-#### Practical Usage Examples
-
-**Complete Camera Setup Sequence:**
-```bash
-#!/bin/bash
-# Set up Apache httpd daemon on Android camera device
-
-echo "🚀 Starting Kanaha camera setup..."
-
-# 1. Start Apache httpd daemon
-am start-service -a "org.kanaha.camera.START_APACHE_HTTPD" \
-  org.kanaha.camera/org.kanaha.camera.ApacheService
-
-# 2. Wait for Apache to initialize
-sleep 3
-
-# 3. Verify Apache is running
-if am service-check org.kanaha.camera/.ApacheService; then
-    echo "✅ Apache httpd daemon started successfully"
-else
-    echo "❌ Apache httpd failed to start"
-    exit 1
-fi
-
-# 4. Test HTTP/2+mTLS connectivity
-curl --http2 \
-     --cert /opt/camera-control/client.crt \
-     --key /opt/camera-control/client.key \
-     --cacert /opt/camera-control/ca.crt \
-     -H "Content-Type: application/json" \
-     -d '{"action":"get_status"}' \
-     https://192.168.1.10:8443/services/CameraControlService/getStatus
-
-echo "🎬 Camera is ready for production use!"
-```
-
-**Daemon Management Scripts:**
-
-```bash
-# start_camera_daemon.sh
-#!/bin/bash
-echo "Starting Kanaha Apache httpd daemon..."
-am start-service -a "org.kanaha.camera.START_APACHE_HTTPD" \
-  org.kanaha.camera/org.kanaha.camera.ApacheService
-
-# stop_camera_daemon.sh
-#!/bin/bash
-echo "Stopping Kanaha Apache httpd daemon..."
-am start-service -a "org.kanaha.camera.STOP_APACHE_HTTPD" \
-  org.kanaha.camera/org.kanaha.camera.ApacheService
-
-# restart_camera_daemon.sh (for certificate updates)
-#!/bin/bash
-echo "Restarting Kanaha Apache httpd daemon..."
-am start-service -a "org.kanaha.camera.RESTART_APACHE_HTTPD" \
-  org.kanaha.camera/org.kanaha.camera.ApacheService
-```
-
-**Multi-Camera Daemon Management:**
-```bash
-#!/bin/bash
-# Manage Apache httpd daemons across multiple camera devices
-
-CAMERA_IPS=("192.168.1.10" "192.168.1.11" "192.168.1.12")
-
-echo "Starting Apache httpd daemons on all cameras..."
-
-for ip in "${CAMERA_IPS[@]}"; do
-    echo "Starting daemon on camera $ip"
-
-    # Connect to camera via adb network
-    adb connect $ip:5555
-
-    # Start Apache httpd daemon
-    adb -s $ip:5555 shell am start-service \
-        -a "org.kanaha.camera.START_APACHE_HTTPD" \
-        org.kanaha.camera/org.kanaha.camera.ApacheService
-
-    echo "✅ Daemon started on camera $ip"
-done
-
-echo "🎬 All camera daemons are running!"
-```
-
-#### Troubleshooting
-
-**Common Issues and Solutions:**
-
-**Issue: Apache httpd fails to start**
-```bash
-# Check service status
-am service-check org.kanaha.camera/.ApacheService
-
-# View detailed logs
-am logcat | grep "KanahaApacheService"
-
-# Check for certificate issues
-ls -la /data/data/org.kanaha.camera/files/apache/ssl/
-
-# Verify configuration files
-ls -la /data/data/org.kanaha.camera/files/apache/conf/
-```
-
-**Issue: HTTP/2 connections fail**
-```bash
-# Test basic connectivity first
-curl -k -I https://192.168.1.10
-
-# Then test HTTP/2 support
-curl -k --http2 -I https://192.168.1.10
-
-# Check Apache error logs
-cat /data/data/org.kanaha.camera/files/apache/logs/error_log
-```
-
-**Issue: mTLS certificate authentication fails**
-```bash
-# Verify certificate files exist and are valid
-openssl x509 -in /opt/camera-control/client.crt -text -noout
-openssl rsa -in /opt/camera-control/client.key -check
-
-# Test with certificate details
-curl --http2 -v \
-     --cert /opt/camera-control/client.crt \
-     --key /opt/camera-control/client.key \
-     --cacert /opt/camera-control/ca.crt \
-     -H "Content-Type: application/json" \
-     -d '{"action":"get_status"}' \
-     https://192.168.1.10:8443/services/CameraControlService/getStatus
-```
-
-**Issue: Service gets killed by Android**
-```bash
-# Check if foreground service is properly configured
-am service-check org.kanaha.camera/.ApacheService
-
-# Verify wake lock is held
-dumpsys power | grep "Wake Locks"
-
-# Restart with foreground service
-am start-service -a "org.kanaha.camera.START_APACHE_HTTPD" \
-  org.kanaha.camera/org.kanaha.camera.ApacheService
-```
-
-**Performance Monitoring:**
-```bash
-# Monitor Apache process
-ps aux | grep httpd
-
-# Check network connections
-netstat -tlnp | grep :8443
-
-# View real-time logs
-am logcat | grep -E "(KanahaApacheService|mod_axis2|camera_control)"
-
-# Memory usage monitoring
-dumpsys meminfo org.kanaha.camera
-```
-
-### HTTP/2 Protocol Requirement
-
-**What is HTTP/2?** HTTP/2 is the modern evolution of HTTP/1.1, designed for high-performance web applications. Unlike HTTP/1.1 which processes one request at a time per connection, HTTP/2 enables multiple simultaneous requests over a single connection with advanced features like header compression and stream prioritization. While HTTP/2 adoption is still growing, it provides significant performance benefits for real-time applications like camera control.
-
-**Why HTTP/2 is Mandatory for Kanaha:**
-- **Axis2/C JSON Mode Requirement**: Apache Axis2/C requires HTTP/2 when operating in pure JSON mode to eliminate legacy XML/SOAP dependencies
-- **Performance Benefits**: Multiplexed requests enable simultaneous camera operations (start/stop/status/transfer) without connection overhead
-- **Efficiency**: Header compression reduces bandwidth usage for repeated camera control commands
-- **Future-Proof**: Modern protocol designed for high-performance applications
-
-**HTTP/2 vs HTTP/1.1 for Camera Control:**
-- **HTTP/1.1**: Sequential requests, connection overhead, verbose headers
-- **HTTP/2**: Parallel requests, single connection, compressed headers, stream prioritization
-
-**Client Support**: All modern curl versions and browsers support HTTP/2. The `--http2` flag in curl examples explicitly enables HTTP/2 protocol.
-
-**HTTP/2 Configuration for Older Devices:**
-
-Apache httpd runs in single-process mode (`-X` flag) on Android, which limits concurrent request handling. To ensure HTTP/2 stability on older devices (Android 9 and earlier), Kanaha uses conservative HTTP/2 settings in `http2-performance.conf`:
-
-```apache
-# Conservative HTTP/2 settings for Android single-process mode
-H2MaxSessionStreams 1      # Single stream - prevents multiplexing issues
-H2StreamTimeout 30         # 30 second timeout - prevents hanging streams
-H2WindowSize 65535         # Reduced memory (64KB)
-H2Push off                 # Disabled - not needed for JSON-RPC
-H2MinWorkers 1             # Minimal workers for single-process
-H2MaxWorkers 2             # Limited workers
-Timeout 30                 # General connection timeout
-```
-
-These settings ensure HTTP/2 works reliably on both modern devices (Pixel 9 Pro) and older devices (Moto X4 from 2017) while maintaining full JSON-RPC functionality required by Axis2/C.
-
-For detailed information on Axis2/C HTTP/2 implementation and configuration, see the official [Apache Axis2/C documentation](https://axis.apache.org/axis2/c/core/).
-
-### Security Architecture
-
-**What is mTLS?** Mutual TLS (mTLS) extends standard TLS/SSL by requiring **both** the client and server to authenticate each other with certificates, rather than just the server authenticating to the client like HTTPS websites. In the Kanaha camera network, every Android device acts as both an HTTPS server (hosting camera controls) and an HTTPS client (connecting to other cameras), with each device holding a unique certificate that proves its identity. This creates a "zero-trust" network where no device can communicate unless it presents a valid, signed certificate - essential for camera production environments where unauthorized access could compromise expensive shoots, leak confidential content, or disrupt live broadcasts. Unlike password-based authentication that can be intercepted or brute-forced, mTLS provides cryptographic proof of device identity that cannot be forged without the private key.
-
-**mTLS Security in Practice:**
-```bash
-# SECURE mTLS implementation - certificate authentication required
-curl --http2 \
-     --cert /opt/camera-control/client.crt \
-     --key /opt/camera-control/client.key \
-     --cacert /opt/camera-control/ca.crt \
-     -H "Content-Type: application/json" \
-     -d '{"action":"start_recording","clip_name":"authorized","quality":"4K"}' \
-     https://192.168.1.10:8443/services/CameraControlService/startRecording
-# ^ Only authorized clients with valid certificates can access cameras
-
-# INSECURE approach (DO NOT USE - WILL FAIL) - Kanaha rejects unauthorized requests
-curl -k --http2 -H "Content-Type: application/json" \
-     -d '{"action":"start_recording","clip_name":"malicious"}' \
-     https://192.168.1.10:8443/services/CameraControlService/startRecording
-# ^ The -k flag bypasses server certificate verification, but Kanaha mTLS requires CLIENT certificates
-# ^ Returns: SSL peer certificate or SSH remote key was not OK (client certificate required)
-```
-
-**Security Comparison:**
-- **Without mTLS**: Anyone on network can control cameras (critical vulnerability)
-- **With mTLS (Kanaha)**: Only authorized clients with valid certificates can connect - unauthorized requests are rejected
-- **Key Difference**: Secure implementation requires both `--cert` and `--key` parameters - requests without valid client certificates fail
-
-**Security Threats Eliminated by mTLS:**
-- ✅ **Remote Network Attacks**: Eliminated - unauthorized network access impossible without certificates
-- ✅ **WiFi Eavesdropping**: Eliminated - traffic interception useless without certificates
-- ✅ **Rogue Device Attacks**: Eliminated - unknown devices on network cannot access cameras
-- ✅ **Credential Theft/Replay**: Eliminated - no passwords to steal or replay
-- ✅ **Man-in-the-Middle**: Eliminated - mutual authentication prevents MITM attacks
-
-**Remaining Security Considerations:**
-- ⚠️ **Certificate Management**: Proper key storage and rotation procedures required (user responsibility)
-- ⚠️ **Physical Security**: Physical access to devices bypasses network security (applies to all systems)
-- ⚠️ **Application Security**: mTLS secures transport, code quality still matters (standard development practices)
-
-**Overall Security Posture**: mTLS eliminates 95% of realistic attack scenarios (all network-based threats) while remaining risks are primarily user-controlled or apply to all software systems.
-
-```
-Production Network (mTLS Secured)
-├── Camera Device 1 (Android + Kanaha)
-│   ├── Client Certificate (CA-signed)
-│   ├── Apache httpd (mTLS Server)
-│   └── OpenCamera Integration
-├── Camera Device 2 (Android + Kanaha)
-│   ├── Client Certificate (CA-signed)
-│   ├── Apache httpd (mTLS Server)
-│   └── OpenCamera Integration
-├── Control Center (Ubuntu/Desktop)
-│   ├── Client Certificate (CA-signed)
-│   └── mTLS Client
-└── Certificate Authority (Distributed)
-    ├── CA Certificate (Self-signed)
-    ├── Device Certificates (CA-signed)
-    └── Client Certificates (CA-signed)
-```
-
-## Multi-Camera Coordination Features
-
-### Service Endpoints
-
-**Complete Camera Control API:**
-
-| Endpoint | Action | Description |
-|----------|--------|-------------|
-| `/getStatus` | `get_status` | Get camera status and recording information |
-| `/startRecording` | `start_recording` | Start video recording with clip name, quality, duration |
-| `/stopRecording` | `stop_recording` | Stop active recording session |
-| `/configure` | `configure` | Configure camera settings (resolution, fps, codec) |
-
-**Base URL:** `https://<CAMERA_IP>:8443/services/CameraControlService`
-
-**Request Format (action-based):**
-```json
-{"action":"start_recording","clip_name":"scene_01","quality":"4K","duration":1800}
-```
-
-**SFTP Transfer Parameters:**
-
-> **📖 For complete SFTP setup instructions, SSH key management, security model, and troubleshooting, see [SFTP-FILE-TRANSFER.md](./SFTP-FILE-TRANSFER.md)**
-
-- `storage_server_id` - Predefined storage server identifier (e.g., "control1", "production")
-- `video_filename` - Video filename or pattern (`"*"` for all, `"*.mp4"` for pattern)
-- `destination_folder` - Remote directory path (e.g., "shoot_20260104")
-
-**Quick Example:**
-```bash
-curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-  -H "Content-Type: application/json" \
-  -d '{"action":"sftpTransfer","storage_server_id":"control1","video_filename":"*","destination_folder":"dailies"}' \
-  https://192.168.8.168:8443/services/CameraControlService/sftpTransfer
-```
-
-**Security:** Dual-layer authentication (mTLS for API + SSH PKI for file transfer). See SFTP-FILE-TRANSFER.md for details.
-
-## File Management and Storage Cleanup
-
-After SFTP transfers, video files remain on camera devices. Use the file management API to clean up:
-
-```bash
-# List files on camera
-curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-  -H "Content-Type: application/json" \
-  -d '{"action":"listFiles"}' \
-  https://192.168.8.168:8443/services/CameraControlService/listFiles
-
-# Delete files after successful transfer
-curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-  -H "Content-Type: application/json" \
-  -d '{"action":"deleteFiles","pattern":"*.mp4"}' \
-  https://192.168.8.168:8443/services/CameraControlService/deleteFiles
-```
-
-> **📖 For complete transfer + cleanup workflows, see [SFTP-FILE-TRANSFER.md](./SFTP-FILE-TRANSFER.md#post-transfer-file-cleanup)**
-
-### Zero-Config Network Discovery (mDNS)
-
-Kanaha uses **mDNS (multicast DNS)** for zero-configuration device discovery. Cameras automatically announce themselves on the network, eliminating the need for static IP addresses or manual configuration.
-
-#### How It Works
-
-When the Apache httpd service starts on a camera device:
-
-1. **NetworkDiscoveryService** registers the camera via Android's NSD (Network Service Discovery) API
-2. The camera broadcasts as `{device-name}._https._tcp.local` with rich TXT metadata
-3. Control stations discover cameras using `avahi-browse` or the Kanaha discovery scripts
-4. TXT records include the device IP, name, model, and API identifier for easy identification
-
-**mDNS Service Advertisement:**
-```
-Service Name: pixel9pro
-Service Type: _https._tcp
-Port: 8443
-TXT Records:
-  - api=kanaha-camera-control  (identifies Kanaha cameras)
-  - name=pixel9pro             (friendly device name)
-  - ip=192.168.8.168           (direct IP fallback)
-  - model=Pixel 9 Pro
-  - manufacturer=Google
-  - android=36
-  - version=1.0.0
-```
-
-#### Benefits
-
-| Without mDNS | With mDNS |
-|--------------|-----------|
-| Configure static IP per camera | Cameras use DHCP normally |
-| Update scripts when IPs change | Discovery finds current IP |
-| Remember IP for each device | Discover by friendly name |
-| Manual device inventory | Auto-discover all cameras on network |
-
-#### Dependencies
-
-**Linux (Ubuntu/Debian):**
-```bash
-sudo apt-get install avahi-utils
-```
-
-#### Discovering Cameras with Kanaha Discovery Tools
-
-Kanaha provides discovery scripts in `tools/`:
-
-**Bash script (recommended):**
-```bash
-# Discover all cameras via mDNS (falls back to port scan if mDNS fails)
-./tools/kanaha-discover.sh
-
-# Example output:
-# Found 1 camera(s):
-#
-#   pixel9pro (Google Pixel 9 Pro)
-#     IP:       192.168.8.168
-#     Hostname: Android_54RWTDIY.local
-#     State:    idle
-#     Battery:  100%
-#     Storage:  197141 MB
-#     URL:      https://Android_54RWTDIY.local:8443/services/CameraControlService
-
-# JSON output for scripting
-./tools/kanaha-discover.sh --json
-# [{"name":"pixel9pro","ip":"192.168.8.168","hostname":"Android_54RWTDIY.local",
-#   "port":8443,"model":"Pixel 9 Pro","manufacturer":"Google","state":"idle",
-#   "battery":100,"storage_mb":197141,"url":"https://..."}]
-
-# Force port scanning (skip mDNS)
-./tools/kanaha-discover.sh --scan
-
-# Check specific IP directly
-./tools/kanaha-discover.sh --ip 192.168.8.168
-```
-
-**Manual discovery with avahi-browse:**
-```bash
-# Browse for HTTPS services and filter for Kanaha cameras
-timeout 5 avahi-browse -rp _https._tcp | grep kanaha-camera-control
-
-# Example output (semicolon-delimited):
-# =;wlp0s20f3;IPv4;pixel9pro;Secure Web Site;local;Android_54RWTDIY.local;
-#   192.168.8.168;8443;"api=kanaha-camera-control" "name=pixel9pro" "ip=192.168.8.168"...
-```
-
-#### Android Hostname Limitation
-
-> **Important:** Android's NSD API uses the device's **system hostname** (e.g., `Android_54RWTDIY.local`) in the mDNS A/AAAA record, not the service name we register (e.g., `pixel9pro`). This is an Android platform limitation.
-
-| What we set | What Android advertises |
-|-------------|------------------------|
-| Service name: `pixel9pro` | Service name: `pixel9pro` ✓ |
-| Desired hostname: `pixel9pro.local` | Actual hostname: `Android_54RWTDIY.local` |
-
-**Technical Details:**
-
-Android API 34+ introduced `NsdServiceInfo.setHostname()` which theoretically allows custom hostnames. However, this method is marked as a **hidden platform API** and is blocked for regular apps:
-
-```
-hiddenapi: Accessing hidden method setHostname (api=blocked)
-```
-
-This means even on modern Android devices (API 34+), apps cannot set a custom mDNS hostname without being system apps or having special platform permissions.
-
-**What Works:**
-- ✓ Service name `pixel9pro` is visible in mDNS browsers
-- ✓ TXT records contain `ip=192.168.8.168` for direct connection
-- ✓ TXT records contain `name=pixel9pro` for identification
-- ✓ Android system hostname `Android_54RWTDIY.local` resolves via mDNS
-- ✗ Custom hostname `pixel9pro.local` does NOT resolve
-
-**Recommended Workflow:**
-
-The discovery scripts handle this limitation transparently:
-
-```bash
-# Discovery script extracts IP from TXT records automatically
-./tools/kanaha-discover.sh
-
-# Output shows both friendly name and connection info:
-#   pixel9pro (Google Pixel 9 Pro)
-#     IP:       192.168.8.168
-#     Hostname: Android_54RWTDIY.local
-#     URL:      https://Android_54RWTDIY.local:8443/services/CameraControlService
-
-# For scripting, use JSON output to get IPs:
-./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'
-# 192.168.8.168
-```
-
-#### Connecting to Cameras
-
-**Option 1: Use Discovery Scripts (Recommended)**
-
-The discovery scripts extract the IP from mDNS TXT records automatically:
-
-```bash
-# Discover all cameras and get connection info
-./tools/kanaha-discover.sh
-
-# Output:
-# pixel9pro (192.168.8.168:8443) - Pixel 9 Pro
-# motox4 (192.168.8.175:8443) - Moto X4
-
-# Use JSON output for scripting
-./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'
-```
-
-**Option 2: Direct IP Connection**
-
-Use the IP address directly (fastest, no mDNS dependency):
-
-```bash
-SSL=/path/to/ssl/certs
-curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/server.crt" \
-     -H "Content-Type: application/json" \
-     -d '{"action":"getStatus"}' \
-     https://192.168.8.168:8443/services/CameraControlService/getStatus
-```
-
-**Option 3: Android System Hostname**
-
-Use the Android system hostname if mDNS resolution is preferred:
-
-```bash
-# Find the system hostname via avahi-browse
-avahi-browse -rt _https._tcp | grep pixel9pro
-# Shows: Android_O6TZB2ZA.local
-
-curl -sk --cert client.crt --key client.key --cacert ca.crt \
-     -H "Content-Type: application/json" \
-     -d '{"action":"getStatus"}' \
-     https://Android_O6TZB2ZA.local:8443/services/CameraControlService/getStatus
-```
-
-**Multi-Camera Synchronized Recording:**
-
-```bash
-# Get all camera IPs via discovery
-cameras=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
-
-# Start recording on all cameras simultaneously
-for ip in $cameras; do
-    curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/server.crt" \
-         -H "Content-Type: application/json" \
-         -d '{"action":"startRecording","clip_name":"scene_01"}' \
-         "https://${ip}:8443/services/CameraControlService/startRecording" &
-done
-wait
-```
-
-#### Device Hostname Generation
-
-The hostname is generated automatically using this priority:
-
-| Priority | Source | Example |
-|----------|--------|---------|
-| 1 | User-configured device name | `my-a-camera` |
-| 2 | Device model (sanitized) | `pixel9pro` |
-| 3 | Android ID fallback | `kanaha-a1b2c3d4` |
-
-The same hostname is used consistently across:
-- mDNS service registration (`NetworkDiscoveryService`)
-- Certificate Subject Alternative Names (`CertificateService`)
-- Apache ServerName directive (`ssl.conf`)
-
-#### Viewing Camera Info
-
-The camera's service name and status are displayed in:
-- **Android notification**: "Camera ready: pixel9pro"
-- **Logcat**: `KanahaNetworkDiscovery: mDNS service registered: pixel9pro`
-- **Discovery script**: `./tools/kanaha-discover.sh`
-
-#### Network Requirements
-
-mDNS requires:
-- Control station and cameras on the **same network segment** (same WiFi/subnet)
-- **Multicast traffic** enabled (most home/office networks allow this by default)
-- **UDP port 5353** not blocked by firewall
-
-> **Note:** Some enterprise networks disable multicast. In those environments, fall back to static IP configuration or use the IP address shown in the camera's TXT record metadata.
-
-#### TXT Record Metadata
-
-Each camera broadcasts metadata in DNS-SD TXT records:
-
-```
-api=kanaha-camera-control  # API identifier (used to filter Kanaha cameras)
-name=pixel9pro             # Device identifier (friendly name)
-ip=192.168.8.168           # IP address (key for direct connection)
-model=Pixel 9 Pro          # Device model
-manufacturer=Google        # Device manufacturer
-android=36                 # Android SDK version
-version=1.0.0              # App version
-txtvers=1                  # TXT record version
-```
-
-**Key fields for discovery:**
-- `api=kanaha-camera-control` - Used to filter Kanaha cameras from other HTTPS services
-- `name` - Friendly device name for camera identification (Camera A, B, C, D)
-- `ip` - Direct IP address for connection (works even if mDNS hostname resolution fails)
-
-The API response also includes device identification:
-```json
-{
-  "success": true,
-  "device_name": "pixel9pro",
-  "device_model": "Pixel 9 Pro",
-  "device_manufacturer": "Google",
-  "state": "idle",
-  ...
-}
-```
-
-### Device Discovery and Registration
-
-The system uses mDNS/DNS-SD for automatic camera discovery:
-
-```bash
-# Discover all Kanaha cameras on the network
-./tools/kanaha-discover.sh
-
-# Output:
-# Found 3 camera(s):
-#   pixel9pro (Google Pixel 9 Pro)
-#     IP:       192.168.8.168
-#     State:    idle
-#     Battery:  100%
-#     Storage:  197140 MB
-#     URL:      https://192.168.8.168:8443/services/CameraControlService
-
-# JSON output for scripting
-./tools/kanaha-discover.sh --json
-```
-
-**Features:**
-- **Zero-Config Discovery**: mDNS/DNS-SD for automatic camera detection
-- **Secure Discovery**: mTLS certificate validation for device authentication
-- **TXT Record Metadata**: Camera name, model, API type in mDNS TXT records
-- **Fallback Port Scan**: Automatic subnet scanning if mDNS unavailable
-
-### Synchronized Camera Operations
-
-**Synchronization Model:** Kanaha uses **temporal synchronization** for video production requirements:
-
-- **Independent Control**: Each camera is controlled via its own HTTP/2+mTLS endpoint
-- **Temporal Synchronization**: SMPTE timecode recorded on each camera for frame-accurate post-production alignment
-- **Script Coordination**: Shell scripts or automation tools send commands to all cameras
-- **No Shared State**: Each camera maintains its own state and operates autonomously
-
-Execute coordinated operations across multiple cameras with a simple script:
-
-```bash
-# Start recording on all discovered cameras simultaneously
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=("192.168.8.168" "192.168.8.169" "192.168.8.170")
-
-# Start recording on all cameras (runs in parallel)
-for cam in "${CAMERAS[@]}"; do
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -H "Content-Type: application/json" \
-    -d '{"action":"startRecording"}' \
-    "https://$cam:8443/services/CameraControlService/startRecording" &
-done
-wait
-echo "All cameras recording"
-
-# Record for desired duration
-sleep 300  # 5 minutes
-
-# Stop recording on all cameras
-for cam in "${CAMERAS[@]}"; do
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -H "Content-Type: application/json" \
-    -d '{"action":"stopRecording"}' \
-    "https://$cam:8443/services/CameraControlService/stopRecording" &
-done
-wait
-echo "All cameras stopped"
-```
-
-**Capabilities:**
-- **Parallel Commands**: Shell backgrounding (`&`) sends commands simultaneously
-- **Independent Cameras**: Each camera processes commands independently
-- **HTTP/2 Performance**: Low-latency communication with each device
-- **Script Automation**: Easy integration with CI/CD, cron jobs, or custom tools
-
-## Production Workflow Automation
-
-### Workflow Scripts
-
-Simple shell scripts provide flexible production workflows:
-
-#### 1. Multi-Camera Recording Script
-```bash
-#!/bin/bash
-# multi-record.sh - Record on all discovered cameras
-
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-DURATION=${1:-60}  # Default 60 seconds
-
-# Discover cameras
-CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
-
-echo "Starting recording on $(echo "$CAMERAS" | wc -l) cameras for ${DURATION}s..."
-
-# Start all cameras
-for cam in $CAMERAS; do
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -d '{"action":"startRecording"}' "https://$cam:8443/services/CameraControlService/startRecording" &
-done
-wait
-
-sleep $DURATION
-
-# Stop all cameras
-for cam in $CAMERAS; do
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -d '{"action":"stopRecording"}' "https://$cam:8443/services/CameraControlService/stopRecording" &
-done
-wait
-
-echo "Recording complete"
-```
-
-#### 2. Status Check Script
-```bash
-#!/bin/bash
-# check-status.sh - Check status of all cameras
-
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
-
-for cam in $CAMERAS; do
-  echo "=== Camera: $cam ==="
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -d '{"action":"getStatus"}' "https://$cam:8443/services/CameraControlService/getStatus" | jq .
-done
-```
-
-#### 3. Bulk Transfer Script
-```bash
-#!/bin/bash
-# transfer-all.sh - Transfer videos from all cameras
-
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
-
-for cam in $CAMERAS; do
-  echo "Transferring from $cam..."
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -d '{"action":"sftpTransfer","storage_server_id":"control","video_filename":"*.mp4","destination_folder":"/footage"}' \
-    "https://$cam:8443/services/CameraControlService/sftpTransfer"
-done
-```
-
-## Deployment Architecture
-
-### Production Environment Setup
-
-1. **Network Infrastructure**
    ```bash
-   # Secure isolated network for production
-   Network: 192.168.10.0/24
-   Camera Devices: 192.168.10.10-50
-   Control Center: 192.168.10.100
-   Certificate Authority: Distributed across devices
+   adb shell "run-as org.kanaha.camera cat files/csr/camera.csr" > camera.csr
+   openssl x509 -req -in camera.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+     -out camera.crt -days 365 \
+     -extfile <(printf "subjectAltName=IP:<ip>,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth,clientAuth")
+   adb push camera.crt /data/local/tmp/server.crt && adb push ca.crt /data/local/tmp/ca.crt
+   adb shell "run-as org.kanaha.camera sh -c 'cp /data/local/tmp/server.crt files/apache/ssl/server.crt && cp /data/local/tmp/ca.crt files/apache/ssl/ca.crt'"
    ```
 
-2. **Device Provisioning**
-   - Certificate generation and deployment
-   - Network configuration and discovery
-   - Security policy enforcement
-   - Production workflow templates
+3. Restart the app. Provisioning survives reboots and app updates.
 
-3. **mTLS Certificate Distribution**
-   ```java
-   // Automatic certificate deployment to new devices
-   CertificateService certService = new CertificateService();
+Creating the CA and the control-station client certificate is in
+[SECURITY.md](SECURITY.md#certificate-model-per-device-provisioning).
 
-   // Generate device certificate
-   String deviceId = "camera-device-001";
-   String ipAddress = "192.168.10.10";
-   certService.generateAndDeployCertificates(deviceId, ipAddress);
+**Where clients look for certificates:** `$KANAHA_CERT_DIR` (default `~/kanaha-ca`),
+holding `client.crt`, `client.key` and `ca.crt` (or `operator.crt`, `operator.key`
+and `kanaha-ca.crt`). The discovery tool and the workflow scripts use the same
+directory.
 
-   // Deploy to network
-   certService.autoDeployCertificates();
+**Connect by the address in the certificate, without `-k`.** `-k` turns off server
+verification entirely, which makes `--cacert` pointless. The SAN above covers the
+camera's IP, and `localhost` for an `adb forward`. Give a camera a DHCP reservation so
+its IP, and therefore its certificate, stays valid.
+
+```bash
+SSL=${KANAHA_CERT_DIR:-~/kanaha-ca}
+CURL="curl -s --http2 --cert $SSL/client.crt --key $SSL/client.key --cacert $SSL/ca.crt"
+```
+
+Certificates last one year. Revocation (CRL/OCSP) is not implemented yet; until it
+is, a compromised device is handled by re-issuing the CA and re-provisioning.
+
+## Discovery
+
+Each Kanaha app advertises `_https._tcp` over mDNS while its server runs, with
+`api=kanaha-camera-control` in the TXT record (Kanaha Audio and Kanaha Calcs
+advertise their own `api=` values).
+
+```bash
+./tools/kanaha-discover.sh                         # every Kanaha app found
+./tools/kanaha-discover.sh --kind camera           # cameras only
+./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'
+./tools/kanaha-discover.sh --ip 192.168.8.168      # one known address
+./tools/kanaha-discover.sh --scan                  # port scan when mDNS is blocked
+```
+
+Output looks like:
+
+```
+Found 2 Kanaha app(s):
+
+  camera  pixel10proxl (Google Pixel 10 Pro XL)
+    Address:  192.168.8.168:8443
+    Status:   idle, battery 100%, 180000 MB free
+    URL:      https://camera.local:8443/services/CameraControlService  (curl --resolve camera.local:8443:192.168.8.168)
+```
+
+The tool asks every app it finds for its status over mTLS with full certificate
+verification: by IP first, then, for a certificate that names the camera by DNS
+name, by `$KANAHA_CAMERA_TLS_NAME` (default `camera.local`) through `curl --resolve`,
+which is the form the URL line shows. It lists an app that answers mDNS but not the status call as
+unreachable, with the reason. `--json` without `--kind camera` includes the audio
+and calcs apps too.
+
+**Android names the host, not the app.** The mDNS A record carries the phone's
+system hostname (`Android_54RWTDIY.local`), not the name Kanaha registers; apps
+cannot set it (`NsdServiceInfo.setHostname()` is a blocked hidden API). The TXT
+record carries `ip=` for that reason, and the discovery tool connects by IP. The
+system hostname is not in the camera's certificate, so do not connect by it.
+
+mDNS needs the control station and cameras on the same subnet with multicast
+allowed (UDP 5353). Some enterprise networks block it; use `--scan` or `--ip`.
+
+## Calling a camera
+
+```bash
+$CURL -H "Content-Type: application/json" -d '{"action":"getStatus"}' \
+  "https://192.168.8.168:8443/services/CameraControlService/getStatus"
+```
+
+**The action in the body must match the URL, in camelCase.** The engine refuses a
+body that names a different operation from the URL, so `{"action":"get_status"}`
+sent to `/getStatus` fails with `operation mismatch`. (The service itself also knows
+the snake_case names, but over HTTP the URL decides.)
+
+Responses are `{"success":true,...}` or `{"success":false,"error":"..."}`;
+`getStatus` nests its fields under `"status"`.
+
+| Operation | Use |
+|---|---|
+| `getStatus` | Readiness, battery, storage, GPS time, `supports_hlg10` |
+| `startRecording` | `clip_name`, `quality`, `start_at`, `open_gate`, `hlg10` |
+| `stopRecording` | |
+| `setExposure` / `getExposure` | Pin and read exposure, white balance, focus, stabilization, tone curve; see [Matching cameras](#matching-cameras) |
+| `playTone` | Audio sync slate, optionally at `start_at` |
+| `listFiles`, `deleteFiles`, `cleanupFiles` | Files on the device |
+| `sftpTransfer` | Send a recording and its sidecars to a storage server |
+| `describeClip` | On-device description of a recording (`nano` build) |
+| `configure` | **Not implemented**: accepted and answered, but changes nothing |
+
+`startRecording` also takes `duration` and `format`, which are logged and echoed
+back but have no effect: a recording runs until `stopRecording`. Parameters and
+examples for each operation are in the [README](../README.md#5-control-via-api).
+
+## Starting cameras together
+
+Cameras are aligned in post, from three things recorded at the start of each take:
+
+- **`start_at`**: every camera fires at the same wall-clock millisecond, so WiFi
+  delivery delay does not skew the start. It must be 50 ms to 30 s in the future;
+  outside that window the camera starts immediately.
+- **`playTone`**: the same tone on every camera at the same `start_at`. Onset
+  detection on each audio track aligns cameras to about 1–5 ms.
+- **The recording-start sidecar**, `kanaha_recording_start.json`, with the start time
+  and GPS fix age.
+
+```bash
+CAMS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
+START_AT=$(( $(date +%s%3N) + 3000 ))
+for ip in $CAMS; do
+  $CURL -H "Content-Type: application/json" \
+    -d "{\"action\":\"startRecording\",\"clip_name\":\"scene_01\",\"start_at\":$START_AT}" \
+    "https://$ip:8443/services/CameraControlService/startRecording" &
+done
+wait
+SLATE_AT=$(( $(date +%s%3N) + 2000 ))
+for ip in $CAMS; do
+  $CURL -H "Content-Type: application/json" \
+    -d "{\"action\":\"playTone\",\"frequency\":1000,\"duration_ms\":500,\"start_at\":$SLATE_AT}" \
+    "https://$ip:8443/services/CameraControlService/playTone" &
+done
+wait
+```
+
+An `open_gate` start reopens the camera first (3–5 s), so give those takes at least
+5 s of lead time.
+
+[GPS.md](GPS.md) measures how good this alignment is and compares it with SMPTE LTC.
+Kanaha does not generate or read timecode itself; hardware LTC on an audio channel
+(an iRig and a Tentacle) is optional and documented in
+[IRIG_PRO_SMPTE_TIMECODE_SETUP.md](IRIG_PRO_SMPTE_TIMECODE_SETUP.md).
+
+## Matching cameras
+
+Two cameras that each meter their own framing never match: auto exposure and auto
+white balance decide differently for a wide shot of snow and a close-up of a
+face, and stabilization crops each frame by a different amount. Identical phones
+only help if they are told to make identical decisions.
+
+### Setting up a second identical phone
+
+**Keep both phones on the same Android build.** An OTA update changes Google's image
+processing, so two Pixel 10 Pro XLs on different builds will not match on identical
+settings.
+
+- Turn off automatic system updates on both: Developer options > Automatic system
+  updates.
+- When you do update, update both before the next shoot, and redo the gray-card
+  check below.
+- Check the build matches: `adb shell getprop ro.build.fingerprint` on each.
+
+Install the same Kanaha APK on both, provision each with its own certificate from the
+same CA, and use the main (1×) lens on both: the other lenses have different
+sensors, bit depths and colour.
+
+### Pinning the settings
+
+Meter on one camera, then send its live values to all of them:
+
+```bash
+VALUES=$($CURL -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
+  "https://$A:8443/services/CameraControlService/getExposure" \
+  | jq -c '{action:"setExposure", iso, exposure_time_ns, wb_kelvin, focus_distance, stabilization:false, tone:"rec709"}')
+for ip in $CAMS; do
+  $CURL -H "Content-Type: application/json" -d "$VALUES" \
+    "https://$ip:8443/services/CameraControlService/setExposure" &
+done
+wait
+```
+
+- **Values are refused, never clamped.** A value outside a camera's range, or a
+  shutter longer than one frame, fails on that camera with its range in the error.
+  Check every response for `"success":true`.
+- **Stabilization the same on all**, or off. Electronic stabilization crops by a
+  varying amount.
+- **`tone` fixes the contrast curve**, so the phone cannot adjust contrast to what each
+  camera frames. `rec709` keeps a normal look; the log curves (`fine` to
+  `extra_strong`) are flat and leave more room to grade. Not combinable with
+  `hlg10`.
+- **Settings persist** across takes and through the reopen that `open_gate` causes,
+  until changed or reset with `{"action":"setExposure","auto":true}`.
+- Shutter: 1/60 (`16666666` ns) at 30 fps gives normal motion blur. In bright sun at
+  the lowest ISO that overexposes; fit the same ND filter to every camera rather than
+  raising the shutter speed on one.
+- The Moto Gs need Settings > Camera API > Camera2 for manual exposure and kelvin;
+  on Camera1 they refuse with that instruction. Check what each supports with
+  `getExposure` (`supports`, `ranges`).
+
+### One-time gray-card calibration
+
+Two phones from the same factory still differ slightly in colour calibration. Measure
+it once per phone and correct it in post.
+
+1. Under one light, with both cameras on identical `setExposure` values, record a
+   few seconds of a gray card filling the centre of each frame.
+2. Measure the mean colour of the centre of each clip (16-bit values, R G B):
+
+   ```bash
+   ffmpeg -v error -ss 1 -i cam_a.mp4 -vf "crop=iw/4:ih/4,scale=1:1:flags=area,format=rgb48le" -frames:v 1 -f rawvideo - | od -An -tu2
    ```
 
-### Security Model
+3. Take camera A as the reference. For camera B, each gain is A's channel divided by
+   B's: `rr=Ra/Rb`, `gg=Ga/Gb`, `bb=Ba/Bb`. Keep them in a per-camera file.
+4. Apply B's gains to all of B's footage before grading:
 
-#### Certificate Authority (CA) Infrastructure
-- **Distributed CA**: Each device can act as CA for network trust
-- **Device Certificates**: X.509 certificates with SANs for IP addresses
-- **Client Certificates**: Control center authentication certificates
-- **Certificate Renewal**: Automated renewal before expiration
+   ```bash
+   ffmpeg -i cam_b_take.mp4 -vf "colorchannelmixer=rr=1.012:gg=1.000:bb=0.987" -c:a copy cam_b_matched.mp4
+   ```
 
-#### mTLS Authentication Flow
-1. **Device Registration**: Device presents certificate for validation
-2. **CA Verification**: Certificate signature verified against CA
-3. **Network Access**: Authenticated devices join production network
-4. **Secure Communication**: All traffic encrypted with TLS 1.2+
+Expect corrections of a few percent. A larger one means the cameras were not on the
+same settings or the same build. For HLG footage this gain is applied to non-linear
+values, which is close enough for corrections this small.
 
-## Performance Characteristics
+### Checking that it worked
 
-### Scalability Metrics
+Before relying on two cameras, test the one you have. With manual values pinned,
+record the same scene twice with different framing, then compare the area the two
+shots share (same crop on both). If the means match, the phone's scene-dependent
+processing is not undoing the fixed settings, and two identical phones will match
+apart from the gray-card gains. If they drift, pin `tone` as well and repeat.
 
-| Metric | Specification | Implementation |
-|--------|---------------|----------------|
-| **Concurrent Cameras** | 50+ devices | Connection multiplexing |
-| **Coordination Latency** | < 100ms | HTTP/2 optimization |
-| **Throughput** | 1000+ RPS | Server push, compression |
-| **Memory Usage** | < 50MB per device | Optimized buffers |
-| **Certificate Deployment** | < 30 seconds | Automated distribution |
-| **Discovery Time** | < 60 seconds | mTLS validation |
+## File transfer
 
-### HTTP/2 Optimizations
-
-Kanaha uses HTTP/2 with conservative settings optimized for Android's single-process mode (`httpd -X`):
-
-- **Single Stream per Connection**: `H2MaxSessionStreams 1` ensures compatibility with Android's threading model
-- **Header Compression**: HPACK compression reduces overhead for repeated API calls
-- **Connection Reuse**: Persistent connections eliminate TLS handshake overhead
-- **Minimal Worker Threads**: `H2MinWorkers 1`, `H2MaxWorkers 2` matches single-process constraints
-- **Server Push Disabled**: `H2Push off` - not needed for request/response API patterns
-
-This configuration prioritizes stability over theoretical throughput, enabling reliable operation across devices from 2017 Moto X4 to 2024 Pixel 9 Pro.
-
-## Production Automation Example
-
-### Secure Multi-Camera Production Script
-
-**Complete mTLS-Protected 3-Camera Automation:**
-```bash
-#!/bin/bash
-# Secure 3-Camera Recording Script with mTLS Certificate Authentication
-# Eliminates manual button pushing and provides enterprise-grade security
-
-CERT_DIR="/opt/camera-control/certs"
-CURL_OPTS="--http2 --cert $CERT_DIR/client.crt --key $CERT_DIR/client.key --cacert $CERT_DIR/ca.crt"
-
-echo "🔒 Starting SECURE 3-Camera Recording Session..."
-echo "🛡️  Using mTLS certificate authentication"
-
-# Simultaneous START - All cameras begin recording with certificate authentication
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"start_recording","clip_name":"shoot_001_A-cam","quality":"4K","duration":1800}' \
-     https://192.168.1.10:8443/services/CameraControlService/startRecording &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"start_recording","clip_name":"shoot_001_B-cam","quality":"4K","duration":1800}' \
-     https://192.168.1.11:8443/services/CameraControlService/startRecording &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"start_recording","clip_name":"shoot_001_C-cam","quality":"4K","duration":1800}' \
-     https://192.168.1.12:8443/services/CameraControlService/startRecording &
-
-wait  # All cameras now recording
-
-echo "✅ All 3 cameras recording simultaneously with CERTIFICATE PROTECTION"
-echo "⏱️  Recording for 30 minutes..."
-sleep 1800
-
-echo "🛑 Stopping all cameras securely..."
-
-# Simultaneous STOP - All cameras stop recording with mTLS authentication
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"stop_recording"}' \
-     https://192.168.1.10:8443/services/CameraControlService/stopRecording &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"stop_recording"}' \
-     https://192.168.1.11:8443/services/CameraControlService/stopRecording &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"stop_recording"}' \
-     https://192.168.1.12:8443/services/CameraControlService/stopRecording &
-
-wait  # All cameras stopped
-
-echo "📁 Auto-transferring all files via secure SFTP..."
-
-# Automated SFTP Transfer - Sync all video files from each camera (dual PKI: mTLS + SFTP keys)
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"sftp_transfer","storage_server_id":"production","video_filename":"*","destination_folder":"shoot_001"}' \
-     https://192.168.1.10:8443/services/CameraControlService/sftpTransfer &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"sftp_transfer","storage_server_id":"production","video_filename":"*","destination_folder":"shoot_001"}' \
-     https://192.168.1.11:8443/services/CameraControlService/sftpTransfer &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"sftp_transfer","storage_server_id":"production","video_filename":"*","destination_folder":"shoot_001"}' \
-     https://192.168.1.12:8443/services/CameraControlService/sftpTransfer &
-
-wait  # All transfers complete
-
-echo "🎉 SECURE 3-Camera Session Complete!"
-echo "📂 All footage securely transferred to storage.lan:/footage/"
-echo "🎬 Complete automation: camera control + file transfers"
-echo "🔐 Session protected by dual-layer security: mTLS + SSH PKI"
-```
-
-**Key Security Features Demonstrated:**
-- **Certificate Authentication**: `--cert`, `--key`, `--cacert` parameters enforce mTLS
-- **No `-k` Flag**: Proper certificate verification (unlike insecure examples)
-- **Parallel Execution**: Background processes (`&`) for simultaneous camera control
-- **Enterprise-Grade**: Same security level used by banking and enterprise systems
-- **Dual-Layer Security**: mTLS for API access + SSH PKI for file transfers
-
-### Complete Secure Workflow: Record → Transfer → Cleanup
+`sftpTransfer` sends a recording, and the sidecars that belong to it, to a storage
+server listed in the camera's `servers.json`, authenticating with an ed25519 key and
+refusing hosts not in `known_hosts`. Setup is in
+[SFTP-FILE-TRANSFER.md](SFTP-FILE-TRANSFER.md).
 
 ```bash
-#!/bin/bash
-# Complete production workflow with mTLS security and automated cleanup
-
-# mTLS certificate configuration
-CURL_OPTS="--http2 --cert /opt/camera-control/client.crt --key /opt/camera-control/client.key --cacert /opt/camera-control/ca.crt"
-
-echo "🎬 Starting secure production workflow..."
-
-# Phase 1: Synchronized Recording
-echo "📹 Phase 1: Starting synchronized recording across all cameras..."
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"start_recording","clip_name":"scene_01_A","quality":"4K"}' \
-     https://192.168.1.10:8443/services/CameraControlService/startRecording &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"start_recording","clip_name":"scene_01_B","quality":"4K"}' \
-     https://192.168.1.11:8443/services/CameraControlService/startRecording &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"start_recording","clip_name":"scene_01_C","quality":"4K"}' \
-     https://192.168.1.12:8443/services/CameraControlService/startRecording &
-
-wait
-echo "✅ All cameras recording..."
-sleep 120  # Recording duration
-
-# Phase 2: Synchronized Stop
-echo "📹 Phase 2: Stopping all cameras..."
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"stop_recording"}' \
-     https://192.168.1.10:8443/services/CameraControlService/stopRecording &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"stop_recording"}' \
-     https://192.168.1.11:8443/services/CameraControlService/stopRecording &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"stop_recording"}' \
-     https://192.168.1.12:8443/services/CameraControlService/stopRecording &
-
-wait
-echo "✅ Recording complete on all cameras"
-
-# Phase 3: Secure SFTP Transfer
-echo "📂 Phase 3: Transferring footage via secure SFTP..."
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"sftp_transfer","storage_server_id":"production","video_filename":"*","destination_folder":"scene_01"}' \
-     https://192.168.1.10:8443/services/CameraControlService/sftpTransfer &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"sftp_transfer","storage_server_id":"production","video_filename":"*","destination_folder":"scene_01"}' \
-     https://192.168.1.11:8443/services/CameraControlService/sftpTransfer &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"sftp_transfer","storage_server_id":"production","video_filename":"*","destination_folder":"scene_01"}' \
-     https://192.168.1.12:8443/services/CameraControlService/sftpTransfer &
-
-wait
-echo "✅ All footage transferred to production server"
-
-# Phase 4: Secure Local Cleanup
-echo "🧹 Phase 4: Cleaning up local storage after confirmed transfers..."
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"cleanup_files","cleanup_policy":"after_successful_transfer"}' \
-     https://192.168.1.10:8443/services/CameraControlService/cleanupFiles &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"cleanup_files","cleanup_policy":"after_successful_transfer"}' \
-     https://192.168.1.11:8443/services/CameraControlService/cleanupFiles &
-
-curl $CURL_OPTS -H "Content-Type: application/json" \
-     -d '{"action":"cleanup_files","cleanup_policy":"after_successful_transfer"}' \
-     https://192.168.1.12:8443/services/CameraControlService/cleanupFiles &
-
-wait
-
-echo "🎉 COMPLETE SECURE WORKFLOW FINISHED"
-echo "✅ Recording: 3 cameras synchronized"
-echo "✅ Transfer: All footage → production server via secure SFTP"
-echo "✅ Cleanup: Local storage cleared after confirmed transfers"
-echo "🔐 Security: All operations protected by mTLS certificate authentication"
-echo "⚡ Efficiency: Complete automation with zero manual intervention"
-```
-
-**Workflow Security Model:**
-- **Phase 1-2**: mTLS authentication for all camera control operations
-- **Phase 3**: Dual security layers (mTLS + SSH PKI) for file transfers
-- **Phase 4**: mTLS-protected cleanup with transfer state validation
-- **Zero Passwords**: Pure certificate-based authentication throughout
-- **Audit Trail**: All operations logged with security validation
-
-## Automated File Transfer via SFTP
-
-✅ **Implementation Status**: SFTP functionality is **fully implemented** using the JSch library with ed25519 key authentication. See [SFTP-FILE-TRANSFER.md](./SFTP-FILE-TRANSFER.md) for complete setup and usage.
-
-### Quick Start
-
-**Transfer all videos from camera to storage server:**
-```bash
-SSL=/path/to/ssl/certs
-curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-  -H "Content-Type: application/json" \
-  -d '{"action":"sftpTransfer","storage_server_id":"control1","video_filename":"*","destination_folder":"dailies"}' \
-  https://192.168.8.168:8443/services/CameraControlService/sftpTransfer
-```
-
-### Multi-Camera Parallel Transfer
-
-```bash
-#!/bin/bash
-# Transfer from all cameras simultaneously
-SSL=/path/to/ssl/certs
-CAMERAS="192.168.8.168 192.168.8.169 192.168.8.170"
-
-for ip in $CAMERAS; do
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -H "Content-Type: application/json" \
-    -d '{"action":"sftpTransfer","storage_server_id":"production","video_filename":"*","destination_folder":"scene_01"}' \
-    "https://${ip}:8443/services/CameraControlService/sftpTransfer" &
+for ip in $CAMS; do
+  $CURL -H "Content-Type: application/json" \
+    -d '{"action":"sftpTransfer","storage_server_id":"control1","video_filename":"*.mp4","destination_folder":"scene_01"}' \
+    "https://$ip:8443/services/CameraControlService/sftpTransfer" &
 done
 wait
-echo "All transfers complete"
 ```
 
-### Benefits
+A 4K take is several GB; a transfer can take minutes over WiFi, and the call blocks
+until it finishes (up to 20 minutes).
 
-| Manual Process | Automated (Kanaha) |
-|----------------|-------------------|
-| Walk to each camera | Single script |
-| Navigate Android UI | REST API call |
-| 15-30 min for 3 cameras | 2 minutes total |
-| Error-prone | Reliable |
+## Workflow scripts
 
-> **📖 For SSH key setup, security model, and troubleshooting, see [SFTP-FILE-TRANSFER.md](./SFTP-FILE-TRANSFER.md)**
+`kanaha-camera-app/test-single-camera-workflow.sh`, `test-dual-camera-workflow.sh`
+and `test-triple-camera-workflow.sh` run a full take on one, two or three cameras:
+status, start, stop, transfer and cleanup. The triple script also uses `start_at` and
+the `playTone` slate, and pulls files over ADB rather than SFTP. They read
+certificates from `$KANAHA_CERT_DIR`. In the dual and triple scripts `--discover`
+lists cameras and exits; it does not record. See each script's `--help`.
 
-## Production Use Cases
+## Troubleshooting
 
-### 1. Multi-Camera Film Production
-```bash
-#!/bin/bash
-# 8-camera film production setup
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
+| Symptom | Cause |
+|---|---|
+| `operation mismatch` | The body's `action` differs from the URL; use the camelCase name |
+| `Kanaha Camera is not in the foreground` | Bring the app to the front |
+| Connection refused on 8443 | Not provisioned yet ("Awaiting provisioning"), or the app is not running |
+| `SSL certificate problem` / handshake failure | Wrong CA, a client cert from another CA, or connecting by a name or IP not in the camera's certificate |
+| Request hangs until timeout | A `.probe` debug build: the native side broadcasts to `org.kanaha.camera` only |
 
-# Start synchronized recording on all cameras
-echo "Starting film production recording..."
-for cam in $CAMERAS; do
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -d '{"action":"startRecording"}' "https://$cam:8443/services/CameraControlService/startRecording" &
-done
-wait
-
-# SMPTE timecode embedded via Tentacle Sync devices ensures frame-accurate alignment in post
-echo "Recording... (Tentacle Sync provides SMPTE timecode on audio channel 1)"
-```
-
-### 2. Multi-Angle Event Coverage
-```bash
-#!/bin/bash
-# Multiple angles for event coverage
-# Each camera records independently, synced via SMPTE timecode
-
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-
-# Define camera positions by IP
-A_CAM="192.168.8.168"  # Wide shot
-B_CAM="192.168.8.169"  # Medium shot
-C_CAM="192.168.8.170"  # Close-up
-
-# Start all cameras simultaneously
-for cam in $A_CAM $B_CAM $C_CAM; do
-  curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -d '{"action":"startRecording"}' "https://$cam:8443/services/CameraControlService/startRecording" &
-done
-wait
-echo "All cameras rolling"
-```
-
-### 3. Automated Time-lapse
-```bash
-#!/bin/bash
-# Time-lapse recording across multiple cameras
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERAS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
-INTERVAL=60      # seconds between captures
-DURATION=3600    # total duration in seconds
-
-for ((i=0; i<DURATION/INTERVAL; i++)); do
-  echo "Capture $((i+1))..."
-  for cam in $CAMERAS; do
-    curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-      -d '{"action":"startRecording"}' "https://$cam:8443/services/CameraControlService/startRecording" &
-  done
-  wait
-  sleep 5  # Record 5-second clip
-  for cam in $CAMERAS; do
-    curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-      -d '{"action":"stopRecording"}' "https://$cam:8443/services/CameraControlService/stopRecording" &
-  done
-  wait
-  sleep $((INTERVAL - 5))
-done
-```
-
-## Monitoring and Management
-
-### Real-time Status Monitoring
+Confirm HTTP/2 is actually negotiated; a silent fallback to HTTP/1.1 is the failure
+to look for:
 
 ```bash
-#!/bin/bash
-# Monitor all cameras in real-time
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-
-while true; do
-  clear
-  echo "=== Camera Status Dashboard ==="
-  echo ""
-
-  for cam in $(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'); do
-    status=$(curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-      -d '{"action":"getStatus"}' "https://$cam:8443/services/CameraControlService/getStatus")
-
-    name=$(echo "$status" | jq -r '.status.device_name // "unknown"')
-    state=$(echo "$status" | jq -r '.status.state // "offline"')
-    battery=$(echo "$status" | jq -r '.status.battery_level // "?"')
-    recording=$(echo "$status" | jq -r '.status.is_recording // false')
-
-    if [ "$recording" = "true" ]; then
-      echo "🔴 $name ($cam): RECORDING - Battery: ${battery}%"
-    else
-      echo "⚪ $name ($cam): $state - Battery: ${battery}%"
-    fi
-  done
-
-  sleep 5
-done
+curl -v --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+  "https://$ip:8443/services/CameraControlService" 2>&1 | grep -i ALPN
+# want: ALPN: server accepted h2
 ```
 
-### Storage and File Monitoring
-
-```bash
-#!/bin/bash
-# Check storage and file count on all cameras
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-
-echo "=== Storage Status ==="
-for cam in $(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip'); do
-  files=$(curl -sk --http2 --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
-    -d '{"action":"listFiles"}' "https://$cam:8443/services/CameraControlService/listFiles")
-
-  count=$(echo "$files" | jq -r '.file_count // 0')
-  size=$(echo "$files" | jq -r '.total_size // 0')
-  size_mb=$((size / 1024 / 1024))
-
-  echo "$cam: $count files, ${size_mb} MB"
-done
-```
-
-## Error Handling and Recovery
-
-### Fault Tolerance Features
-
-1. **Device Failure Recovery**
-   - Automatic device failure detection
-   - Graceful degradation of operations
-   - Re-routing of commands to available devices
-   - Automatic recovery on device restoration
-
-2. **Network Resilience**
-   - Connection retry mechanisms
-   - Alternative communication paths
-   - Bandwidth adaptation
-   - Offline operation capabilities
-
-3. **Certificate Management**
-   - Automatic certificate renewal
-   - Emergency certificate deployment
-   - Certificate revocation handling
-   - Backup certificate authorities
-
-### Workflow Error Handling
-
-```java
-// Workflow with error recovery
-WorkflowStep resilientStep = new WorkflowStep();
-resilientStep.name = "Resilient Capture";
-resilientStep.type = WorkflowStepType.SYNCHRONIZED_CAPTURE;
-resilientStep.continueOnFailure = true;  // Continue if some cameras fail
-resilientStep.timeoutSeconds = 120;      // Extended timeout for reliability
-```
-
-## Integration with OpenCamera
-
-### Internal Intent IPC
-
-The system uses Internal Intent IPC for seamless OpenCamera integration:
-
-```java
-// Camera control via Internal Intent IPC
-Intent cameraIntent = new Intent("org.kanaha.CAMERA_CONTROL");
-cameraIntent.putExtra("action", "capture_photo");
-cameraIntent.putExtra("resolution", "4K");
-cameraIntent.putExtra("format", "JPEG");
-
-// Broadcast to OpenCamera via CameraControlReceiver
-context.sendBroadcast(cameraIntent);
-```
-
-### No-JNI Architecture Benefits
-
-The **active/deployed** implementation uses ProcessBuilder to launch Apache httpd as a separate native process with no JNI bridge. This provides:
-
-- **Reliability**: No JNI-related crashes or memory leaks
-- **Simplicity**: Pure Java/Android integration with native processes
-- **Performance**: Minimal overhead for camera operations
-- **Maintenance**: Easier debugging and development
-- **Security**: Clean separation between native and Android code
-
-## Legacy Device Compatibility
-
-### Device Compatibility Matrix
-
-**Target Devices for Multi-Camera Setups:**
-- **Excellent (2016-2018)**: MOTO X4, Galaxy S8, OnePlus 5T, Pixel 2 - Full 4K@30fps + Camera2 API + mTLS + SFTP PKI
-- **Good (2015-2016)**: Galaxy S7, OnePlus 3T, LG G5 - 4K@30fps + mTLS + SFTP PKI capability
-- **Basic (2013-2015)**: Galaxy S6, Nexus 5 - 1080p@60fps + manual controls + mTLS + SFTP PKI
-
-**Market Impact**: 500+ million legacy devices vs 5 million latest Pixels (100x user base expansion). Professional multi-camera capabilities accessible using repurposed "drawer phones" at zero additional hardware cost.
-
-**Economic Comparison:**
-```bash
-# Traditional Multi-Camera Setup
-- 3x Professional cameras: $6,000-15,000
-- Sync equipment: $1,000-3,000
-- Total: $7,000-18,000
-
-# Kanaha + Legacy Device Setup
-- 1x Modern flagship (A-camera): $800-1,200
-- 2-8x Legacy phones (B,C,D... cameras): $0 (repurposed drawer phones)
-- Tentacle Sync devices: $200-600
-- Total: $1,000-1,800 (90-95% cost reduction)
-```
-
-## Installing Kanaha Custom App from Source
-
-For complete instructions on building the Kanaha Camera App APK from source, including:
-
-- Development environment setup (Ubuntu 25.10)
-- Android SDK, NDK, and build tool installation
-- Apache httpd HTTP/2 cross-compilation
-- APK building and verification
-- Device installation and configuration
-- Legacy device considerations
-- Troubleshooting common issues
-
-**See [ANDROID_APK_BUILDING.md](ANDROID_APK_BUILDING.md) for the comprehensive build guide.**
-
----
-
-## Practical Testing and Verification
-
-### API Testing with mTLS
-
-The CameraControlService uses action-based JSON format for all requests. Here are verified working examples:
-
-#### Setup: Port Forwarding via ADB
-
-When testing via USB connection, forward the device's HTTPS port:
-
-```bash
-# Forward device port 8443 to localhost:18443
-adb forward tcp:18443 tcp:8443
-
-# Verify forwarding is active
-adb forward --list
-# Expected: <device-serial> tcp:18443 tcp:8443
-```
-
-#### Certificate Path Configuration
-
-```bash
-# Set certificate directory
-SSL_DIR=/path/to/kanaha-camera-app/app/src/main/assets/ssl
-
-# Verify certificates exist
-ls -la $SSL_DIR/
-# Expected files: ca.crt, client.crt, client.key, server.crt, server.key
-```
-
-#### Service Test Commands
-
-**1. getStatus - Camera Status Check:**
-```bash
-curl -sk --http2 \
-    --cert $SSL_DIR/client.crt \
-    --key $SSL_DIR/client.key \
-    -H "Content-Type: application/json" \
-    -d '{"action":"get_status"}' \
-    https://localhost:18443/services/CameraControlService/getStatus
-
-# Expected Response:
-# {"status":"success","state":"idle","recording":false,
-#  "battery_level":85,"storage_available_mb":28672,
-#  "last_capture":null}
-```
-
-**2. configure - Configure Camera Settings:**
-```bash
-curl -sk --http2 \
-    --cert $SSL_DIR/client.crt \
-    --key $SSL_DIR/client.key \
-    -H "Content-Type: application/json" \
-    -d '{"action":"configure","resolution":"3840x2160","fps":30,"codec":"H.265"}' \
-    https://localhost:18443/services/CameraControlService/configure
-
-# Expected Response:
-# {"status":"success","resolution":"3840x2160","fps":30,"codec":"H.265"}
-```
-
-**3. startRecording - Begin Recording:**
-```bash
-curl -sk --http2 \
-    --cert $SSL_DIR/client.crt \
-    --key $SSL_DIR/client.key \
-    -H "Content-Type: application/json" \
-    -d '{"action":"start_recording","clip_name":"scene_01","quality":"4K"}' \
-    https://localhost:18443/services/CameraControlService/startRecording
-
-# Expected Response:
-# {"status":"success","recording":true,
-#  "clip_name":"scene_01","quality":"4K",
-#  "started_at":"2026-01-03T12:47:10Z"}
-```
-
-**4. stopRecording - Stop Recording:**
-```bash
-curl -sk --http2 \
-    --cert $SSL_DIR/client.crt \
-    --key $SSL_DIR/client.key \
-    -H "Content-Type: application/json" \
-    -d '{"action":"stop_recording"}' \
-    https://localhost:18443/services/CameraControlService/stopRecording
-
-# Expected Response:
-# {"status":"success","recording":false,
-#  "stopped_at":"2026-01-03T12:47:15Z",
-#  "duration_seconds":5}
-```
-
-### Troubleshooting mTLS Connections
-
-**SSL Handshake Failure:**
-```bash
-# Test with verbose output to diagnose certificate issues
-curl -vsk --http2 \
-    --cert $SSL_DIR/client.crt \
-    --key $SSL_DIR/client.key \
-    https://localhost:18443/
-
-# Look for:
-# * SSL certificate verify result: unable to get local issuer certificate (20)
-# Solution: Ensure client.crt was signed by the same CA as server trusts
-```
-
-**HTTP/2 Negotiation Issues:**
-```bash
-# Verify HTTP/2 is available
-curl -vsk --http2 https://localhost:18443/ 2>&1 | grep -i "http/2"
-
-# Expected: < HTTP/2 200 or ALPN negotiation showing h2
-```
-
-**Connection Refused:**
-```bash
-# Check if Apache httpd is running on device
-adb shell ps | grep httpd
-
-# Check device logs for startup errors
-adb logcat -d | grep -E "Apache|httpd|axis2"
-```
-
-### services.xml Configuration
-
-The CameraControlService requires proper `RESTLocation` and `RESTMethod` parameters:
-
-```xml
-<!-- Correct configuration in services.xml -->
-<operation name="getStatus">
-    <description>Get current camera status</description>
-    <messageReceiver class="axis2_json_rpc_msg_recv"/>
-    <parameter name="RESTMethod">POST</parameter>
-    <parameter name="RESTLocation">/getStatus</parameter>
-    <parameter name="contentType">application/json</parameter>
-    <parameter name="responseType">application/json</parameter>
-</operation>
-```
-
-**Common Mistake:** Using `httpPath` instead of `RESTLocation`:
-```xml
-<!-- WRONG - will cause "Operation Not found" error -->
-<parameter name="httpPath">/getStatus</parameter>
-
-<!-- CORRECT -->
-<parameter name="RESTLocation">/getStatus</parameter>
-```
-
----
-
-## Conclusion
-
-The Kanaha Camera Control System's multi-camera deployment system with mTLS provides a comprehensive, secure, and scalable solution for professional camera production environments. Key achievements include:
-
-### Technical Achievements
-✅ **50+ concurrent camera support** with mTLS security
-✅ **Sub-100ms coordination latency** via HTTP/2 optimization
-✅ **Automated workflow execution** with customizable templates
-✅ **Certificate management system** with automatic renewal
-✅ **Production-ready architecture** with fault tolerance
-✅ **OpenCamera integration** via no-JNI Internal Intent IPC
-
-### Professional Production Features
-✅ **Multi-camera synchronization** for film and broadcast
-✅ **Secure network deployment** with certificate-based authentication
-✅ **Real-time monitoring and control** for live production environments
-✅ **Workflow automation** for complex production scenarios
-✅ **Scalable architecture** supporting enterprise production requirements
-
-This system enables professional camera crews to deploy and manage complex multi-camera setups with enterprise-grade security, reliability, and performance.
-
-## Related Documentation
-
-- **[SFTP-FILE-TRANSFER.md](./SFTP-FILE-TRANSFER.md)** - Detailed SFTP setup guide with SSH PKI authentication
-- **[ANDROID_CROSS_COMPILATION.md](./ANDROID_CROSS_COMPILATION.md)** - Cross-compiling Apache httpd and dependencies for Android
-- **[ANDROID_APK_BUILDING.md](./ANDROID_APK_BUILDING.md)** - APK build instructions
-- **[HTTP2_PERFORMANCE_OPTIMIZATION.md](./HTTP2_PERFORMANCE_OPTIMIZATION.md)** - HTTP/2 tuning and benchmarks
+## Tested devices
+
+The current tested list, with Android versions and caveats per phone, is in
+[ANDROID_APK_BUILDING.md](ANDROID_APK_BUILDING.md).
+
+**History, January 2026.** The same APK and API calls ran on a Pixel 9 Pro
+(Android 15) and a Moto X4 (Android 9), over ADB and WiFi, including SFTP. Started
+together over WiFi without `start_at`, which did not exist yet, the two recordings
+began one second apart:
+
+| Camera | File | Size | Start |
+|---|---|---|---|
+| Pixel 9 Pro | VID_20260105_085605.mp4 | 136 MB | 08:56:42 |
+| Moto X4 | VID_20260105_085604.mp4 | 75 MB | 08:56:41 |
+
+`start_at` and the `playTone` slate were added because of that second.
+
+## Related documentation
+
+- [SECURITY.md](SECURITY.md): certificates, the TLS configuration, input validation
+- [GPS.md](GPS.md): how well cameras align, and how that compares with SMPTE LTC
+- [OPENGATE.md](OPENGATE.md): open gate, 10-bit HLG, 12-bit RAW, grading with ffmpeg
+- [SFTP-FILE-TRANSFER.md](SFTP-FILE-TRANSFER.md): storage server and SSH key setup
+- [ANDROID_APK_BUILDING.md](ANDROID_APK_BUILDING.md): building, installing, tested devices
+- [THREAD_MODEL.md](THREAD_MODEL.md): the threads a request crosses

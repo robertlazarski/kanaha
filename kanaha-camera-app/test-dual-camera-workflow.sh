@@ -36,7 +36,7 @@
 set -e
 
 # Configuration
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
+SSL="${KANAHA_CERT_DIR:-$HOME/kanaha-ca}"   # client.crt, client.key, ca.crt
 
 # mDNS hostnames (discovered via avahi)
 PIXEL_MDNS="pixel9pro.local"
