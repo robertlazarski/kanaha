@@ -41,7 +41,7 @@ language. No curl, no certificates, no URL construction.
 
 ---
 
-## MCP Tools (10 camera operations)
+## MCP Tools (12 camera operations)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
