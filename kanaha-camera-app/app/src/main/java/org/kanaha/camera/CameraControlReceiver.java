@@ -995,6 +995,18 @@ public class CameraControlReceiver extends BroadcastReceiver {
             int wantKelvin = prefs.getInt(PreferenceKeys.WhiteBalanceTemperaturePreferenceKey, 0);
             settled &= Math.abs(controller.captureResultWhiteBalanceTemperature() - wantKelvin) <= 100;
         }
+        if (wbLocked) {
+            // The locked gains must be what the camera is applying; no report yet (as just
+            // after a reopen) is not settled.
+            float[][] want = Preview.parseWhiteBalanceLock(
+                    prefs.getString(PreferenceKeys.WhiteBalanceLockPreferenceKey, ""));
+            float[][] live = controller.captureResultColorCorrection();
+            boolean match = want != null && live != null;
+            for (int i = 0; match && i < 4; i++) {
+                match = Math.abs(live[0][i] - want[0][i]) <= 0.01f * Math.max(1f, want[0][i]);
+            }
+            settled &= match;
+        }
         state.put("settled", settled);
 
         JSONObject supports = new JSONObject();
