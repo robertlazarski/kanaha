@@ -339,10 +339,15 @@ public class Camera2Settings {
                 // identity transform, which discards the sensor's colour calibration.
                 builder.set(CaptureRequest.COLOR_CORRECTION_GAINS, new RggbChannelVector(
                         locked_wb_gains[0], locked_wb_gains[1], locked_wb_gains[2], locked_wb_gains[3]));
+                // ColorSpaceTransform takes its 3x3 matrix as rationals, not floats: an int[18]
+                // of numerator/denominator pairs, row-major, so element i of the matrix is
+                // elements[2*i] / elements[2*i+1]. locked_wb_transform holds the same nine values,
+                // in the same row-major order, as floats (see captureResultColorCorrection()).
+                // Each is stored as round(value * 10000) / 10000, which keeps four decimal places.
                 int [] elements = new int[18];
                 for(int i=0;i<9;i++) {
-                    elements[i*2] = Math.round(locked_wb_transform[i] * 10000.0f);
-                    elements[i*2+1] = 10000;
+                    elements[i*2] = Math.round(locked_wb_transform[i] * 10000.0f); // numerator
+                    elements[i*2+1] = 10000; // denominator
                 }
                 builder.set(CaptureRequest.COLOR_CORRECTION_TRANSFORM, new ColorSpaceTransform(elements));
                 changed = true;
