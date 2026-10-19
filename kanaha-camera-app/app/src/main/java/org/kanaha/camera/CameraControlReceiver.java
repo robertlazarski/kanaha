@@ -2061,10 +2061,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
      * aspect ratio matches the sensor's native ratio (4:3 ± 2%), resets digital zoom to 1x
      * so the full active sensor area is read out, and reopens the camera to apply settings.
      *
-     * Open gate captures all pixels the sensor has (no horizontal/vertical crop), giving
-     * ~33% more vertical resolution than 16:9 on a native 4:3 sensor (e.g. Pixel 9 Pro).
-     * This is only useful on devices whose Camera2 HAL exposes a 4:3 video resolution —
-     * the Pixel 9 Pro does; the Moto G phones in this rig do not.
+     * Open gate keeps the full sensor height (no 16:9 crop) on a native 4:3 sensor. The
+     * size is capped by the hardware encoder, not the sensor: 2560x1920 on the Pixel 10
+     * Pro XL and 1600x1200 on the Moto G Play 2024 under Camera2 (docs/OPENGATE.md).
      *
      * Implementation notes:
      *  - Does NOT set SCALER_CROP_REGION: at zoom=1 (default) Camera2 already uses the

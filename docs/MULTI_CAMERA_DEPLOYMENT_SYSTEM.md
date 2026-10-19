@@ -288,7 +288,24 @@ wait
   raising the shutter speed on one.
 - The Moto Gs need Settings > Camera API > Camera2 for manual exposure and kelvin;
   on Camera1 they refuse with that instruction. Check what each supports with
-  `getExposure` (`supports`, `ranges`).
+  `getExposure` (`supports`, `ranges`). Pick values every camera accepts: with a Pixel
+  10 Pro XL and a Moto G Play 2024 that means ISO 100–5333, 24 or 30 fps (the Moto has no
+  60), and stabilization off (the Moto has none).
+
+### Mixing a Pixel and a Moto in one edit
+
+The two phones label their 8-bit files differently: the Pixel 10 Pro XL writes limited
+range (16–235) with BT.709 colour, the Moto G Play 2024 full range (0–255) with BT.601.
+Cut together as they are, the Moto's footage shows different contrast and slightly
+different colour even on identical settings. Convert the Moto's to the Pixel's first:
+
+```bash
+ffmpeg -i moto_take.mp4 -vf "colorspace=all=bt709:iall=bt601-6-625:irange=pc:range=tv:format=yuv420p" -c:v libx264 -crf 18 -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv -c:a copy moto_take_709.mp4
+```
+
+Checked on test footage: full-range black (0) and white (255) land on 16 and 235. Do this
+before the gray-card gains below. Different sensors also render saturation and hue
+differently, which settings cannot fix; expect a per-camera grade on top.
 
 ### One-time gray-card calibration
 

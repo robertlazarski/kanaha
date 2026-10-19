@@ -7,7 +7,7 @@ Add `"open_gate": true` to a `startRecording` request. The camera reopens at its
 **Open gate trades resolution for field of view.** It records the full sensor height, so every crop can include the sky and foreground that 16:9 never records; the grid in [the demo below](#demo-deliverables-grid--one-shoot-every-platform) is that. At 2560×1920 it covers **1080p deliverables without upscaling**: a 16:9 crop is 2560×1440, and a 9:16 vertical is exactly 1080×1920, TikTok's native size. A 4K 16:9 recording (3840×2160) has more pixels but only the 16:9 band's height: its 9:16 crop is 1215×2160 and loses the top and bottom of the scene. Shoot 4K for a 4K 16:9 deliverable; shoot open gate for 1080p and vertical deliverables, or when you need the coverage. Why the ceiling is 2560×1920, not 4032×3024, is under [the encoder limit](#the-encoder-limit-measured-2026-10-19).
 
 **What you need to know:**
-- In the current rig only the **Pixel 10 Pro XL** supports open gate. Motorola phones fall back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
+- The **Pixel 10 Pro XL** records open gate at 2560×1920 and the **Moto G Play 2024** at 1600×1200 under the Camera2 API (both limited by their encoders). A phone with no 4:3 video size falls back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
 - The `startRecording` call **blocks 3–5 s** while the camera session reopens at 4:3. Account for this in `start_at` scheduling — use at least a 5 s lead time.
 - After an open gate session, the **next standard recording** triggers a second session reopen to reset quality back to 16:9. This is intentional and takes another ~2 s.
 - The sidecar JSON (`kanaha_recording_start.json`) includes `"open_gate": true` so post scripts know which clips need reframing.
@@ -85,21 +85,33 @@ Measured on the device, Android 17, 2026-10-19.
   produced for these scenes and codecs, and they move with the scene and the encoder's
   settings; the dim and daylight 8-bit takes alone differ threefold.
 
-### Motorola B-cameras
+### Moto G Play 2024 (B-camera)
 
-Record 8-bit H.264 by default. Under the Camera1 API, which Motorola phones use unless
-Settings > Camera API is changed to Camera2, there is no 10-bit or RAW path at all. Under
-Camera2 neither has been tested on a Motorola phone: `getStatus` (`supports_hlg10`) and
-`getExposure` on the phone answer it. They do not offer a 4:3 video size, so `open_gate`
-falls back to standard recording.
+Measured on the device, Android 14, 2026-10-19, with Kanaha switched to the Camera2 API
+(Settings > Camera API). Motorola phones default to Camera1, which has no 10-bit, RAW or
+manual controls at all.
+
+- **8-bit H.264** only. The camera does not advertise 10-bit video, and `startRecording`
+  refuses `hlg10` with that reason; `getStatus` reports `supports_hlg10: false`.
+- **Open gate works, at 1600×1200.** The camera offers 4:3 streams up to 4080×3072, but its
+  hardware encoders (`OMX.qcom.video.encoder.avc`/`.hevc`) stop at 4096×2176, and 1600×1200
+  is the largest 4:3 size that fits. Recorded at exactly that, with the exposure settings
+  surviving the reopen.
+- **RAW is 10-bit** (white level 1023), stills only; Kanaha records no RAW video.
+- **Its files are tagged differently from the Pixel's:** full range (`yuvj420p`,
+  `color_range=pc`) and BT.601 colour (`bt470bg`, `smpte170m`), where the Pixel writes limited
+  range and BT.709. Convert before cutting the two together; see
+  [Matching cameras](MULTI_CAMERA_DEPLOYMENT_SYSTEM.md#matching-cameras).
+
+The Moto X4 has not been measured.
 
 ### Summary for the current rig
 
 | Phone | 8-bit | 10-bit HLG | 12-bit RAW | Open gate |
 |---|---|---|---|---|
 | Pixel 10 Pro XL | Default | Yes, `hlg10` | Camera delivers it; Kanaha records it only through the debug probe | 2560×1920 |
-| Motorola (Camera1, default) | Default | No | No | No |
-| Motorola (Camera2) | Default | Not tested | Not tested | No |
+| Moto G Play 2024 (Camera1, default) | Default | No | No | Not tested |
+| Moto G Play 2024 (Camera2) | Default | No | 10-bit stills only | 1600×1200 |
 
 ---
 
@@ -128,7 +140,7 @@ curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
      -H 'Content-Type: application/json' \
      -d "{\"action\":\"startRecording\",\"clip_name\":\"A001\",\"open_gate\":true,\"start_at\":$START_AT}"
 
-# Moto G cameras — standard 16:9 (open_gate ignored if not supported)
+# Phones without a 4:3 video size record standard 16:9 (open_gate ignored)
 curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
      -X POST https://192.168.1.95:8443/services/CameraControlService/startRecording \
      -H 'Content-Type: application/json' \
@@ -149,7 +161,7 @@ curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
 6. Polls every 500ms (up to 10s) for camera readiness; the readiness check runs **on the UI thread** via `runOnUiThread + CountDownLatch` to avoid Java Memory Model visibility issues with `camera_controller`
 7. `startRecordingInternal()` calls `takePicture(false)` and polls for `isVideoRecording()` (up to 5s)
 
-If no 4:3 resolution is found (Moto G phones), a warning is logged and recording starts with the existing quality unchanged.
+If no 4:3 resolution is found, a warning is logged and recording starts with the existing quality unchanged.
 
 #### Critical Threading Note
 
