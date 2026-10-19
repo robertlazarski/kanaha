@@ -66,13 +66,14 @@ Measured on the device, Android 17, 2026-10-19.
 | Pixel format | `yuv420p` | `yuv420p10le` | 16-bit container, 12 significant bits |
 | Colour tags | BT.709 primaries, sRGB transfer (`iec61966-2-1`) | BT.2020, HLG (`arib-std-b67`) | Camera colour matrices in each DNG |
 | 4K30 data rate | 23 Mbps dim scene, 73 Mbps daylight | 55 Mbps dim scene | 753 MB/s (25.1 MB per frame) |
-| Largest frame | 3840×2160; open gate 2560×1920 | 3840×2160 | 4080×3072, the full 4:3 sensor |
+| Largest frame | 3840×2160; open gate 2560×1920 | 3840×2160; open gate 2560×1920 | 4080×3072, the full 4:3 sensor |
 
 - **10-bit HLG** is correctly tagged by the camera, so it grades without retagging. It
   always records HEVC whatever `format` says, since H.264 has no 10-bit profile on this
   phone. `getStatus` reports `supports_hlg10`. `startRecording` refuses `hlg10` while
   `setExposure` has a fixed `tone` curve pinned, because the curve would distort the HLG
-  transfer function. Open gate combined with `hlg10` has not been tested.
+  transfer function. Open gate and `hlg10` together work: 2560×1920 HEVC Main 10 with the
+  same HLG tags, a steady 30 fps, about 34 Mbps (2026-10-19).
 - **The 8-bit files are tagged with the sRGB transfer curve** rather than BT.709. Players
   and ffmpeg read the tag as written; it matters when converting colour spaces in post.
 - **12-bit RAW is real.** The camera offers `RAW_SENSOR`, `RAW12` and `RAW10` at 4080×3072
