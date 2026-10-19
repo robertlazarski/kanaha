@@ -15,7 +15,7 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 - **Software Sync Slate** - `playTone` API plays a synthesized sine wave on all cameras + laptop simultaneously; onset detection in post gives ~1–5 ms inter-camera sync with no hardware
 - **GPS Timestamping** - `getStatus` exposes GPS fix time and age for clock quality assessment
 - **Recording Start Sidecar** - Writes `kanaha_recording_start.json` at recording start (millisecond precision, GPS time); the post-processing analog of a BWF Time Reference
-- **Open Gate Recording** - Full 4:3 native sensor recording on supported devices (2560×1920 on Pixel 9 Pro) with no horizontal or vertical crop; see [Open Gate Recording](docs/OPENGATE.md)
+- **Open Gate Recording** - Full 4:3 native sensor recording on supported devices (4032×3024 on Pixel 10 Pro XL) with no horizontal or vertical crop; see [Open Gate Recording](docs/OPENGATE.md)
 - **On-Device Clip Description** - `describeClip` samples frames from a finished recording and describes them with Gemini Nano through ML Kit, writing a `<clip>.kanaha.json` sidecar that travels with the video. Opt-in `nano` build flavour; the default `foss` build keeps the operation and reports the model unavailable. See [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md)
 - **MCP (AI Assistant) Support** - [Model Context Protocol](https://modelcontextprotocol.io/) integration lets Claude Desktop and other AI assistants discover and control cameras as tools. 10 camera operations exposed with full parameter schemas. 117 KB native binary, no JVM; see [MCP Documentation](docs/MCP.md)
 
@@ -187,7 +187,7 @@ Request parameters:
 - `quality` *(optional)* — video quality hint (e.g. `"high"`, `"low"`). Default: app setting.
 - `duration` *(optional)* — recording duration in seconds. `0` = record until stopRecording.
 - `format` *(optional)* — container format. Default: `"MP4"`.
-- `open_gate` *(optional)* — `true` to record at the camera's native 4:3 sensor resolution (2560×1920 on Pixel 9 Pro) with no crop. The call blocks 3–5 s while the camera session reopens. Moto G phones ignore this flag and record normally. Default: `false`. See [Open Gate Recording](docs/OPENGATE.md).
+- `open_gate` *(optional)* — `true` to record at the camera's native 4:3 sensor resolution (4032×3024 on Pixel 10 Pro XL) with no crop. The call blocks 3–5 s while the camera session reopens. Moto G phones ignore this flag and record normally. Default: `false`. See [Open Gate Recording](docs/OPENGATE.md).
 - `hlg10` *(optional)* — `true` to record 10-bit HLG video (HEVC Main 10, BT.2020), whatever the `format`. Applies to this recording only; omitting it records 8-bit even if the Settings toggle is on. Refused with an error on cameras that lack 10-bit support (`supports_hlg10: false` in `getStatus`) rather than silently recording 8-bit. Combines with `open_gate`. Default: `false`.
 - `start_at` *(optional)* — UTC epoch milliseconds at which recording should begin. When provided, the camera schedules the start via `Handler.postDelayed()` and returns immediately with `"scheduled": true`. The camera fires at the specified wall-clock time regardless of when the request arrived. Valid range: 50 ms to 30 000 ms in the future. If zero or omitted, recording starts immediately.
 
@@ -391,7 +391,7 @@ no URL, so for them `"action"` is what selects the tool.
 | Endpoint | Method | Key Parameters | Description |
 |----------|--------|----------------|-------------|
 | `/getStatus` | GET/POST | — | Camera state, battery, storage, `timestamp`, `gps_time`, `gps_age_ms` |
-| `/startRecording` | POST | `clip_name`, `start_at`, `quality`, `duration`, `format`, `open_gate`, `hlg10` | Begin recording; `open_gate: true` records full 4:3 sensor on Pixel 9 Pro; supports scheduled start via `start_at` (UTC epoch ms) |
+| `/startRecording` | POST | `clip_name`, `start_at`, `quality`, `duration`, `format`, `open_gate`, `hlg10` | Begin recording; `open_gate: true` records the full 4:3 sensor (Pixel 10 Pro XL); supports scheduled start via `start_at` (UTC epoch ms) |
 | `/stopRecording` | POST | — | Stop active recording |
 | `/listFiles` | GET/POST | — | List recorded video files with sizes and timestamps |
 | `/deleteFiles` | POST | `pattern` | Delete files matching glob pattern |

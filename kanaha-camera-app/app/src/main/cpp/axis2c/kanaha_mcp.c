@@ -98,7 +98,7 @@ static const char SCHEMA_START_RECORDING[] =
                 "to the same wall-clock time regardless of network delay. "
                 "Valid range: 50ms to 30000ms in the future. 0 = start immediately.\"},"
         "\"open_gate\":{\"type\":\"boolean\","
-            "\"description\":\"Record at full 4:3 sensor resolution (2560x1920 on Pixel 9 Pro). "
+            "\"description\":\"Record at full 4:3 sensor resolution (4032x3024 on Pixel 10 Pro XL). "
                 "Preserves all sensor rows for maximum reframing flexibility in post. "
                 "Takes 3-5 seconds to reopen camera session. Default: false\"},"
         "\"hlg10\":{\"type\":\"boolean\","

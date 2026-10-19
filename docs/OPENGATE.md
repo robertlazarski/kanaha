@@ -2,10 +2,10 @@
 
 ## BLUF
 
-Add `"open_gate": true` to a `startRecording` request. The camera reopens at its native 4:3 sensor resolution (2560×1920 on Pixel 9 Pro; **4032×3024** on Pixel 10 Pro XL) and records with no horizontal or vertical crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1 — without upscaling.
+Add `"open_gate": true` to a `startRecording` request. The camera reopens at its native 4:3 sensor resolution (**4032×3024** on the Pixel 10 Pro XL; 2560×1920 on the Pixel 9 Pro this was first built on) and records with no horizontal or vertical crop. In post, reframe the 4:3 footage to any delivery ratio — 16:9, 2.39:1, 9:16, 1:1 — without upscaling.
 
 **What you need to know:**
-- Only the **Pixel 9 Pro** supports open gate. Moto G phones fall back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
+- In the current rig only the **Pixel 10 Pro XL** supports open gate (the Pixel 9 Pro did too, and has been traded in). Moto G phones fall back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
 - The `startRecording` call **blocks 3–5 s** while the camera session reopens at 4:3. Account for this in `start_at` scheduling — use at least a 5 s lead time.
 - After an open gate session, the **next standard recording** triggers a second session reopen to reset quality back to 16:9. This is intentional and takes another ~2 s.
 - The sidecar JSON (`kanaha_recording_start.json`) includes `"open_gate": true` so post scripts know which clips need reframing.

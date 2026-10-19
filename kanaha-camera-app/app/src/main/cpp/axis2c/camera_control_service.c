@@ -488,7 +488,6 @@ static long long extract_json_long(const char* json, const char* key, long long 
     return value;
 }
 
-/* Returns 1 for JSON true, 0 for JSON false, default_value if key absent */
 /*
  * Extract a JSON array of numbers into a comma-separated string for an Intent
  * extra ("positions":[0.1,0.5,0.9] -> "0.1,0.5,0.9"). Every element must be a
@@ -528,6 +527,7 @@ static int extract_json_number_array_csv(const char* json, const char* key,
     return count;
 }
 
+/* Returns 1 for JSON true, 0 for JSON false, default_value if key absent */
 static int extract_json_bool(const char* json, const char* key, int default_value) {
     char search_key[128];
     snprintf(search_key, sizeof(search_key), "\"%s\":", key);
