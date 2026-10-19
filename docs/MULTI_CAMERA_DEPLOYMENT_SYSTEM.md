@@ -323,6 +323,25 @@ shots share (same crop on both). If the means match, the phone's scene-dependent
 processing is not undoing the fixed settings, and two identical phones will match
 apart from the gray-card gains. If they drift, pin `tone` as well and repeat.
 
+**Result on the Pixel 10 Pro XL, 2026-10-19.** Tripod, 1× lens, a balcony with bright
+sky in one framing and tilted down to mostly shade in the other, exposure, 5600 K, focus
+and 30 fps pinned. The area both framings share was compared in blocks after aligning
+the frames:
+
+| | Default curve | `tone: rec709` (and 1.6 stops brighter) |
+|---|---|---|
+| Whole shared area, B/A brightness | 0.970 | 0.999 |
+| Blocks in the upper two thirds | 0.92–1.04 | 0.97–1.04 |
+| Blocks along the frame's bottom edge | 0.72–0.82 (2–3 code values) | 0.91–0.94 (1–2.5 code values) |
+
+The phone does not re-tone the picture to suit what is in frame once the settings are
+pinned. Two small residues remain with either curve: an area changes by a code value or
+two depending on where in the frame it sits, which fits the lens edge correction rather
+than scene processing, and a 1–4% warm shift with framing. Neither is something a
+setting removes, and both are below what a grade notices. Pinning `rec709` costs nothing
+and the shared area matched to 0.999 with it, though the brighter exposure in that pair
+also narrows relative differences.
+
 ## File transfer
 
 `sftpTransfer` sends a recording, and the sidecars that belong to it, to a storage
