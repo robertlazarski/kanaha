@@ -240,11 +240,12 @@ $CURL -H "Content-Type: application/json" -d '{"action":"getExposure"}' \
 - `wb_kelvin` — manual white balance; `"wb":"auto"` returns white balance alone to auto.
 - `focus_distance` (dioptres, `0` = infinity), or `"focus":"lock"` to hold the current distance, or `"focus":"auto"`.
 - `stabilization` — `true`/`false`. Electronic stabilization crops by a varying amount, so set it the same on every camera.
+- `tone` — a fixed tone curve, so contrast does not change with what is in frame: `rec709`, `srgb`, the flat log curves `fine`/`low`/`medium`/`strong`/`extra_strong`, or `jtvideo`/`jtlog`/`jtlog2`. `off` (the default) leaves contrast to the phone. A log curve also leaves more room to grade 8-bit footage. Not combinable with `hlg10`, which has its own transfer function; `startRecording` refuses that pairing.
 - `lock` — freeze every value not given explicitly at its live value. `auto` — everything back to auto; not combinable with other fields.
 
 Values outside the camera's range are refused, never clamped, since a clamped value would leave cameras unmatched; so is a shutter longer than one frame, which would lower that camera's frame rate. Settings persist across takes and through the reopen `open_gate` causes, and are refused while recording. Manual exposure and kelvin need the Camera2 API; Motorola phones default to Camera1 (Settings > Camera API).
 
-`getExposure` returns `exposure_mode`, `wb_mode`, `focus_mode`, `stabilization`, the live `iso`, `exposure_time_ns` (also as `shutter`, e.g. `"1/60"`), `wb_kelvin`, `focus_distance` and `frame_duration_ns`, plus `supports` and `ranges` objects. The live values can be sent unchanged to `setExposure` on other cameras; see [Multi-Camera Setup](#multi-camera-setup). `wb_kelvin` read from auto white balance is OpenCamera's estimate from the colour gains, so locking it can shift colour slightly on that camera; cameras given the same `wb_kelvin` still match.
+`getExposure` returns `exposure_mode`, `wb_mode`, `focus_mode`, `stabilization`, `tone`, the live `iso`, `exposure_time_ns` (also as `shutter`, e.g. `"1/60"`), `wb_kelvin`, `focus_distance` and `frame_duration_ns`, plus `supports` and `ranges` objects. The live values can be sent unchanged to `setExposure` on other cameras; see [Multi-Camera Setup](#multi-camera-setup). `wb_kelvin` read from auto white balance is OpenCamera's estimate from the colour gains, so locking it can shift colour slightly on that camera; cameras given the same `wb_kelvin` still match.
 
 #### listFiles
 
@@ -397,7 +398,7 @@ no URL, so for them `"action"` is what selects the tool.
 | `/deleteFiles` | POST | `pattern` | Delete files matching glob pattern |
 | `/sftpTransfer` | POST | `storage_server_id`, `video_filename`, `destination_folder` | Push files to remote host via SFTP |
 | `/describeClip` | POST | `video_filename`, `frame_count`, `positions`, `write_sidecar`, `max_dimension` | Describe a recording with the on-device model (Gemini Nano, `nano` flavor only); writes `<basename>.kanaha.json` |
-| `/setExposure` | POST | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization` | Pin exposure, white balance, focus and stabilization so cameras match; refused out of range or while recording |
+| `/setExposure` | POST | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone` | Pin exposure, white balance, focus and stabilization so cameras match; refused out of range or while recording |
 | `/getExposure` | POST | — | Modes in force, live values (feed them to `setExposure` on other cameras), support flags and ranges |
 | `/playTone` | POST | `frequency`, `duration_ms`, `start_at` | Play synthesized sine wave for software sync slate |
 

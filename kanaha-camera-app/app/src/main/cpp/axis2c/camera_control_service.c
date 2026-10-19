@@ -595,6 +595,7 @@ typedef struct {
     char focus_distance[32];
     char wb[16];
     char focus[16];
+    char tone[16];
     int stabilization;
 } exposure_request_t;
 
@@ -867,6 +868,13 @@ int camera_control_service_invoke_json_impl(
         if (req.focus[0] && strcmp(req.focus, "auto") != 0 && strcmp(req.focus, "lock") != 0) {
             create_error_response(json_response, response_size, "focus must be \\\"auto\\\" or \\\"lock\\\"");
             return -1;
+        }
+        extract_json_string(json_request, "tone", req.tone, sizeof(req.tone));
+        for (const char* t = req.tone; *t; t++) {
+            if (!((*t >= 'a' && *t <= 'z') || (*t >= '0' && *t <= '9') || *t == '_')) {
+                create_error_response(json_response, response_size, "tone must be a profile name such as \\\"rec709\\\"");
+                return -1;
+            }
         }
         req.auto_all = extract_json_bool(json_request, "auto", 0);
         req.lock = extract_json_bool(json_request, "lock", 0);
@@ -1498,6 +1506,7 @@ int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_re
         {"--es", "wb", req->wb},
         {"--es", "focus", req->focus},
         {"--es", "focus_distance", req->focus_distance},
+        {"--es", "tone", req->tone},
         {"--es", "stabilization", req->stabilization < 0 ? "" : (req->stabilization ? "1" : "0")}
     };
     return send_and_pass_through("set_exposure", operation_id, extras,

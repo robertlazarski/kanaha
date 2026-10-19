@@ -291,6 +291,14 @@ public class CameraControlReceiver extends BroadcastReceiver {
             "Kanaha Camera is not in the foreground. Android gives the camera only to the app on screen; bring it to the front and try again.";
     static final String HLG10_NOT_SUPPORTED =
             "This camera does not support 10-bit HLG video. Record without hlg10.";
+    static final String HLG10_WITH_TONE_CURVE =
+            "hlg10 cannot be combined with a fixed tone curve, which would distort the HLG transfer function. Send setExposure with tone \"off\" first.";
+
+    // OpenCamera's video tone profiles (preference_video_log_values) that need no further
+    // parameter; "gamma" is left out because it also needs a gamma value.
+    static final List<String> TONE_PROFILES = java.util.Arrays.asList(
+            "off", "rec709", "srgb", "fine", "low", "medium", "strong", "extra_strong",
+            "jtvideo", "jtlog", "jtlog2");
 
     // Track whether the last recording used open gate so we know when a session
     // reopen is needed to reset back to 16:9 quality.
@@ -612,6 +620,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String wb = emptyToNull(intent.getStringExtra("wb"));
         String focus = emptyToNull(intent.getStringExtra("focus"));
         String stabilization = emptyToNull(intent.getStringExtra("stabilization"));
+        String tone = emptyToNull(intent.getStringExtra("tone"));
         final Long isoReq, exposureReq, kelvinReq;
         final Float focusReq;
         try {
@@ -630,8 +639,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (auto && (lock || anyValue)) {
             return createErrorResponse(operationId, "auto cannot be combined with lock or explicit values");
         }
-        if (!auto && !lock && !anyValue && stabilization == null) {
+        if (!auto && !lock && !anyValue && stabilization == null && tone == null) {
             return createErrorResponse(operationId, "Nothing to set: give auto, lock, or at least one value");
+        }
+        if (tone != null && !TONE_PROFILES.contains(tone)) {
+            return createErrorResponse(operationId, "tone must be one of " + TONE_PROFILES);
         }
         if (wb != null && !wb.equals("auto")) {
             return createErrorResponse(operationId, "wb must be \"auto\"; give a manual white balance as wb_kelvin");
@@ -668,7 +680,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             mainActivity.runOnUiThread(() -> {
                 try {
                     error.set(applyExposure(mainActivity, auto, lock, isoReq, exposureReq, kelvinReq, wb,
-                            focusReq, focus, stabilization));
+                            focusReq, focus, stabilization, tone));
                 } catch (Exception e) {
                     Log.e(TAG, "applyExposure failed", e);
                     error.set("Failed to apply exposure: " + e.getMessage());
@@ -710,7 +722,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
      */
     private static String applyExposure(MainActivity mainActivity, boolean auto, boolean lock,
                                         Long isoReq, Long exposureReq, Long kelvinReq, String wb,
-                                        Float focusReq, String focus, String stabilization) {
+                                        Float focusReq, String focus, String stabilization, String tone) {
         Preview preview = mainActivity.getPreview();
         CameraController controller = preview.getCameraController();
         if (controller == null) {
@@ -798,6 +810,15 @@ public class CameraControlReceiver extends BroadcastReceiver {
             }
         }
 
+        // A fixed tone curve stops the phone choosing contrast per scene, which otherwise
+        // drifts between cameras framing different things. "off" hands it back to the phone.
+        if (tone != null) {
+            if (!tone.equals("off") && !preview.supportsTonemapCurve()) {
+                return "This camera does not support a fixed tone curve";
+            }
+            editor.putString(PreferenceKeys.VideoLogPreferenceKey, tone);
+        }
+
         if (stabilization != null) {
             boolean on = "1".equals(stabilization);
             if (on && !preview.supportsVideoStabilization()) {
@@ -809,7 +830,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
         editor.apply();
         mainActivity.updateForSettings(true, "");
         Log.i(TAG, "applyExposure: auto=" + auto + " lock=" + lock + " iso=" + iso + " exposure_ns=" + exposure
-                + " wb_kelvin=" + kelvin + " focus_distance=" + distance + " stabilization=" + stabilization);
+                + " wb_kelvin=" + kelvin + " focus_distance=" + distance + " stabilization=" + stabilization
+                + " tone=" + tone);
         return null;
     }
 
@@ -875,6 +897,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         state.put("focus_mode", "focus_mode_manual2".equals(focusPref) ? "manual"
                 : focusPref.isEmpty() ? "default" : focusPref.replace("focus_mode_", ""));
         state.put("stabilization", prefs.getBoolean(PreferenceKeys.VideoStabilizationPreferenceKey, false));
+        state.put("tone", prefs.getString(PreferenceKeys.VideoLogPreferenceKey, "off"));
 
         // Live values from the latest capture result: what the sensor is doing now, in auto or manual.
         if (controller.captureResultHasIso()) {
@@ -917,6 +940,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             ranges.put("focus_distance_max", (double) preview.getMinimumFocusDistance());
         }
         supports.put("stabilization", preview.supportsVideoStabilization());
+        supports.put("tone_curve", preview.supportsTonemapCurve());
         state.put("supports", supports);
         state.put("ranges", ranges);
         return state;
@@ -1838,11 +1862,15 @@ public class CameraControlReceiver extends BroadcastReceiver {
     private static String configureHlg10(MainActivity mainActivity, boolean hlg10) throws InterruptedException {
         Preview preview = mainActivity.getPreview();
         AtomicBoolean supported = new AtomicBoolean(false);
+        AtomicBoolean toneCurve = new AtomicBoolean(false);
         CountDownLatch latch = new CountDownLatch(1);
         mainActivity.runOnUiThread(() -> {
             try {
                 supported.set(preview.supportsHlg10());
-                if (hlg10 && !supported.get()) return;
+                toneCurve.set(preview.supportsTonemapCurve() && !"off".equals(
+                        PreferenceManager.getDefaultSharedPreferences(mainActivity)
+                                .getString(PreferenceKeys.VideoLogPreferenceKey, "off")));
+                if (hlg10 && (!supported.get() || toneCurve.get())) return;
                 PreferenceManager.getDefaultSharedPreferences(mainActivity).edit()
                         .putBoolean(PreferenceKeys.Hlg10PreferenceKey, hlg10).apply();
                 CameraController controller = preview.getCameraController();
@@ -1860,6 +1888,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
         }
         if (hlg10 && !supported.get()) {
             return HLG10_NOT_SUPPORTED;
+        }
+        if (hlg10 && toneCurve.get()) {
+            return HLG10_WITH_TONE_CURVE;
         }
         Log.i(TAG, "configureHlg10: hlg10=" + hlg10 + " supports_hlg10=" + supported.get());
         return null;

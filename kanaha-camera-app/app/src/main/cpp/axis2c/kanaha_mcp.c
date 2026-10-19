@@ -202,7 +202,11 @@ static const char SCHEMA_SET_EXPOSURE[] =
         "\"focus\":{\"type\":\"string\",\"enum\":[\"auto\",\"lock\"],"
             "\"description\":\"Continuous autofocus, or hold the current focus distance\"},"
         "\"focus_distance\":{\"type\":\"number\",\"description\":\"Manual focus in dioptres; 0 is infinity\"},"
-        "\"stabilization\":{\"type\":\"boolean\",\"description\":\"Video stabilization on or off\"}"
+        "\"stabilization\":{\"type\":\"boolean\",\"description\":\"Video stabilization on or off\"},"
+        "\"tone\":{\"type\":\"string\","
+            "\"enum\":[\"off\",\"rec709\",\"srgb\",\"fine\",\"low\",\"medium\",\"strong\",\"extra_strong\",\"jtvideo\",\"jtlog\",\"jtlog2\"],"
+            "\"description\":\"Fixed tone curve, so contrast does not vary per scene; off leaves it to the phone. "
+                "Log curves (fine to extra_strong) are flat for grading. Not combinable with hlg10\"}"
     "},"
     "\"required\":[]"
     "}";
