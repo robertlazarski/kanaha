@@ -358,6 +358,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     case "sftpTransfer":
                         response = handleSftpTransfer(context, intent);
                         break;
+                    case "cleanup_files":
+                    case "cleanupFiles":
+                        response = handleCleanupFiles(context, intent);
+                        break;
                     case "delete_files":
                     case "deleteFiles":
                         response = handleDeleteFiles(context, intent);
@@ -1291,49 +1295,116 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
         try {
             File videoDir = getVideoDirectory(context);
-            File[] filesToDelete = withSidecars(context, findFilesToDelete(videoDir, pattern));
-
-            if (filesToDelete == null || filesToDelete.length == 0) {
-                JSONObject response = new JSONObject();
-                response.put("success", true);
-                response.put("operation_id", operationId);
-                response.put("files_deleted", 0);
-                response.put("message", "No files found matching pattern: " + pattern);
-                return response;
-            }
-
-            int deleted = 0;
-            long bytesFreed = 0;
-            java.util.List<String> deletedFiles = new java.util.ArrayList<>();
-
-            for (File file : filesToDelete) {
-                long fileSize = file.length();
-                String fileName = file.getName();
-                if (file.delete()) {
-                    deleted++;
-                    bytesFreed += fileSize;
-                    deletedFiles.add(fileName);
-                    Log.i(TAG, "Deleted: " + fileName + " (" + fileSize + " bytes)");
-                } else {
-                    Log.w(TAG, "Failed to delete: " + fileName);
-                }
-            }
-
-            JSONObject response = new JSONObject();
-            response.put("success", true);
-            response.put("operation_id", operationId);
-            response.put("files_deleted", deleted);
-            response.put("bytes_freed", bytesFreed);
-            response.put("deleted_files", new org.json.JSONArray(deletedFiles));
-            response.put("timestamp", System.currentTimeMillis());
-            response.put("message", String.format("Deleted %d file(s), freed %d bytes", deleted, bytesFreed));
-
-            return response;
-
+            return deleteRecordings(context, operationId, findFilesToDelete(videoDir, pattern),
+                    "matching pattern: " + pattern);
         } catch (Exception e) {
             Log.e(TAG, "Error deleting files", e);
             return createErrorResponse(operationId, "Exception deleting files: " + e.getMessage());
         }
+    }
+
+    /**
+     * cleanupFiles: delete recordings by policy, each with its sidecars, as deleteFiles does.
+     *   older_than_days  recordings last modified more than days_threshold days ago (1-365)
+     *   all_videos       every recording (.mp4, .mov, .mkv; never photos)
+     *   by_pattern       the recordings deleteFiles would match for file_pattern
+     * The native side refuses anything else first; this checks again.
+     */
+    private JSONObject handleCleanupFiles(Context context, Intent intent) throws JSONException {
+        String operationId = intent.getStringExtra("operation_id");
+        String policy = intent.getStringExtra("cleanup_policy");
+        Log.i(TAG, "Cleanup files: policy=" + policy);
+        try {
+            File videoDir = getVideoDirectory(context);
+            switch (policy == null ? "" : policy) {
+                case "all_videos":
+                    return deleteRecordings(context, operationId, findFilesToDelete(videoDir, "*"), "(all recordings)");
+                case "by_pattern": {
+                    String pattern = intent.getStringExtra("file_pattern");
+                    String validationError = SecurityValidator.validateFilenameOrPattern(pattern, "file_pattern");
+                    if (validationError != null) {
+                        return createErrorResponse(operationId, validationError);
+                    }
+                    return deleteRecordings(context, operationId, findFilesToDelete(videoDir, pattern),
+                            "matching pattern: " + pattern);
+                }
+                case "older_than_days": {
+                    int days = parseIntOr(intent.getStringExtra("days_threshold"), -1);
+                    if (days < 1 || days > 365) {
+                        return createErrorResponse(operationId, "days_threshold must be 1 to 365 for older_than_days");
+                    }
+                    final long cutoff = System.currentTimeMillis() - days * 86_400_000L;
+                    java.util.List<File> old = new java.util.ArrayList<>();
+                    File[] all = findFilesToDelete(videoDir, "*");
+                    for (File f : all == null ? new File[0] : all) {
+                        if (f.lastModified() < cutoff) old.add(f);
+                    }
+                    return deleteRecordings(context, operationId, old.toArray(new File[0]),
+                            "older than " + days + " days");
+                }
+                default:
+                    return createErrorResponse(operationId,
+                            "cleanup_policy must be older_than_days, all_videos or by_pattern");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error cleaning up files", e);
+            return createErrorResponse(operationId, "Exception cleaning up files: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Delete the given recordings and their sidecars; the response deleteFiles and cleanupFiles share.
+     * A clip's sidecars go only once the clip itself is gone, so a clip that cannot be deleted
+     * (one this app does not own, under scoped storage) keeps them; it is listed in failed_files.
+     */
+    private static JSONObject deleteRecordings(Context context, String operationId, File[] videos, String what)
+            throws JSONException {
+        JSONObject response = new JSONObject();
+        response.put("operation_id", operationId);
+        if (videos == null || videos.length == 0) {
+            response.put("success", true);
+            response.put("files_deleted", 0);
+            response.put("message", "No recordings found " + what);
+            return response;
+        }
+
+        int deleted = 0;
+        long bytesFreed = 0;
+        java.util.List<String> deletedFiles = new java.util.ArrayList<>();
+        java.util.List<String> failedFiles = new java.util.ArrayList<>();
+
+        for (File video : videos) {
+            long videoSize = video.length();
+            if (!video.delete()) {
+                Log.w(TAG, "Failed to delete: " + video.getName());
+                failedFiles.add(video.getName());
+                continue;
+            }
+            for (File file : withSidecars(context, new File[]{video})) {
+                long fileSize = file == video ? videoSize : file.length();
+                if (file == video || file.delete()) {
+                    deleted++;
+                    bytesFreed += fileSize;
+                    deletedFiles.add(file.getName());
+                    Log.i(TAG, "Deleted: " + file.getName() + " (" + fileSize + " bytes)");
+                } else {
+                    Log.w(TAG, "Failed to delete: " + file.getName());
+                    failedFiles.add(file.getName());
+                }
+            }
+        }
+
+        response.put("success", failedFiles.isEmpty());
+        response.put("files_deleted", deleted);
+        response.put("bytes_freed", bytesFreed);
+        response.put("deleted_files", new org.json.JSONArray(deletedFiles));
+        if (!failedFiles.isEmpty()) {
+            response.put("failed_files", new org.json.JSONArray(failedFiles));
+            response.put("error", "Could not delete " + failedFiles.size() + " file(s)");
+        }
+        response.put("timestamp", System.currentTimeMillis());
+        response.put("message", String.format("Deleted %d file(s), freed %d bytes", deleted, bytesFreed));
+        return response;
     }
 
     /**

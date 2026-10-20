@@ -602,8 +602,8 @@ if (!ext || (strcmp(ext, ".mp4") != 0 &&
 | Function | Validations |
 |----------|-------------|
 | `camera_device_sftp_transfer_impl()` | Path traversal, file extension |
-| `camera_device_delete_files_impl()` | Path traversal |
-| `camera_device_cleanup_files_impl()` | Path traversal, policy whitelist |
+| `delete_files` dispatch (`deleteFiles`) | `pattern`: no `..`, `/` or `\`; checked again in Java; response passed through from Java |
+| `cleanup_files` dispatch (`cleanupFiles`) | `cleanup_policy` one of `older_than_days`, `all_videos`, `by_pattern`; `days_threshold` 1–365; `file_pattern` as `pattern` above; checked again in Java; response passed through from Java |
 | `describe_clip` dispatch (`describeClip`) | `video_filename`: no `..`, `/` or `\`; `frame_count` clamped 1–8; `max_dimension` clamped 64–4096; `positions`: at most 8 values in [0, 1], count must equal `frame_count`; response passed through from Java unchanged |
 
 `describeClip` is the one operation that decodes a media file inside the app

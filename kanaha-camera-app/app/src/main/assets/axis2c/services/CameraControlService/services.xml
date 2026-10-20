@@ -111,8 +111,8 @@
         </operation>
 
         <operation name="cleanupFiles">
-            <parameter name="mcpDescription">Clean up video files from the device based on policy: transferred files only, all files, or files older than a threshold.</parameter>
-            <parameter name="mcpInputSchema">{"type":"object","properties":{"cleanup_policy":{"type":"string","enum":["older_than_days","after_successful_transfer","all_videos","by_pattern"]},"days_threshold":{"type":"integer","minimum":1,"maximum":365,"description":"Required for older_than_days"},"file_pattern":{"type":"string","description":"Glob pattern; required for by_pattern"}},"required":["cleanup_policy"]}</parameter>
+            <parameter name="mcpDescription">Delete recordings by policy, each with its sidecars: older than N days, all recordings, or those matching a pattern.</parameter>
+            <parameter name="mcpInputSchema">{"type":"object","properties":{"cleanup_policy":{"type":"string","enum":["older_than_days","all_videos","by_pattern"]},"days_threshold":{"type":"integer","minimum":1,"maximum":365,"description":"Required for older_than_days"},"file_pattern":{"type":"string","description":"Required for by_pattern: a name, prefix*suffix, today or YYYY-MM-DD, as deleteFiles takes"}},"required":["cleanup_policy"]}</parameter>
             <messageReceiver class="axis2_json_rpc_msg_recv"/>
             <parameter name="RESTMethod">POST</parameter>
             <parameter name="RESTLocation">/cleanupFiles</parameter>

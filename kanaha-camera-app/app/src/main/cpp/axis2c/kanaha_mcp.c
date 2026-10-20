@@ -234,12 +234,12 @@ static const char SCHEMA_CLEANUP_FILES[] =
     "\"type\":\"object\","
     "\"properties\":{"
         "\"cleanup_policy\":{\"type\":\"string\","
-            "\"enum\":[\"older_than_days\",\"after_successful_transfer\",\"all_videos\",\"by_pattern\"],"
-            "\"description\":\"Which files to delete\"},"
+            "\"enum\":[\"older_than_days\",\"all_videos\",\"by_pattern\"],"
+            "\"description\":\"Which recordings to delete\"},"
         "\"days_threshold\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":365,"
-            "\"description\":\"For older_than_days: delete files older than N days\"},"
+            "\"description\":\"Required for older_than_days: delete recordings older than N days\"},"
         "\"file_pattern\":{\"type\":\"string\","
-            "\"description\":\"Glob pattern; required for by_pattern\"}"
+            "\"description\":\"Required for by_pattern: a name, prefix*suffix, today or YYYY-MM-DD, as deleteFiles takes\"}"
     "},"
     "\"required\":[\"cleanup_policy\"]"
     "}";
@@ -328,8 +328,8 @@ static const kanaha_mcp_tool_t kanaha_mcp_tools[] = {
     },
     {
         "cleanupFiles",
-        "Clean up video files from the device based on a policy: transferred files "
-        "only, all files, or files older than a threshold.",
+        "Delete recordings by policy, each with its sidecars: older than N days, "
+        "all recordings, or those matching a pattern.",
         SCHEMA_CLEANUP_FILES
     },
     { NULL, NULL, NULL }  /* sentinel */

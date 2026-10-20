@@ -311,6 +311,10 @@ static int send_intent_and_discard_response(
     return result;
 }
 
+static int send_and_pass_through(const char* label, const char* operation_id,
+                                 const intent_extra_t* extras, int num_extras,
+                                 char* json_response, size_t response_size);
+
 /*
  * As above, but with keep_response_file set the response file is left in place
  * even when the Java side reported success:false, so a caller that passes the
@@ -635,8 +639,9 @@ int camera_device_play_tone_impl(int frequency, int duration_ms, long long start
 int camera_device_init_impl(void);
 void camera_device_cleanup_impl(void);
 int camera_device_sftp_transfer_impl(const char* storage_server_id, const char* video_filename, const char* destination_folder);
-int camera_device_cleanup_files_impl(const char* cleanup_policy, int days_threshold, const char* file_pattern);
-int camera_device_delete_files_impl(const char* pattern);
+int camera_device_cleanup_files_impl(const char* cleanup_policy, int days_threshold, const char* file_pattern,
+                                     char* json_response, size_t response_size);
+int camera_device_delete_files_impl(const char* pattern, char* json_response, size_t response_size);
 int camera_device_list_files_impl(const char* pattern, char* json_response, size_t response_size);
 int camera_device_describe_clip_impl(const char* video_filename, int frame_count, const char* positions_csv,
                                      int write_sidecar, int max_dimension,
@@ -769,11 +774,12 @@ int camera_control_service_invoke_json_impl(
         char pattern[256] = "";
         extract_json_string(json_request, "pattern", pattern, sizeof(pattern));
 
-        int result = camera_device_delete_files_impl(pattern);
-
-        if (result == 0) {
-            create_success_response(json_response, response_size, "Files deleted");
-        } else {
+        /* The Java side checks the pattern again and reports what it deleted. */
+        if (pattern[0] == '\0') {
+            create_error_response(json_response, response_size, "Missing required field: pattern");
+        } else if (strstr(pattern, "..") || strchr(pattern, '/') || strchr(pattern, '\\')) {
+            create_error_response(json_response, response_size, "pattern must be a file name or pattern, not a path");
+        } else if (camera_device_delete_files_impl(pattern, json_response, response_size) != 0) {
             create_error_response(json_response, response_size, "Failed to delete files");
         }
     }
@@ -803,12 +809,20 @@ int camera_control_service_invoke_json_impl(
         extract_json_string(json_request, "file_pattern", file_pattern, sizeof(file_pattern));
         days_threshold = extract_json_int(json_request, "days_threshold", 0);
 
-        int result = camera_device_cleanup_files_impl(cleanup_policy, days_threshold, file_pattern);
-
-        if (result == 0) {
-            create_success_response(json_response, response_size, "Cleanup completed");
-        } else {
-            create_error_response(json_response, response_size, "Failed to cleanup files");
+        int by_pattern = strcmp(cleanup_policy, "by_pattern") == 0;
+        if (strcmp(cleanup_policy, "older_than_days") != 0 && strcmp(cleanup_policy, "all_videos") != 0 &&
+            !by_pattern) {
+            create_error_response(json_response, response_size,
+                                  "cleanup_policy must be older_than_days, all_videos or by_pattern");
+        } else if (strcmp(cleanup_policy, "older_than_days") == 0 && (days_threshold < 1 || days_threshold > 365)) {
+            create_error_response(json_response, response_size, "days_threshold must be 1 to 365 for older_than_days");
+        } else if (by_pattern && file_pattern[0] == '\0') {
+            create_error_response(json_response, response_size, "file_pattern is required for by_pattern");
+        } else if (by_pattern && (strstr(file_pattern, "..") || strchr(file_pattern, '/') || strchr(file_pattern, '\\'))) {
+            create_error_response(json_response, response_size, "file_pattern must be a file name or pattern, not a path");
+        } else if (camera_device_cleanup_files_impl(cleanup_policy, days_threshold, file_pattern,
+                                                    json_response, response_size) != 0) {
+            create_error_response(json_response, response_size, "Failed to clean up files");
         }
     }
     else if (strcmp(action, "describe_clip") == 0 || strcmp(action, "describeClip") == 0) {
@@ -1247,95 +1261,41 @@ int camera_device_sftp_transfer_impl(
 }
 
 /**
- * File cleanup implementation for Android (Security-Hardened)
- * Uses Internal Intent IPC (NO JNI) to communicate with CameraControlReceiver
+ * File cleanup for Android: deletes recordings by policy, each with its
+ * sidecars. The dispatcher has validated the request; the Java side checks it
+ * again and its response (counts, names, or the reason it refused) is passed
+ * through. Policies: older_than_days (days_threshold 1-365), all_videos,
+ * by_pattern (file_pattern, as deleteFiles matches it).
  */
 int camera_device_cleanup_files_impl(
     const char* cleanup_policy,
     int days_threshold,
-    const char* file_pattern
+    const char* file_pattern,
+    char* json_response,
+    size_t response_size
 ) {
-    LOGI("camera_device_cleanup_files_impl called (security-hardened version)");
-    LOGI("  cleanup_policy: %s", cleanup_policy ? cleanup_policy : "NULL");
-    LOGI("  days_threshold: %d", days_threshold);
-    LOGI("  file_pattern: %s", file_pattern ? file_pattern : "NULL");
+    LOGI("camera_device_cleanup_files_impl called: policy=%s days=%d pattern=%s",
+         cleanup_policy ? cleanup_policy : "NULL", days_threshold, file_pattern ? file_pattern : "NULL");
 
-    if (!cleanup_policy || strlen(cleanup_policy) == 0) {
-        LOGE("Invalid parameter: cleanup_policy is NULL or empty");
-        return -1;
-    }
-
-    if (strcmp(cleanup_policy, "older_than_days") != 0 &&
-        strcmp(cleanup_policy, "after_successful_transfer") != 0 &&
-        strcmp(cleanup_policy, "all_videos") != 0 &&
-        strcmp(cleanup_policy, "by_pattern") != 0) {
-        LOGE("Security violation: invalid cleanup_policy");
-        return -1;
-    }
-
-    if (strcmp(cleanup_policy, "older_than_days") == 0) {
-        if (days_threshold <= 0 || days_threshold > 365) {
-            LOGE("Invalid parameter: days_threshold must be between 1 and 365");
-            return -1;
-        }
-    }
-
-    if (strcmp(cleanup_policy, "by_pattern") == 0) {
-        if (!file_pattern || strlen(file_pattern) == 0) {
-            LOGE("Invalid parameter: file_pattern is required for by_pattern policy");
-            return -1;
-        }
-
-        if (strstr(file_pattern, "..")) {
-            LOGE("Security violation: path traversal detected in file_pattern");
-            return -1;
-        }
-    }
+    if (!cleanup_policy || !json_response || response_size == 0) return -1;
 
     char operation_id[64];
     generate_operation_id(operation_id, sizeof(operation_id));
 
-    LOGD("Generated operation ID: %s", operation_id);
-
-    int result;
     char days_str[16];
+    snprintf(days_str, sizeof(days_str), "%d", days_threshold);
 
-    if (strcmp(cleanup_policy, "older_than_days") == 0) {
-        snprintf(days_str, sizeof(days_str), "%d", days_threshold);
-        intent_extra_t extras[] = {
-            {"--es", "action", "cleanup_files"},
-            {"--es", "operation_id", operation_id},
-            {"--es", "cleanup_policy", cleanup_policy},
-            {"--ei", "days_threshold", days_str}
-        };
-        LOGI("Sending secure intent broadcast for file cleanup (older_than_days)");
-        result = send_intent_and_discard_response(operation_id, extras, 4);
-    } else if (strcmp(cleanup_policy, "by_pattern") == 0) {
-        intent_extra_t extras[] = {
-            {"--es", "action", "cleanup_files"},
-            {"--es", "operation_id", operation_id},
-            {"--es", "cleanup_policy", cleanup_policy},
-            {"--es", "file_pattern", file_pattern}
-        };
-        LOGI("Sending secure intent broadcast for file cleanup (by_pattern)");
-        result = send_intent_and_discard_response(operation_id, extras, 4);
-    } else {
-        intent_extra_t extras[] = {
-            {"--es", "action", "cleanup_files"},
-            {"--es", "operation_id", operation_id},
-            {"--es", "cleanup_policy", cleanup_policy}
-        };
-        LOGI("Sending secure intent broadcast for file cleanup");
-        result = send_intent_and_discard_response(operation_id, extras, 3);
-    }
-
-    if (result == 0) {
-        LOGI("File cleanup completed successfully via secure IPC");
-    } else {
-        LOGE("Failed to complete file cleanup via secure IPC");
-    }
-
-    return result;
+    /* Absent fields go as "" and the Java side treats them as not given. */
+    intent_extra_t extras[] = {
+        {"--es", "action", "cleanup_files"},
+        {"--es", "operation_id", operation_id},
+        {"--es", "cleanup_policy", cleanup_policy},
+        {"--es", "days_threshold", days_str},
+        {"--es", "file_pattern", file_pattern ? file_pattern : ""}
+    };
+    return send_and_pass_through("cleanup_files", operation_id, extras,
+                                 (int)(sizeof(extras) / sizeof(extras[0])),
+                                 json_response, response_size);
 }
 
 /**
@@ -1345,7 +1305,7 @@ int camera_device_cleanup_files_impl(
  *
  * SECURITY: Uses secure fork/exec IPC - no shell injection possible
  */
-int camera_device_delete_files_impl(const char* pattern) {
+int camera_device_delete_files_impl(const char* pattern, char* json_response, size_t response_size) {
     LOGI("camera_device_delete_files_impl called");
     LOGI("  pattern: %s", pattern ? pattern : "NULL");
 
@@ -1373,14 +1333,8 @@ int camera_device_delete_files_impl(const char* pattern) {
 
     LOGI("Sending secure intent broadcast to delete files");
 
-    int result = send_intent_and_discard_response(operation_id, extras, 3);
-    if (result == 0) {
-        LOGI("Files deleted successfully via secure IPC");
-    } else {
-        LOGE("Failed to delete files via secure IPC");
-    }
-
-    return result;
+    /* The Java response says what was deleted, or why nothing was. */
+    return send_and_pass_through("delete_files", operation_id, extras, 3, json_response, response_size);
 }
 
 /**

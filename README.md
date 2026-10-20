@@ -338,7 +338,7 @@ Response (10 tools with full inputSchema):
       {"name": "listFiles",      "description": "List recorded video files on the device.", "...": "..."},
       {"name": "deleteFiles",    "description": "Delete files matching a glob pattern.", "...": "..."},
       {"name": "sftpTransfer",   "description": "Transfer file via SFTP with Ed25519 SSH key auth.", "...": "..."},
-      {"name": "cleanupFiles",   "description": "Clean up transferred files.", "...": "..."},
+      {"name": "cleanupFiles",   "description": "Delete recordings by policy.", "...": "..."},
       {"name": "describeClip",   "description": "Describe a recording with the on-device model (nano flavor).", "...": "..."}
     ]
   }
