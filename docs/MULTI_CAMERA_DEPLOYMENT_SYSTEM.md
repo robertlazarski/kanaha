@@ -348,7 +348,15 @@ every take under that light.
 
 Measured on 2026-10-19 under indoor light: the Pixel needed `rr=0.825 bb=1.183`, the Moto
 `rr=0.960 bb=1.038`. With those, both rendered the card within 0.5% of neutral, at a
-different moment of the take from the one measured. For HLG footage the gains apply to
+different moment of the take from the one measured.
+
+**Measure again for each light.** Outdoors in daylight the same day, the two phones' auto
+white balance agreed on a near-neutral cream wall within about 1%, where indoors they had
+been 17% apart in red; the Pixel's warm rendering is an indoor and low-light behaviour.
+The indoor gains applied to the daylight footage pushed the Pixel well off neutral. And some
+differences are not white balance at all: the Pixel rendered the sky distinctly warmer and
+less saturated than the Moto in every take, which gray-card gains cannot fix; that is for a
+per-camera grade or LUT. For HLG footage the gains apply to
 non-linear values, so measure and correct within HLG and keep corrections modest.
 
 ### Checking that it worked
