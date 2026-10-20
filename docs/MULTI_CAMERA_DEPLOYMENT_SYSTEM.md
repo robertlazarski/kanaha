@@ -14,7 +14,7 @@ January 2026 tests used have been retired; their results are kept under
 Each phone runs its own Apache httpd (HTTP/2, mTLS, Axis2/C) on port 8443. There is
 no central server and no camera-to-camera traffic: the control station talks to
 each camera directly, and the cameras are aligned afterwards, in post, from a shared
-start time, an audio slate and a timestamp sidecar. Adding a camera adds an endpoint
+SMPTE timecode, recorded on each camera through an iRig. Adding a camera adds an endpoint
 and nothing else.
 
 The APK is **arm64-v8a only**, minimum Android 6.0 (API 23); 32-bit phones cannot
@@ -187,20 +187,49 @@ Responses are `{"success":true,...}` or `{"success":false,"error":"..."}`;
 back but have no effect: a recording runs until `stopRecording`. Parameters and
 examples for each operation are in the [README](../README.md#5-control-via-api).
 
-## Starting cameras together
+## Starting and aligning cameras
 
-Cameras are aligned in post, from three things recorded at the start of each take:
+Kanaha starts the cameras together; **SMPTE timecode aligns the clips in post.**
+
+### Timecode: how clips are aligned
+
+Each camera records SMPTE linear timecode (LTC) on its audio track, through an IK
+Multimedia **iRig Pro I/O** on its USB-C port, fed by a timecode generator such as a
+**Tentacle Sync** jammed to the same time as every other camera and the sound recorder.
+Every frame of every clip then carries the same clock, so clips line up to the frame
+however their recordings started. Hardware, cables and which phones can power the iRig
+are in [IRIG_PRO_SMPTE_TIMECODE_SETUP.md](IRIG_PRO_SMPTE_TIMECODE_SETUP.md).
+
+- **Timecode takes the phone's audio input.** With the iRig connected, Android records
+  from it instead of the built-in microphone, so the camera's audio track holds timecode,
+  not scene sound. Record sound on a separate recorder fed from the same timecode.
+- **Kanaha does not generate or read timecode itself**; it records what the iRig delivers.
+- **Reading it on Linux:** `ltcdump` (from [x42 ltc-tools](https://github.com/x42/ltc-tools),
+  built from source; not packaged for Ubuntu) decodes the audio. Extract the track first:
+
+  ```bash
+  ffmpeg -i take.mp4 -vn -ac 1 -ar 48000 -c:a pcm_s16le take.wav && ltcdump -F take.wav | head
+  ```
+
+  Each line gives a timecode and the audio sample where that frame starts, so the clip's
+  start timecode is the first decoded timecode minus its sample position / 48000. The
+  difference between two clips' start timecodes is the offset to trim. Checked on
+  2026-10-19 with timecode from `ltcgen` passed through an AAC-encoded MP4, as a phone
+  records it: the first frame decoded 8 samples (0.2 ms) from the start.
+
+### Starting together, and without timecode
 
 - **`start_at`**: every camera fires at the same wall-clock millisecond, so WiFi
   delivery delay does not skew the start. It must be 50 ms to 30 s in the future;
   outside that window the camera starts immediately.
-- **`playTone`**: the same tone on every camera at the same `start_at`. Onset
-  detection on each audio track aligns cameras to about 1–5 ms.
-- **The recording-start sidecar**, `kanaha_recording_start.json`, with the start time
-  and GPS fix age. It records when the start fired, not the first frame: measured against
-  the `playTone` slate on 2026-10-19, the Pixel 10 Pro XL's first frame came 0.38 s after
-  `start_at` and the Moto G Play 2024's 1.12 s after, while their sidecars were 9 ms apart.
-  Align clips on the slate; the sidecar alone left these two 0.74 s (22 frames) apart.
+- **The recording-start sidecar**, `kanaha_recording_start.json`, records when the start
+  fired, not the first frame. Measured on 2026-10-19, the Pixel 10 Pro XL's first frame came
+  0.38 s after `start_at` and the Moto G Play 2024's 1.12 s after, while their sidecars were
+  9 ms apart: the sidecar alone left the two clips 0.74 s (22 frames) apart. Use it to find
+  the takes, not to align them.
+- **`playTone`**, a tone on every camera at the same moment, aligns clips to about 1–5 ms
+  from their audio when there is no timecode. It needs the built-in microphone, so it does
+  not apply to cameras recording timecode through the iRig.
 
 ```bash
 CAMS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
@@ -211,6 +240,11 @@ for ip in $CAMS; do
     "https://$ip:8443/services/CameraControlService/startRecording" &
 done
 wait
+```
+
+Without timecode, follow it with a slate:
+
+```bash
 SLATE_AT=$(( $(date +%s%N) / 1000000 + 2000 ))
 for ip in $CAMS; do
   $CURL -H "Content-Type: application/json" \
@@ -221,12 +255,8 @@ wait
 ```
 
 An `open_gate` start reopens the camera first (3–5 s), so give those takes at least
-5 s of lead time.
-
-[GPS.md](GPS.md) measures how good this alignment is and compares it with SMPTE LTC.
-Kanaha does not generate or read timecode itself; hardware LTC on an audio channel
-(an iRig and a Tentacle) is optional and documented in
-[IRIG_PRO_SMPTE_TIMECODE_SETUP.md](IRIG_PRO_SMPTE_TIMECODE_SETUP.md).
+5 s of lead time. [GPS.md](GPS.md) measures how good `start_at` and the slate are and
+compares them with SMPTE LTC.
 
 ## Matching cameras
 
