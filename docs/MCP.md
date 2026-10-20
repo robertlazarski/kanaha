@@ -54,7 +54,7 @@ language. No curl, no certificates, no URL construction.
 | `sftpTransfer` | Transfer to storage server | `storage_server_id`, `video_filename` |
 | `cleanupFiles` | Delete files by policy: `older_than_days`, `after_successful_transfer`, `all_videos`, `by_pattern` | `cleanup_policy` (required), `days_threshold`, `file_pattern` |
 | `describeClip` | Describe a finished recording from sampled frames with the on-device model (nano flavor; see `GOOGLE_NANO_INTEGRATION.md`); writes `<basename>.kanaha.json` | `video_filename` (required), `frame_count`, `positions`, `write_sidecar`, `max_dimension` |
-| `setExposure` | Pin ISO, shutter, white balance, focus and stabilization so cameras match, or return to auto | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone`, `fps` |
+| `setExposure` | Pin ISO, shutter, white balance, focus and stabilization so cameras match, or return to auto | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone`, `fps`, `codec`, `bitrate` |
 | `getExposure` | Modes in force, live values, support flags and ranges | — |
 
 All tools have full `inputSchema` with parameter types, descriptions, and

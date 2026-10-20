@@ -622,6 +622,8 @@ typedef struct {
     char focus[16];
     char tone[16];
     char fps[16];
+    char codec[16];
+    char bitrate[16];
     int stabilization;
 } exposure_request_t;
 
@@ -890,6 +892,20 @@ int camera_control_service_invoke_json_impl(
             extract_json_string(json_request, "fps", req.fps, sizeof(req.fps));
             if (strcmp(req.fps, "default") != 0) {
                 create_error_response(json_response, response_size, "fps must be a number or \\\"default\\\"");
+                return -1;
+            }
+        }
+        extract_json_string(json_request, "codec", req.codec, sizeof(req.codec));
+        if (req.codec[0] && strcmp(req.codec, "default") != 0 && strcmp(req.codec, "h264") != 0
+                && strcmp(req.codec, "hevc") != 0) {
+            create_error_response(json_response, response_size, "codec must be \\\"default\\\", \\\"h264\\\" or \\\"hevc\\\"");
+            return -1;
+        }
+        /* bitrate, like fps, is a number or the string "default" */
+        if (extract_json_number_token(json_request, "bitrate", req.bitrate, sizeof(req.bitrate)) < 0) {
+            extract_json_string(json_request, "bitrate", req.bitrate, sizeof(req.bitrate));
+            if (strcmp(req.bitrate, "default") != 0) {
+                create_error_response(json_response, response_size, "bitrate must be a number or \\\"default\\\"");
                 return -1;
             }
         }
@@ -1516,6 +1532,8 @@ int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_re
         {"--es", "focus_distance", req->focus_distance},
         {"--es", "tone", req->tone},
         {"--es", "fps", req->fps},
+        {"--es", "codec", req->codec},
+        {"--es", "bitrate", req->bitrate},
         {"--es", "stabilization", req->stabilization < 0 ? "" : (req->stabilization ? "1" : "0")}
     };
     return send_and_pass_through("set_exposure", operation_id, extras,

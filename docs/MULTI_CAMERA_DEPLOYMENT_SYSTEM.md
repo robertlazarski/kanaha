@@ -176,7 +176,7 @@ Responses are `{"success":true,...}` or `{"success":false,"error":"..."}`;
 | `getStatus` | Readiness, battery, storage, GPS time, `supports_hlg10` |
 | `startRecording` | `clip_name`, `quality`, `start_at`, `open_gate`, `hlg10` |
 | `stopRecording` | |
-| `setExposure` / `getExposure` | Pin and read exposure, white balance, focus, stabilization, tone curve; see [Matching cameras](#matching-cameras) |
+| `setExposure` / `getExposure` | Pin and read exposure, white balance, focus, stabilization, tone curve, frame rate, codec and bitrate; see [Matching cameras](#matching-cameras) |
 | `playTone` | Audio sync slate, optionally at `start_at` |
 | `listFiles`, `deleteFiles`, `cleanupFiles` | Files on the device |
 | `sftpTransfer` | Send a recording and its sidecars to a storage server |

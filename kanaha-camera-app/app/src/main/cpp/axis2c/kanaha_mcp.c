@@ -212,7 +212,12 @@ static const char SCHEMA_SET_EXPOSURE[] =
                 "Log curves (fine to extra_strong) are flat for grading. Not combinable with hlg10\"},"
         "\"fps\":{\"type\":[\"integer\",\"string\"],"
             "\"description\":\"Pin the recording frame rate to one of getExposure ranges.fixed_fps, "
-                "or \\\"default\\\" to let the camera choose\"}"
+                "or \\\"default\\\" to let the camera choose\"},"
+        "\"codec\":{\"type\":\"string\",\"enum\":[\"default\",\"h264\",\"hevc\"],"
+            "\"description\":\"Video codec for later recordings (MP4). hlg10 overrides it with HEVC for that take\"},"
+        "\"bitrate\":{\"type\":[\"integer\",\"string\"],"
+            "\"description\":\"Video bitrate in bits per second, within getExposure ranges.bitrate_h264 or "
+                "bitrate_hevc, or \\\"default\\\"\"}"
     "},"
     "\"required\":[]"
     "}";

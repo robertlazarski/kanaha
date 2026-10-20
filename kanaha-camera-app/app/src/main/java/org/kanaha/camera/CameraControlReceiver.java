@@ -628,6 +628,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String stabilization = emptyToNull(intent.getStringExtra("stabilization"));
         String tone = emptyToNull(intent.getStringExtra("tone"));
         String fps = emptyToNull(intent.getStringExtra("fps"));
+        String codec = emptyToNull(intent.getStringExtra("codec"));
+        String bitrate = emptyToNull(intent.getStringExtra("bitrate"));
         final Long isoReq, exposureReq, kelvinReq;
         final Float focusReq;
         try {
@@ -649,7 +651,14 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (fps != null && !fps.equals("default") && !fps.matches("[1-9][0-9]{0,2}")) {
             return createErrorResponse(operationId, "fps must be a whole number of frames per second, or \"default\"");
         }
-        if (!auto && !lock && !anyValue && stabilization == null && tone == null && fps == null) {
+        if (codec != null && !VIDEO_CODECS.containsKey(codec)) {
+            return createErrorResponse(operationId, "codec must be one of " + VIDEO_CODECS.keySet());
+        }
+        if (bitrate != null && !bitrate.equals("default") && !bitrate.matches("[1-9][0-9]{0,9}")) {
+            return createErrorResponse(operationId, "bitrate must be a whole number of bits per second, or \"default\"");
+        }
+        if (!auto && !lock && !anyValue && stabilization == null && tone == null && fps == null
+                && codec == null && bitrate == null) {
             return createErrorResponse(operationId, "Nothing to set: give auto, lock, or at least one value");
         }
         if (tone != null && !TONE_PROFILES.contains(tone)) {
@@ -690,7 +699,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             mainActivity.runOnUiThread(() -> {
                 try {
                     error.set(applyExposure(mainActivity, auto, lock, isoReq, exposureReq, kelvinReq, wb,
-                            focusReq, focus, stabilization, tone, fps));
+                            focusReq, focus, stabilization, tone, fps, codec, bitrate));
                 } catch (Exception e) {
                     Log.e(TAG, "applyExposure failed", e);
                     error.set("Failed to apply exposure: " + e.getMessage());
@@ -739,7 +748,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
     private static String applyExposure(MainActivity mainActivity, boolean auto, boolean lock,
                                         Long isoReq, Long exposureReq, Long kelvinReq, String wb,
                                         Float focusReq, String focus, String stabilization, String tone,
-                                        String fps) {
+                                        String fps, String codec, String bitrate) {
         Preview preview = mainActivity.getPreview();
         CameraController controller = preview.getCameraController();
         if (controller == null) {
@@ -876,6 +885,31 @@ public class CameraControlReceiver extends BroadcastReceiver {
             editor.putString(PreferenceKeys.VideoLogPreferenceKey, tone);
         }
 
+        // Codec and bitrate are OpenCamera's own video settings, read when a recording starts.
+        // hlg10 overrides the codec for that take: 10-bit needs HEVC.
+        String codecInForce = codec != null ? codec : codecName(prefs.getString(PreferenceKeys.VideoFormatPreferenceKey,
+                "preference_video_output_format_default"));
+        if (codec != null) {
+            if (codec.equals("hevc") && encoderBitrateRange(MediaFormat.MIMETYPE_VIDEO_HEVC) == null) {
+                return "This phone has no HEVC video encoder";
+            }
+            editor.putString(PreferenceKeys.VideoFormatPreferenceKey, VIDEO_CODECS.get(codec));
+        }
+        if (bitrate != null) {
+            if (!bitrate.equals("default")) {
+                // Checked against the encoder that will be used; outside its range the
+                // recording would fail to start or be silently capped.
+                String mime = codecInForce.equals("hevc") ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
+                android.util.Range<Integer> range = encoderBitrateRange(mime);
+                long bps = Long.parseLong(bitrate);
+                if (range != null && (bps < range.getLower() || bps > range.getUpper())) {
+                    return "bitrate " + bitrate + " is outside this phone's " + (mime.equals(MediaFormat.MIMETYPE_VIDEO_HEVC) ? "HEVC" : "H.264")
+                            + " encoder range " + range.getLower() + "-" + range.getUpper() + " bits per second";
+                }
+            }
+            editor.putString(PreferenceKeys.VideoBitratePreferenceKey, bitrate);
+        }
+
         if (stabilization != null) {
             boolean on = "1".equals(stabilization);
             if (on && !preview.supportsVideoStabilization()) {
@@ -888,7 +922,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         mainActivity.updateForSettings(true, "");
         Log.i(TAG, "applyExposure: auto=" + auto + " lock=" + lock + " iso=" + iso + " exposure_ns=" + exposure
                 + " wb_kelvin=" + kelvin + " wb_lock=" + wbLock + " focus_distance=" + distance + " stabilization=" + stabilization
-                + " tone=" + tone + " fps=" + fps);
+                + " tone=" + tone + " fps=" + fps + " codec=" + codec + " bitrate=" + bitrate);
         return null;
     }
 
@@ -959,6 +993,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
         state.put("tone", prefs.getString(PreferenceKeys.VideoLogPreferenceKey, "off"));
         state.put("fps", prefs.getString(PreferenceKeys.getVideoFPSPreferenceKey(preview.getCameraId(),
                 mainActivity.getApplicationInterface().getCameraIdSPhysicalPref()), "default"));
+        state.put("codec", codecName(prefs.getString(PreferenceKeys.VideoFormatPreferenceKey,
+                "preference_video_output_format_default")));
+        state.put("bitrate", prefs.getString(PreferenceKeys.VideoBitratePreferenceKey, "default"));
 
         // Live values from the latest capture result: what the sensor is doing now, in auto or manual.
         if (controller.captureResultHasIso()) {
@@ -1040,9 +1077,50 @@ public class CameraControlReceiver extends BroadcastReceiver {
         supports.put("stabilization", preview.supportsVideoStabilization());
         supports.put("tone_curve", preview.supportsTonemapCurve());
         ranges.put("fixed_fps", new org.json.JSONArray(fixedFrameRates(controller)));
+        supports.put("hevc", encoderBitrateRange(MediaFormat.MIMETYPE_VIDEO_HEVC) != null);
+        android.util.Range<Integer> avc = encoderBitrateRange(MediaFormat.MIMETYPE_VIDEO_AVC);
+        if (avc != null) ranges.put("bitrate_h264", avc.getLower() + "-" + avc.getUpper());
+        android.util.Range<Integer> hevc = encoderBitrateRange(MediaFormat.MIMETYPE_VIDEO_HEVC);
+        if (hevc != null) ranges.put("bitrate_hevc", hevc.getLower() + "-" + hevc.getUpper());
         state.put("supports", supports);
         state.put("ranges", ranges);
         return state;
+    }
+
+    /** Kanaha's codec names and OpenCamera's output format values; MP4 only. */
+    static final java.util.Map<String, String> VIDEO_CODECS = new java.util.LinkedHashMap<>();
+    static {
+        VIDEO_CODECS.put("default", "preference_video_output_format_default");
+        VIDEO_CODECS.put("h264", "preference_video_output_format_mpeg4_h264");
+        VIDEO_CODECS.put("hevc", "preference_video_output_format_mpeg4_hevc");
+    }
+
+    /** The Kanaha codec name for an OpenCamera output format value; "other" for 3GP or WebM set in the app. */
+    private static String codecName(String outputFormat) {
+        for (java.util.Map.Entry<String, String> e : VIDEO_CODECS.entrySet()) {
+            if (e.getValue().equals(outputFormat)) return e.getKey();
+        }
+        return "other";
+    }
+
+    /** The widest bitrate range any encoder for mime declares, or null if the phone has none. */
+    private static android.util.Range<Integer> encoderBitrateRange(String mime) {
+        android.util.Range<Integer> widest = null;
+        try {
+            for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+                if (!info.isEncoder()) continue;
+                for (String type : info.getSupportedTypes()) {
+                    if (!type.equalsIgnoreCase(mime)) continue;
+                    MediaCodecInfo.VideoCapabilities caps = info.getCapabilitiesForType(type).getVideoCapabilities();
+                    if (caps == null) continue;
+                    android.util.Range<Integer> r = caps.getBitrateRange();
+                    widest = widest == null ? r : widest.extend(r);
+                }
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "encoderBitrateRange: codec list unavailable", e);
+        }
+        return widest;
     }
 
     /** Frame rates the camera can hold exactly: its fixed AE target ranges, such as [30, 30]. */
