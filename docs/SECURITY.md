@@ -214,7 +214,10 @@ the one-year cert expire. Add CRL or OCSP before any public/production use.
 
 ## Security Audit Logging
 
-Location: `app/src/main/assets/apache/httpd.conf`
+Location: `app/src/main/assets/apache/ssl.conf`, inside the `*:8443` VirtualHost.
+It must stay there: a VirtualHost with its own `CustomLog` does not inherit the
+main server's, so the line in `httpd.conf` where it used to be never logged a
+request (`audit.log` stayed empty until October 2026).
 
 ### Audit Log Format
 
@@ -1085,7 +1088,7 @@ These security measures are implemented via **configuration only** (no code chan
 | Request size limit | `LimitRequestBody 65536` | httpd.conf |
 | Header size limit | `LimitRequestFieldSize 4096` | httpd.conf |
 | Connection timeout | `Timeout 30` | httpd.conf |
-| Security audit log | `CustomLog "logs/audit.log" mtls_audit` | httpd.conf |
+| Security audit log | `CustomLog "logs/audit.log" mtls_audit` | ssl.conf (8443 VirtualHost) |
 
 ### Rate Limiting and DoS Protection
 

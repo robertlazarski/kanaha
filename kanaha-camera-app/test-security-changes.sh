@@ -22,8 +22,10 @@ MOTO_APK=$APK_DIR/foss/debug/app-foss-debug.apk    # Moto: foss flavor
 
 PIXEL_IP="${PIXEL_IP:-192.168.8.159}"   # override when DHCP moves a phone
 MOTO_IP="${MOTO_IP:-192.168.8.174}"
-PIXEL_ADB="${PIXEL_IP}:5555"
-MOTO_ADB="${MOTO_IP}:5555"
+# adb serials: ip:5555 by default; set to a USB or wireless-debugging serial
+# from `adb devices` when the phone is attached that way.
+PIXEL_ADB="${PIXEL_ADB:-${PIXEL_IP}:5555}"
+MOTO_ADB="${MOTO_ADB:-${MOTO_IP}:5555}"
 
 # Client certificate and CA, under either set of names, as in
 # tools/kanaha-discover.sh; and the name the phones' certificates carry.
@@ -237,9 +239,15 @@ echo ""
 PIXEL_CONNECTED=false
 MOTO_CONNECTED=false
 
+# adb_reach SERIAL: already attached (USB, wireless debugging), or adb connect works.
+adb_reach() {
+    $ADB devices | awk '$2 == "device" {print $1}' | grep -qxF "$1" && return 0
+    timeout 5 $ADB connect "$1" 2>&1 | grep -q "connected to"
+}
+
 if $TEST_PIXEL; then
     echo -n "Connecting to Pixel 10 Pro XL ($PIXEL_IP)... "
-    if timeout 5 $ADB connect "$PIXEL_ADB" 2>&1 | grep -q "connected"; then
+    if adb_reach "$PIXEL_ADB"; then
         echo -e "${GREEN}Connected${NC}"
         PIXEL_CONNECTED=true
     else
@@ -249,7 +257,7 @@ fi
 
 if $TEST_MOTO; then
     echo -n "Connecting to Moto G Play 2024 ($MOTO_IP)... "
-    if timeout 5 $ADB connect "$MOTO_ADB" 2>&1 | grep -q "connected"; then
+    if adb_reach "$MOTO_ADB"; then
         echo -e "${GREEN}Connected${NC}"
         MOTO_CONNECTED=true
     else
