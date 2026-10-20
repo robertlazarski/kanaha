@@ -34,7 +34,7 @@ SMPTE timecode recording on phones older than ~2021 is **unlikely to work** due 
 | Pixel 9 Pro | 2024 | Yes | **Yes** | Full USB-C PD support |
 | Pixel 6/7/8 | 2021+ | Yes | **Yes** | Full USB-C PD support |
 | Phones from ~2021+ | 2021+ | Yes | **Likely** | Most provide sufficient USB power |
-| Moto X4 | 2017 | Yes | No | **Not viable** — insufficient USB power, hubs don't enumerate |
+| Moto X4 (retired) | 2017 | Yes | No | **Not viable** — insufficient USB power, hubs don't enumerate |
 | Older USB-C phones | 2016-2020 | Yes | Unlikely | Test with simple OTG adapter first; see "Older Phones" section |
 
 ## Connection Diagrams

@@ -2,13 +2,13 @@
 
 Kanaha transforms Android phones into network-controllable cameras with a secure HTTP/2 API. Control multiple cameras simultaneously from any device using standard HTTPS requests with mutual TLS authentication.
 
-**Built in C for Performance:** The core server (Apache httpd + Axis2/C) is written entirely in C, delivering native execution speed with minimal memory footprint. This enables Kanaha to run efficiently on devices spanning nearly a decade of Android hardware—from a 2017 Moto X4 to a 2026 Pixel 10 Pro XL—with identical functionality.
+**Built in C for Performance:** The core server (Apache httpd + Axis2/C) is written entirely in C, delivering native execution speed with minimal memory footprint. This enables Kanaha to run efficiently on devices spanning nearly a decade of Android hardware—from a 2017 Moto X4 (since retired) to a 2025 Pixel 10 Pro XL—with identical functionality.
 
 ## Features
 
 - **Multi-Camera Control** - Start/stop recording on multiple phones simultaneously
 - **HTTP/2 + mTLS Security** - Enterprise-grade encryption with certificate authentication
-- **Wide Device Support** - Same APK works on Android 6.0+ (API 23) devices, tested from a 2017 Moto X4 to a 2026 Pixel 10 Pro XL, and on a 2024 Moto G Play [<sup>1</sup>](#notes)
+- **Wide Device Support** - Same APK works on Android 6.0+ (API 23) devices, tested on a 2025 Pixel 10 Pro XL and a 2024 Moto G Play, and earlier on a 2017 Moto X4 (since retired) [<sup>1</sup>](#notes)
 - **SFTP File Transfer** - Secure file retrieval with SSH key authentication
 - **mDNS Discovery** - Automatic camera discovery on local network
 - **SMPTE Timecode Alignment** - each camera records LTC timecode on its audio track through an iRig Pro I/O fed by a Tentacle Sync, and clips are aligned on it in post (`ltcdump` decodes it on Linux); see [SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) and [Multi-Camera Deployment](docs/MULTI_CAMERA_DEPLOYMENT_SYSTEM.md#starting-and-aligning-cameras)
@@ -358,7 +358,7 @@ cd kanaha-camera-app
 # Single camera: record 10 seconds, transfer to /tmp, delete from camera
 ./test-single-camera-workflow.sh workflow --duration 10
 
-# Dual camera: simultaneous recording on Pixel 9 Pro and Moto X4
+# Dual camera: simultaneous recording on two phones (Pixel and Moto by default; set PIXEL_IP and MOTO_IP in the script)
 ./test-dual-camera-workflow.sh --duration 10
 
 # Single camera commands

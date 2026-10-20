@@ -178,7 +178,7 @@ Two consequences of this design are worth knowing:
 `am` is not an Android API. It is a shell script around `cmd activity`, which
 asks the activity manager to run a shell command for the caller, and Android
 leaves it to each device's build whether an app (rather than adb) may do that.
-The Moto X4 (Android 9) and the Pixels (Android 14 and 17) allow it. The Moto G
+The Moto X4 (Android 9, since retired) and the Pixels (Android 14 and 17) allowed it. The Moto G
 Play 2024 (Motorola's Android 14) refuses every activity-manager shell command
 from an app, `cmd activity help` included, with exit code 255 and no output.
 On that phone step 3 above can never succeed, so without a second path no

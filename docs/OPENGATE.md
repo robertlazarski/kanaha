@@ -108,7 +108,6 @@ manual controls at all.
   range and BT.709. Convert before cutting the two together; see
   [Matching cameras](MULTI_CAMERA_DEPLOYMENT_SYSTEM.md#matching-cameras).
 
-The Moto X4 has not been measured.
 
 ### Summary for the current rig
 

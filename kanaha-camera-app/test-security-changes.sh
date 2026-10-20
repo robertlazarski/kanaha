@@ -18,8 +18,8 @@ ADB=$HOME/Android/Sdk/platform-tools/adb
 SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
 APK=$HOME/repos/kanaha/kanaha-camera-app/app/build/outputs/apk/debug/app-debug.apk
 
-PIXEL_IP="192.168.8.168"
-MOTO_IP="192.168.8.126"
+PIXEL_IP="192.168.8.159"
+MOTO_IP="192.168.8.174"
 PIXEL_ADB="${PIXEL_IP}:5555"
 MOTO_ADB="${MOTO_IP}:5555"
 
@@ -241,7 +241,7 @@ PIXEL_CONNECTED=false
 MOTO_CONNECTED=false
 
 if $TEST_PIXEL; then
-    echo -n "Connecting to Pixel 9 Pro ($PIXEL_IP)... "
+    echo -n "Connecting to Pixel 10 Pro XL ($PIXEL_IP)... "
     if timeout 5 $ADB connect "$PIXEL_ADB" 2>&1 | grep -q "connected"; then
         echo -e "${GREEN}Connected${NC}"
         PIXEL_CONNECTED=true
@@ -251,7 +251,7 @@ if $TEST_PIXEL; then
 fi
 
 if $TEST_MOTO; then
-    echo -n "Connecting to Moto X4 ($MOTO_IP)... "
+    echo -n "Connecting to Moto G Play 2024 ($MOTO_IP)... "
     if timeout 5 $ADB connect "$MOTO_ADB" 2>&1 | grep -q "connected"; then
         echo -e "${GREEN}Connected${NC}"
         MOTO_CONNECTED=true
@@ -272,7 +272,7 @@ if $INSTALL_APK; then
     fi
 
     if $PIXEL_CONNECTED; then
-        echo -n "Installing on Pixel 9 Pro... "
+        echo -n "Installing on Pixel 10 Pro XL... "
         if $ADB -s "$PIXEL_ADB" install -r "$APK" 2>&1 | grep -q "Success"; then
             echo -e "${GREEN}OK${NC}"
         else
@@ -281,7 +281,7 @@ if $INSTALL_APK; then
     fi
 
     if $MOTO_CONNECTED; then
-        echo -n "Installing on Moto X4... "
+        echo -n "Installing on Moto G Play 2024... "
         if $ADB -s "$MOTO_ADB" install -r "$APK" 2>&1 | grep -q "Success"; then
             echo -e "${GREEN}OK${NC}"
         else
@@ -310,17 +310,17 @@ echo "Step 3: Running Security Tests..."
 
 if $TEST_PIXEL; then
     if $PIXEL_CONNECTED; then
-        test_camera "Pixel 9 Pro" "$PIXEL_IP" "$PIXEL_ADB"
+        test_camera "Pixel 10 Pro XL" "$PIXEL_IP" "$PIXEL_ADB"
     else
-        test_camera "Pixel 9 Pro" "$PIXEL_IP" ""
+        test_camera "Pixel 10 Pro XL" "$PIXEL_IP" ""
     fi
 fi
 
 if $TEST_MOTO; then
     if $MOTO_CONNECTED; then
-        test_camera "Moto X4" "$MOTO_IP" "$MOTO_ADB"
+        test_camera "Moto G Play 2024" "$MOTO_IP" "$MOTO_ADB"
     else
-        test_camera "Moto X4" "$MOTO_IP" ""
+        test_camera "Moto G Play 2024" "$MOTO_IP" ""
     fi
 fi
 

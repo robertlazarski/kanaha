@@ -75,7 +75,7 @@ requests with mutual TLS (mTLS) certificate authentication.
 Features:
 - Multi-camera control via JSON-RPC API
 - HTTP/2 + mTLS security (certificate authentication required)
-- Wide device support: Android 6.0+ (tested Moto X4 2017 to Pixel 10 Pro XL 2026, and Moto G Play 2024)
+- Wide device support: Android 6.0+ (tested on the Pixel 10 Pro XL and Moto G Play 2024, and earlier on a 2017 Moto X4, since retired)
 - SFTP file transfer with SSH key authentication
 - mDNS service discovery
 - Built in C (Apache httpd + Axis2/C) for native performance

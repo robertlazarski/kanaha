@@ -1,6 +1,6 @@
 # Android APK Building Guide
 
-This document provides comprehensive step-by-step instructions for building the Kanaha Camera App APK from source and installing it on any ARM64 Android device running API 23+ (Android 6.0 Marshmallow or later; the `nano` flavour needs API 26). The same APK works across a wide range of devices—tested on hardware from a 2017 Moto X4 to a 2026 Pixel 10 Pro XL with no device-specific modifications.
+This document provides comprehensive step-by-step instructions for building the Kanaha Camera App APK from source and installing it on any ARM64 Android device running API 23+ (Android 6.0 Marshmallow or later; the `nano` flavour needs API 26). The same APK works across a wide range of devices—tested on hardware from a 2017 Moto X4 (since retired) to a 2025 Pixel 10 Pro XL with no device-specific modifications.
 
 ---
 
@@ -146,7 +146,7 @@ sudo tee /etc/udev/rules.d/51-android.rules > /dev/null <<EOF
 # Google Pixel devices
 SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", MODE="0666", GROUP="plugdev"
 
-# Motorola devices (including Moto X4)
+# Motorola devices
 SUBSYSTEM=="usb", ATTR{idVendor}=="22b8", MODE="0666", GROUP="plugdev"
 
 # Samsung devices
@@ -684,27 +684,65 @@ echo 'export PATH=$HOME/Android/Sdk/cmdline-tools/latest/bin:$PATH' >> ~/.bashrc
 
 ---
 
-## Legacy Device Considerations (Moto X4 and Similar)
+## Device Considerations
 
-The installation process is identical for older devices. The same APK runs without modification on devices from 2017 (Moto X4) through current flagships. The following notes apply to legacy hardware:
+The installation process is identical on every device. The same APK has run without modification on phones from 2017 (the Moto X4, since retired) through current flagships. The current rig is a Pixel 10 Pro XL and a Moto G Play 2024.
 
 ### Tested Devices
 
 | Device | Year | Android | ADB Tests | WiFi Tests | SFTP Transfer | Last verified | Notes |
 |--------|------|---------|-----------|------------|---------------|---------------|-------|
-| Google Pixel 10 Pro XL | 2025 | 17 (API 37) | Pass | Pass | Pass | 2026-10-16 | Primary development device; `nano` flavour, `describeClip` with Gemini Nano also passes |
-| Motorola Moto X4 | 2017 | 9 (API 28) | Pass | Pass | Pass | 2026-09-05 | Oldest supported; runs Camera1 by default |
-| Motorola Moto G Play 2024 | 2024 | 14 (API 34) | Pass | Not tested | Not tested | 2026-10-11 | Refuses `am` from apps (exit 255); camera control runs through the request-file fallback (`CameraIpcPoller`). Its camera HAL can take over 500 ms to reopen when OpenCamera switches from photo to video mode; `startRecording` now waits for the reopen, so the first recording after launch no longer fails |
+| Google Pixel 10 Pro XL | 2025 | 17 (API 37) | Pass | Pass | Pass (2026-10-16) | 2026-10-19 | A-camera; `nano` flavour, `describeClip` with Gemini Nano passes. Records 4K H.264 by default, 10-bit HLG with `hlg10`, open gate at 2560×1920; `setExposure`/`getExposure`, white balance lock and the RAW probe all verified. Writes limited-range BT.709. Fixed frame rates 15/24/30/60 |
+| Motorola Moto G Play 2024 | 2024 | 14 (API 34) | Pass | Pass (API calls) | Not tested | 2026-10-19 | B-camera. Switch Settings > Camera API to Camera2 for manual controls. A 1080p camera: its encoder takes 1920×1088 at most, so `quality: "4K"` records 1920×1080; open gate 1600×1200; no 10-bit. Writes full-range BT.601, which needs converting before cutting with the Pixel. Refuses `am` from apps (exit 255), so camera control runs through the request-file fallback (`CameraIpcPoller`); its camera HAL can take over 500 ms to reopen when switching to video, which `startRecording` waits for. First frame about 1.1 s after `start_at` |
+| Motorola Moto X4 | 2017 | 9 (API 28) | Pass | Pass | Pass | 2026-09-05 | Retired: the phone died during a battery replacement in October 2026. Results kept as the oldest device the APK ran on |
 | Google Pixel 9 Pro | 2024 | 14 | Pass | Pass | Pass | 2026-01 (device traded in) | Superseded by the 10 Pro XL |
 
-**Tests Verified on Both Devices (via ADB and WiFi):**
+**Operations verified on the tested devices (via ADB and WiFi):**
 - `getStatus` - Camera status and device info
 - `startRecording` / `stopRecording` - Video recording control
 - `listFiles` - List video files on device
 - `deleteFiles` - Delete video files
 - `sftpTransfer` - SFTP file transfer with PKI authentication
 
-Testing demonstrated that Kanaha works across **7 years of Android development** (2017-2024) with the exact same APK and no code modifications.
+Testing showed Kanaha working across **8 years of Android devices** (the 2017 Moto X4 to the 2025 Pixel 10 Pro XL) with the same APK and no code modifications.
+
+### Recording size and the video encoder
+
+A camera offers far more video sizes than its hardware encoder can take, and a size the
+encoder refuses makes the recording fail to start at all. Under Camera2 the Moto G Play 2024
+offers 4080×1836 as its nearest match to 4K; its encoder (`c2.qti.avc.encoder`) is declared
+for 1920×1088 and refused the width, so before 2026-10-19 every default recording on it failed.
+Kanaha now chooses, for `quality` and for open gate, only sizes it expects the encoder to take,
+and `startRecording` reports the size it records as `resolution`.
+
+**The rule, and how far to trust it.** Android's own check,
+`MediaCodecInfo.VideoCapabilities.isSizeSupported()`, applies the declared width and height
+limits literally and refused 1600×1200 on the Moto, which records it fine. Kanaha instead
+accepts a size when its long side is within the encoder's largest dimension and its 16×16
+blocks are within the largest frame's (`encoderSupports()` in `CameraControlReceiver.java`).
+That rule is inferred from two phones, not documented anywhere:
+
+| Phone | Encoder limit (declared) | Accepted | Refused |
+|---|---|---|---|
+| Pixel 10 Pro XL | 3840×2160 (H.264), 3840×2176 (HEVC) | 3840×2160, 2560×1920 | 4032×3024 |
+| Moto G Play 2024 | 1920×1088 | 1920×1080, 1600×1200 (taller than declared), 1440×1080, 1280×720 | 4080×1836, 3264×1468 |
+
+**Recheck it on the next new phone** before relying on it. Read the encoder's declared limit
+(the vendor `c2.*` entries; not `c2.android.*`, Android's software encoder, and not the old
+`OMX.*` ones, which on the Moto listed 4096×2176 for an encoder not in use):
+
+```bash
+adb shell 'cat /vendor/etc/media_codecs*.xml' | awk '/MediaCodec name="c2\.[a-z]+\.(avc|hevc)\.encoder"/ {n=$2} /name="size"/ && n {if (n !~ /c2\.android/) print n, $3, $4; n=""}'
+```
+
+On the Pixel 10 Pro XL this prints `c2.google.avc.encoder ... max="3840x2160"` and
+`c2.google.hevc.encoder ... max="3840x2176"`; on the Moto G Play 2024,
+`c2.qti.avc.encoder ... max="1920x1088"`.
+
+Then record with `quality` set to `"4K"`, `"1080p"` and `"720p"` and with `open_gate`, and
+compare each response's `resolution` with the file (`ffprobe -v error -select_streams v:0
+-show_entries stream=width,height -of csv=p=0 take.mp4`). A take that fails to start, or a
+`resolution` that does not match the file, means the rule is wrong for that phone.
 
 ### Hardware Capability Differences
 
@@ -724,7 +762,7 @@ The C-based server handles these differences gracefully—the same code runs eff
 Kanaha ships one configuration for every phone deliberately — the defaults are
 not tuned per device. Everything below is optional and applies only to sustained
 production use on older hardware. Verified on the Moto X4 (2017, API 28, 2.8 GB
-RAM) on 2026-09-05.
+RAM, since retired) on 2026-09-05.
 
 **Switch to the Camera2 API if you want manual controls.** Open Camera only
 auto-selects Camera2 for Google (API 31+), Nokia (API 28+), Samsung (API 31+) and
@@ -732,7 +770,8 @@ OnePlus (API 34+). Motorola is not on that list, so a fresh install runs the
 **legacy Camera1 API** — even on the X4, which reports Camera2 hardware
 `LEVEL_3`, the highest tier. Recording, the HTTP API and SFTP all work fine on
 Camera1; what you lose is manual exposure/focus/white balance and RAW.
-Settings > Camera API > Camera2 API (the app restarts).
+Settings > Camera API > Camera2 API (the app restarts). On the Moto G Play 2024 under Camera2,
+manual ISO, shutter, kelvin, focus and the white balance lock all work (2026-10-19).
 
 **Bring the app to the foreground before calling `startRecording`.** The status
 fields `camera_available` and `preview_active` are `false` while the activity is
@@ -811,7 +850,7 @@ adb shell sm list-disks
 - Use high-quality USB cables; older devices with worn ports may be finicky
 - ADB over WiFi (`adb tcpip 5555`) is often more reliable than USB for older devices
 
-**HTTP/2 Configuration:** The `H2MaxSessionStreams 1` setting in `http2-performance.conf` ensures stable operation on all devices regardless of age—this single-stream mode works reliably from Moto X4 (2017) through Pixel 9 Pro (2024).
+**HTTP/2 Configuration:** The `H2MaxSessionStreams 1` setting in `http2-performance.conf` ensures stable operation on all devices regardless of age—this single-stream mode has worked on every device tested, from the Moto X4 (2017) to the Pixel 10 Pro XL (2025).
 
 ### Installation Command Summary (All Devices)
 
@@ -855,9 +894,9 @@ Kanaha is a standard Android application that uses standard Android APIs. It wor
 
 | Manufacturer | Tested Device | Android Version | ADB | WiFi | SFTP |
 |--------------|---------------|-----------------|-----|------|------|
-| **Google** | Pixel 10 Pro XL (2025) | Android 17 | Pass | Pass | Not re-run |
-| **Motorola** | Moto X4 (2017) | Android 9 | Pass | Pass | Pass |
-| **Motorola** | Moto G Play 2024 | Android 14 | Pass | Not tested | Not tested |
+| **Google** | Pixel 10 Pro XL (2025) | Android 17 | Pass | Pass | Pass |
+| **Motorola** | Moto G Play 2024 | Android 14 | Pass | Pass (API calls) | Not tested |
+| **Motorola** | Moto X4 (2017, retired) | Android 9 | Pass | Pass | Pass |
 | **Samsung** | Not yet tested | - | - | - | - |
 | **OnePlus** | Not yet tested | - | - | - | - |
 | **Other** | Any Android 6.0+ | - | Expected to work | Expected to work | Expected to work |
@@ -866,7 +905,7 @@ Kanaha is a standard Android application that uses standard Android APIs. It wor
 
 Google and Motorola have traditionally been more developer-friendly with open documentation, stock Android experiences, and accessible Developer Options. The app uses standard APIs, with one exception that does depend on the device: the native server reaches the camera code by running `am broadcast`, and whether an app may run `am` is up to the device's build. The Moto X4 (Android 9) and the Pixels (Android 14 and 17) allow it; the Moto G Play 2024 (Android 14) refuses it with exit code 255. On such a device the native server falls back to writing the request to a file that `CameraIpcPoller` in the app sends as the same broadcast, adding up to half a second per call (the poll interval); that path needs the app running, and fails after 5 s when it is not. "Expected to work" below therefore means expected, not verified.
 
-The successful test on Moto X4 (2017) and Pixel 10 Pro XL (2025) demonstrates compatibility across:
+Tests on the Moto X4 (2017, since retired), the Moto G Play 2024 and the Pixel 10 Pro XL (2025) showed compatibility across:
 - **8 years** of Android development (2017-2025)
 - **Two different manufacturers** (Motorola, Google)
 - **Multiple Android versions** (Android 9 / API 28 to Android 17 / API 37)

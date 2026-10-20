@@ -229,7 +229,7 @@ CustomLog "logs/audit.log" mtls_audit
 | Field | Description | Example |
 |-------|-------------|---------|
 | `%t` | Timestamp | `[06/Jan/2026:12:30:45 +0000]` |
-| `%h` | Client IP | `192.168.8.168` |
+| `%h` | Client IP | `192.168.8.159` |
 | `%{SSL_CLIENT_S_DN}x` | Certificate Subject | `CN=pixel10proxl,O=Kanaha` |
 | `%{SSL_CLIENT_VERIFY}x` | Verification Status | `SUCCESS` or `FAILED:reason` |
 | `%r` | Request | `POST /services/CameraControlService/startRecording` |
@@ -248,8 +248,8 @@ With per-device certificates each cert's subject `CN` is the device, so audit lo
 
 | IP Address | Device | Location |
 |------------|--------|----------|
-| `192.168.8.168` | Pixel 9 Pro | Living room |
-| `192.168.8.126` | Moto X4 | Garage |
+| `192.168.8.159` | Pixel 10 Pro XL | Living room |
+| `192.168.8.174` | Moto G Play 2024 | Garage |
 | `192.168.8.100` | Control station | Office laptop |
 
 **Recommendation:** Assign static IPs or DHCP reservations to cameras for consistent identification.
@@ -286,10 +286,10 @@ $ADB shell "run-as org.kanaha.camera cat /data/user/0/org.kanaha.camera/files/ap
 ADB=$HOME/Android/Sdk/platform-tools/adb
 
 # Connect to camera over WiFi (camera must have ADB over network enabled)
-$ADB connect 192.168.8.168:5555
+$ADB connect 192.168.8.159:5555
 
 # Specify device when multiple are connected
-$ADB -s 192.168.8.168:5555 shell "run-as org.kanaha.camera cat files/apache/logs/audit.log"
+$ADB -s 192.168.8.159:5555 shell "run-as org.kanaha.camera cat files/apache/logs/audit.log"
 ```
 
 **Option 3: Via SSH/SFTP directly**
@@ -319,8 +319,8 @@ mkdir -p "$LOG_DIR"
 
 # Define your cameras
 declare -A CAMERAS=(
-    ["pixel9pro"]="192.168.8.168"
-    ["motox4"]="192.168.8.126"
+    ["pixel10proxl"]="192.168.8.159"
+    ["motogplay-2024"]="192.168.8.174"
 )
 
 for name in "${!CAMERAS[@]}"; do
@@ -413,8 +413,8 @@ cat audit.json | jq -s 'group_by(.cn) | map({device: .[0].cn, count: length})'
 
 ```bash
 # View all requests from a specific IP (device identification)
-grep "|192.168.8.126|" audit.log   # Moto X4
-grep "|192.168.8.168|" audit.log   # Pixel 9 Pro
+grep "|192.168.8.174|" audit.log   # Moto G Play 2024
+grep "|192.168.8.159|" audit.log   # Pixel 10 Pro XL
 
 # Find all failed certificate verifications
 grep -v "SUCCESS" audit.log
@@ -435,26 +435,26 @@ grep "deleteFiles" audit.log
 grep "sftpTransfer" audit.log
 
 # Activity timeline for a specific device (by IP)
-grep "|192.168.8.126|" audit.log | cut -d'|' -f1 | sort
+grep "|192.168.8.174|" audit.log | cut -d'|' -f1 | sort
 ```
 
 ### Example: Investigating Suspicious Activity
 
-**Scenario:** You notice your Moto X4 camera is missing some video files. You suspect someone may have accessed the camera remotely and deleted footage.
+**Scenario:** You notice your Moto G Play 2024 camera is missing some video files. You suspect someone may have accessed the camera remotely and deleted footage.
 
 **Step 1: Pull the audit log**
 
 ```bash
-$ADB -s 192.168.8.126:5555 shell "run-as org.kanaha.camera cat files/apache/logs/audit.log" > motox4-audit.log
+$ADB -s 192.168.8.174:5555 shell "run-as org.kanaha.camera cat files/apache/logs/audit.log" > motogplay-2024-audit.log
 ```
 
 **Step 2: Find all delete operations**
 
 ```bash
-$ grep "deleteFiles" motox4-audit.log
+$ grep "deleteFiles" motogplay-2024-audit.log
 
 [05/Jan/2026:14:22:01 +0000]|192.168.8.100|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
-[05/Jan/2026:23:47:33 +0000]|192.168.8.168|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
+[05/Jan/2026:23:47:33 +0000]|192.168.8.159|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
 [06/Jan/2026:03:15:22 +0000]|10.0.0.99|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/deleteFiles HTTP/2"|200|89
 ```
 
@@ -471,7 +471,7 @@ With shared certificates, all entries show the same CN. The key identifier is th
 
 ```bash
 # Find all activity from the unknown IP
-$ grep "|10.0.0.99|" motox4-audit.log
+$ grep "|10.0.0.99|" motogplay-2024-audit.log
 
 [06/Jan/2026:03:12:45 +0000]|10.0.0.99|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/listFiles HTTP/2"|200|1847
 [06/Jan/2026:03:14:01 +0000]|10.0.0.99|CN=pixel10proxl,O=Kanaha|SUCCESS|"POST /services/CameraControlService/sftpTransfer HTTP/2"|200|203
@@ -512,7 +512,7 @@ If you suspect a network-wide compromise, pull logs from all cameras and correla
 
 ```bash
 # Pull logs from all cameras
-for ip in 192.168.8.126 192.168.8.168; do
+for ip in 192.168.8.174 192.168.8.159; do
     $ADB -s $ip:5555 shell "run-as org.kanaha.camera cat files/apache/logs/audit.log" > camera-$ip.log
 done
 
@@ -958,8 +958,8 @@ The test script executes the following steps in order:
 
 ```bash
 ADB=$HOME/Android/Sdk/platform-tools/adb
-$ADB connect 192.168.8.168:5555  # Pixel 9 Pro
-$ADB connect 192.168.8.126:5555  # Moto X4
+$ADB connect 192.168.8.159:5555  # Pixel 10 Pro XL
+$ADB connect 192.168.8.174:5555  # Moto G Play 2024
 ```
 
 **Note:** If ADB connection fails, the script continues with direct HTTPS testing.
@@ -968,15 +968,15 @@ $ADB connect 192.168.8.126:5555  # Moto X4
 
 ```bash
 APK=~/repos/kanaha/kanaha-camera-app/app/build/outputs/apk/debug/app-debug.apk
-$ADB -s 192.168.8.168:5555 install -r "$APK"
-$ADB -s 192.168.8.126:5555 install -r "$APK"
+$ADB -s 192.168.8.159:5555 install -r "$APK"
+$ADB -s 192.168.8.174:5555 install -r "$APK"
 ```
 
 #### Step 3: Launch Kanaha App
 
 ```bash
-$ADB -s 192.168.8.168:5555 shell am start -n org.kanaha.camera/net.sourceforge.opencamera.MainActivity
-$ADB -s 192.168.8.126:5555 shell am start -n org.kanaha.camera/net.sourceforge.opencamera.MainActivity
+$ADB -s 192.168.8.159:5555 shell am start -n org.kanaha.camera/net.sourceforge.opencamera.MainActivity
+$ADB -s 192.168.8.174:5555 shell am start -n org.kanaha.camera/net.sourceforge.opencamera.MainActivity
 ```
 
 **IMPORTANT:** If ADB is not connected, you must **manually open the Kanaha app** on each phone before testing. The Apache server only starts when the app is running.
@@ -1024,7 +1024,7 @@ If the script cannot connect, test manually:
 ```bash
 # Setup
 SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-CAMERA="192.168.8.168:8443"  # or 192.168.8.126:8443 for Moto X4
+CAMERA="192.168.8.159:8443"  # or 192.168.8.174:8443 for Moto G Play 2024
 
 # Test getStatus
 curl -sk --http2 \
@@ -1057,13 +1057,13 @@ curl -sk --http2 \
 
 Step 1: Connecting to devices via ADB...
 
-Connecting to Pixel 9 Pro (192.168.8.168)... Connected
-Connecting to Moto X4 (192.168.8.126)... Connected
+Connecting to Pixel 10 Pro XL (192.168.8.159)... Connected
+Connecting to Moto G Play 2024 (192.168.8.174)... Connected
 
 Step 2: Installing APK...
 
-Installing on Pixel 9 Pro... OK
-Installing on Moto X4... OK
+Installing on Pixel 10 Pro XL... OK
+Installing on Moto G Play 2024... OK
 
 Launching Kanaha app on devices...
 Waiting 10 seconds for Apache to start...
@@ -1071,7 +1071,7 @@ Waiting 10 seconds for Apache to start...
 Step 3: Running Security Tests...
 
 ==============================================
-  Testing: Pixel 9 Pro (192.168.8.168)
+  Testing: Pixel 10 Pro XL (192.168.8.159)
 ==============================================
 Testing HTTPS connectivity... OK
 
@@ -1103,7 +1103,7 @@ PASS: Audit log exists and contains entries
 --- Test 9: Rate Limiting (LimitRequestBody) ---
 PASS: Large request correctly rejected (413)
 
---- Pixel 9 Pro Tests Complete ---
+--- Pixel 10 Pro XL Tests Complete ---
 ```
 
 ### Troubleshooting
@@ -1270,7 +1270,7 @@ DURING RECORDING (no coordination):
 
   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
   │  Camera A    │     │  Camera B    │     │  Camera C    │
-  │  (Pixel 9)   │     │  (Moto X4)   │     │  (Old phone) │
+  │ (Pixel 10)   │     │ (Moto G Play)│     │  (Old phone) │
   └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
          │                    │                    │
     Records video        Records video        Records video

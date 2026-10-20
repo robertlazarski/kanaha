@@ -15,8 +15,8 @@
 #   --duration <seconds>   Recording duration (default: 10)
 #   --clip-name <name>     Clip name prefix (default: dual_test)
 #   --skip-transfer        Skip SFTP transfer step
-#   --pixel-only           Only test Pixel 9 Pro
-#   --moto-only            Only test Moto X4
+#   --pixel-only           Only test Pixel 10 Pro XL
+#   --moto-only            Only test Moto G Play 2024
 #   --use-ip               Use IP addresses instead of mDNS names
 #   --discover             Run mDNS discovery and exit
 #
@@ -39,12 +39,12 @@ set -e
 SSL="${KANAHA_CERT_DIR:-$HOME/kanaha-ca}"   # client.crt, client.key, ca.crt
 
 # mDNS hostnames (discovered via avahi)
-PIXEL_MDNS="pixel9pro.local"
-MOTO_MDNS="motox4.local"
+PIXEL_MDNS="pixel10proxl.local"
+MOTO_MDNS="motogplay-2024.local"
 
 # Fallback IP addresses
-PIXEL_IP="192.168.8.168"
-MOTO_IP="192.168.8.126"
+PIXEL_IP="192.168.8.159"
+MOTO_IP="192.168.8.174"
 
 # Default settings
 RECORD_DURATION=10
@@ -101,8 +101,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --duration <seconds>   Recording duration (default: 10)"
             echo "  --clip-name <name>     Clip name prefix (default: dual_test)"
             echo "  --skip-transfer        Skip SFTP transfer step"
-            echo "  --pixel-only           Only test Pixel 9 Pro"
-            echo "  --moto-only            Only test Moto X4"
+            echo "  --pixel-only           Only test Pixel 10 Pro XL"
+            echo "  --moto-only            Only test Moto G Play 2024"
             echo "  --use-ip               Use IP addresses instead of mDNS names"
             echo "  --discover             Run mDNS discovery and exit"
             exit 0
@@ -146,17 +146,17 @@ discover_cameras() {
     if timeout 2 avahi-resolve -n "$PIXEL_MDNS" &>/dev/null; then
         local pixel_resolved
         pixel_resolved=$(avahi-resolve -n "$PIXEL_MDNS" 2>/dev/null | awk '{print $2}')
-        echo -e "  Pixel 9 Pro: ${GREEN}$PIXEL_MDNS -> $pixel_resolved${NC}"
+        echo -e "  Pixel 10 Pro XL: ${GREEN}$PIXEL_MDNS -> $pixel_resolved${NC}"
     else
-        echo -e "  Pixel 9 Pro: ${YELLOW}$PIXEL_MDNS not found${NC}"
+        echo -e "  Pixel 10 Pro XL: ${YELLOW}$PIXEL_MDNS not found${NC}"
     fi
 
     if timeout 2 avahi-resolve -n "$MOTO_MDNS" &>/dev/null; then
         local moto_resolved
         moto_resolved=$(avahi-resolve -n "$MOTO_MDNS" 2>/dev/null | awk '{print $2}')
-        echo -e "  Moto X4: ${GREEN}$MOTO_MDNS -> $moto_resolved${NC}"
+        echo -e "  Moto G Play 2024: ${GREEN}$MOTO_MDNS -> $moto_resolved${NC}"
     else
-        echo -e "  Moto X4: ${YELLOW}$MOTO_MDNS not found${NC}"
+        echo -e "  Moto G Play 2024: ${YELLOW}$MOTO_MDNS not found${NC}"
     fi
 
     echo ""
@@ -187,7 +187,7 @@ api_call() {
     local camera=$1
     local endpoint=$2
     local data=$3
-    local timeout=${4:-30}  # Default 30 seconds (Moto X4 is slow on first call)
+    local timeout=${4:-30}  # Default 30 seconds (Moto G Play 2024 is slow on first call)
 
     curl -sk --http2 --max-time "$timeout" \
         --cert "$SSL/client.crt" \
@@ -367,13 +367,13 @@ PIXEL_OK=false
 MOTO_OK=false
 
 if $TEST_PIXEL && [ -n "$PIXEL_ADDR" ]; then
-    if check_camera "Pixel 9 Pro" "$PIXEL_ADDR"; then
+    if check_camera "Pixel 10 Pro XL" "$PIXEL_ADDR"; then
         PIXEL_OK=true
     fi
 fi
 
 if $TEST_MOTO && [ -n "$MOTO_ADDR" ]; then
-    if check_camera "Moto X4" "$MOTO_ADDR"; then
+    if check_camera "Moto G Play 2024" "$MOTO_ADDR"; then
         MOTO_OK=true
     fi
 fi
@@ -391,11 +391,11 @@ echo -e "${BLUE}Step 2: Getting camera status...${NC}"
 echo ""
 
 if $PIXEL_OK; then
-    get_status "Pixel 9 Pro" "$PIXEL_ADDR"
+    get_status "Pixel 10 Pro XL" "$PIXEL_ADDR"
 fi
 
 if $MOTO_OK; then
-    get_status "Moto X4" "$MOTO_ADDR"
+    get_status "Moto G Play 2024" "$MOTO_ADDR"
 fi
 
 # Step 3: Start recording simultaneously
@@ -412,12 +412,12 @@ VID_PATTERN="VID_$(date +%Y%m%d_%H%M)*.mp4"
 
 # Start both cameras as close together as possible
 if $PIXEL_OK; then
-    start_recording "Pixel 9 Pro" "$PIXEL_ADDR" "${CLIP}_pixel" &
+    start_recording "Pixel 10 Pro XL" "$PIXEL_ADDR" "${CLIP}_pixel" &
     PIXEL_PID=$!
 fi
 
 if $MOTO_OK; then
-    start_recording "Moto X4" "$MOTO_ADDR" "${CLIP}_moto" &
+    start_recording "Moto G Play 2024" "$MOTO_ADDR" "${CLIP}_moto" &
     MOTO_PID=$!
 fi
 
@@ -444,12 +444,12 @@ echo ""
 
 # Stop both cameras as close together as possible
 if $PIXEL_OK; then
-    stop_recording "Pixel 9 Pro" "$PIXEL_ADDR" &
+    stop_recording "Pixel 10 Pro XL" "$PIXEL_ADDR" &
     PIXEL_PID=$!
 fi
 
 if $MOTO_OK; then
-    stop_recording "Moto X4" "$MOTO_ADDR" &
+    stop_recording "Moto G Play 2024" "$MOTO_ADDR" &
     MOTO_PID=$!
 fi
 
@@ -468,11 +468,11 @@ echo -e "${BLUE}Step 6: Listing video files...${NC}"
 echo ""
 
 if $PIXEL_OK; then
-    list_files "Pixel 9 Pro" "$PIXEL_ADDR"
+    list_files "Pixel 10 Pro XL" "$PIXEL_ADDR"
 fi
 
 if $MOTO_OK; then
-    list_files "Moto X4" "$MOTO_ADDR"
+    list_files "Moto G Play 2024" "$MOTO_ADDR"
 fi
 
 # Step 7: Transfer files to control host /tmp
@@ -484,14 +484,14 @@ if ! $SKIP_TRANSFER; then
     echo ""
 
     # Create separate directories for each camera (filenames only differ by timestamp)
-    PIXEL_DEST="/tmp/pixel9pro"
-    MOTO_DEST="/tmp/motox4"
+    PIXEL_DEST="/tmp/pixel10proxl"
+    MOTO_DEST="/tmp/motogplay-2024"
     TRANSFER_FAILED=false
 
     if $PIXEL_OK; then
-        echo -n "  Pixel 9 Pro: Transferring ${VID_PATTERN} to ${PIXEL_DEST}... "
+        echo -n "  Pixel 10 Pro XL: Transferring ${VID_PATTERN} to ${PIXEL_DEST}... "
         PIXEL_START=$(date +%s)
-        if transfer_files "Pixel 9 Pro" "$PIXEL_ADDR" "$PIXEL_DEST" "$VID_PATTERN" 2>/dev/null; then
+        if transfer_files "Pixel 10 Pro XL" "$PIXEL_ADDR" "$PIXEL_DEST" "$VID_PATTERN" 2>/dev/null; then
             PIXEL_END=$(date +%s)
             PIXEL_DURATION=$((PIXEL_END - PIXEL_START))
             echo -e "${GREEN}OK${NC} (${PIXEL_DURATION}s)"
@@ -501,9 +501,9 @@ if ! $SKIP_TRANSFER; then
     fi
 
     if $MOTO_OK; then
-        echo -n "  Moto X4: Transferring ${VID_PATTERN} to ${MOTO_DEST}... "
+        echo -n "  Moto G Play 2024: Transferring ${VID_PATTERN} to ${MOTO_DEST}... "
         MOTO_START=$(date +%s)
-        if transfer_files "Moto X4" "$MOTO_ADDR" "$MOTO_DEST" "$VID_PATTERN" 2>/dev/null; then
+        if transfer_files "Moto G Play 2024" "$MOTO_ADDR" "$MOTO_DEST" "$VID_PATTERN" 2>/dev/null; then
             MOTO_END=$(date +%s)
             MOTO_DURATION=$((MOTO_END - MOTO_START))
             echo -e "${GREEN}OK${NC} (${MOTO_DURATION}s)"
@@ -518,15 +518,15 @@ if ! $SKIP_TRANSFER; then
         echo "    adb -s <serial> pull /storage/emulated/0/DCIM/OpenCamera/${VID_PATTERN} /tmp/<camera>/"
     else
         echo "  Files transferred to:"
-        $PIXEL_OK && echo "    - Pixel 9 Pro: ${PIXEL_DEST}"
-        $MOTO_OK && echo "    - Moto X4: ${MOTO_DEST}"
+        $PIXEL_OK && echo "    - Pixel 10 Pro XL: ${PIXEL_DEST}"
+        $MOTO_OK && echo "    - Moto G Play 2024: ${MOTO_DEST}"
 
         # Step 8: Delete transferred files from cameras
         echo ""
         echo -e "${BLUE}Step 8: Cleaning up transferred files...${NC}"
 
         if $PIXEL_OK; then
-            echo -n "  Pixel 9 Pro: Deleting ${VID_PATTERN}... "
+            echo -n "  Pixel 10 Pro XL: Deleting ${VID_PATTERN}... "
             delete_response=$(api_call "$PIXEL_ADDR" "deleteFiles" "{\"action\":\"deleteFiles\",\"pattern\":\"${VID_PATTERN}\"}")
             if echo "$delete_response" | grep -q '"success": true'; then
                 deleted_count=$(echo "$delete_response" | grep -o '"files_deleted": *[0-9]*' | grep -o '[0-9]*')
@@ -537,7 +537,7 @@ if ! $SKIP_TRANSFER; then
         fi
 
         if $MOTO_OK; then
-            echo -n "  Moto X4: Deleting ${VID_PATTERN}... "
+            echo -n "  Moto G Play 2024: Deleting ${VID_PATTERN}... "
             delete_response=$(api_call "$MOTO_ADDR" "deleteFiles" "{\"action\":\"deleteFiles\",\"pattern\":\"${VID_PATTERN}\"}")
             if echo "$delete_response" | grep -q '"success": true'; then
                 deleted_count=$(echo "$delete_response" | grep -o '"files_deleted": *[0-9]*' | grep -o '[0-9]*')
@@ -561,15 +561,15 @@ echo ""
 echo "Results:"
 
 if $PIXEL_OK; then
-    echo -e "  Pixel 9 Pro ($PIXEL_ADDR): ${GREEN}SUCCESS${NC}"
+    echo -e "  Pixel 10 Pro XL ($PIXEL_ADDR): ${GREEN}SUCCESS${NC}"
 else
-    echo -e "  Pixel 9 Pro: ${RED}NOT TESTED${NC}"
+    echo -e "  Pixel 10 Pro XL: ${RED}NOT TESTED${NC}"
 fi
 
 if $MOTO_OK; then
-    echo -e "  Moto X4 ($MOTO_ADDR): ${GREEN}SUCCESS${NC}"
+    echo -e "  Moto G Play 2024 ($MOTO_ADDR): ${GREEN}SUCCESS${NC}"
 else
-    echo -e "  Moto X4: ${RED}NOT TESTED${NC}"
+    echo -e "  Moto G Play 2024: ${RED}NOT TESTED${NC}"
 fi
 
 echo ""
@@ -582,11 +582,11 @@ echo -e "${BLUE}Final camera status:${NC}"
 echo ""
 
 if $PIXEL_OK; then
-    get_status "Pixel 9 Pro" "$PIXEL_ADDR"
+    get_status "Pixel 10 Pro XL" "$PIXEL_ADDR"
 fi
 
 if $MOTO_OK; then
-    get_status "Moto X4" "$MOTO_ADDR"
+    get_status "Moto G Play 2024" "$MOTO_ADDR"
 fi
 
 echo ""
