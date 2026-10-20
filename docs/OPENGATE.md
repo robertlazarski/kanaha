@@ -817,8 +817,9 @@ Android 17 (`CP3A.260905.009`), 5 s per timed phase, indoors and dim.
 | Dual conversion gain visible | **No**: no DCG-related key; the only vendor keys are Google HDR+ tags |
 
 What this settles: the camera, the storage and the DNG writer each keep up with 30 fps
-on their own. Still open: all three together for longer than 5 s, and heat over a long
-take. The 12-bit check shows the samples carry 12 bits of precision; whether the sensor
+on their own. All three together over a whole take was settled on 2026-10-20 (a 60 s
+take of per-frame DNGs kept up; see "Where it is actually blocked" above). Still open:
+heat over takes longer than a minute. The 12-bit check shows the samples carry 12 bits of precision; whether the sensor
 used dual conversion gain to produce them cannot be seen from outside.
 
 **Second run, same day, daylight scene** (ISO 21, 1/1024 s): 148 frames at 30 fps with
@@ -832,9 +833,35 @@ with populated low bits, in a bright scene as in a dim one.
 Four minutes of total recording on the free space available. That is not a
 technical blocker; it is a workflow one. It means offload between takes, every
 take, and it means a shoot is planned around storage in a way an H.265 shoot is
-not. External USB-C storage moves the ceiling and is worth testing if this
-proceeds — but test the *sustained* rate over USB before relying on it, because
-the internal 1.5 GB/s does not transfer.
+not. External USB-C storage would move the ceiling, but on this rig the USB-C port
+carries SMPTE timecode through the iRig, so it is not available during a take.
+
+#### Why DNG, and why it is this big
+
+**BRAW and ProRes RAW aren't available to us.** They are the efficient 12-bit raw
+formats (visually lossless compression, one file per take), but their encoders live
+only inside Blackmagic's and Apple-licensed cameras and recorders; nothing on Android
+or Linux can write them. CinemaDNG, a folder of DNG frames plus audio, is the only
+open raw video format, which is why the probe writes DNG.
+
+What the Pixel writes is DNG at its least efficient. `DngCreator` stores the samples
+uncompressed, each 12-bit value in 16 bits: 25,093,636 bytes per frame is
+4080 × 3072 × 2 plus a header, so a quarter of every file is padding. That is
+745 MB/s, about 41 GB a minute. The file count is not the problem; the phone takes 30
+files a second with room to spare (93 measured).
+
+| Reduction | Size | Cost |
+|---|---|---|
+| 16:9 crop (4080×2296) | −25% | Easy |
+| Packed 12-bit samples instead of 16 | −25% | Our own DNG writer instead of `DngCreator` |
+| Lossless JPEG compression, as CinemaDNG cameras use | about −40%, scene-dependent | Our own writer, plus CPU per frame not yet measured |
+| All three | about 15 GB/min | Real work |
+
+Even then, ~180 GB free is about 12 minutes in total. Post-production on Linux is
+CLI-capable but slow: each frame is developed (`darktable-cli` or `rawtherapee-cli`
+to 16-bit TIFF, or ffmpeg directly), then encoded with ffmpeg, 1,800 frames per
+minute of footage. If Part 2 is built, start with the crop and packed 12-bit (about
+half the size), and add compression only if needed.
 
 ---
 
