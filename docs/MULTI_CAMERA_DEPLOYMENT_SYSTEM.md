@@ -197,7 +197,10 @@ Cameras are aligned in post, from three things recorded at the start of each tak
 - **`playTone`**: the same tone on every camera at the same `start_at`. Onset
   detection on each audio track aligns cameras to about 1–5 ms.
 - **The recording-start sidecar**, `kanaha_recording_start.json`, with the start time
-  and GPS fix age.
+  and GPS fix age. It records when the start fired, not the first frame: measured against
+  the `playTone` slate on 2026-10-19, the Pixel 10 Pro XL's first frame came 0.38 s after
+  `start_at` and the Moto G Play 2024's 1.12 s after, while their sidecars were 9 ms apart.
+  Align clips on the slate; the sidecar alone left these two 0.74 s (22 frames) apart.
 
 ```bash
 CAMS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
@@ -264,14 +267,18 @@ done
 wait
 ```
 
-- **White balance: lock each camera on the same gray card.** Hold one gray card in the
-  shared light so it fills the centre of every camera's frame, let auto white balance settle,
-  then send `{"action":"setExposure","wb":"lock"}` to each camera. Each freezes its own gains
-  and its own factory colour calibration, so gray comes out gray on every camera, whatever
-  the model. The lock survives open gate reopens and app restarts (`wb_mode` reads `locked`;
-  `wb_gains` shows the frozen gains). Do not copy `wb_gains` or `wb_kelvin` between cameras:
-  gains belong to one sensor, and the kelvin reading is an estimate that sat at 15000 K in
-  daylight on both test phones.
+- **White balance: lock each camera, then correct each from a gray card in post.** With the
+  gray card in shared light, let auto white balance settle (read `wb_gains` twice a couple of
+  seconds apart until they stop changing), then send `{"action":"setExposure","wb":"lock"}`
+  to each camera. The lock freezes what that camera's auto white balance chose, gains and
+  factory colour calibration, and keeps it through open gate reopens and app restarts
+  (`wb_mode` reads `locked`). It does **not** make different phones agree: on the same card
+  the Pixel 10 Pro XL's auto white balance rendered it warm (R/G 1.21, B/G 0.85) and the Moto
+  G Play 2024's near gray (1.04, 0.96), and locking froze both as they were. What the lock buys
+  is a colour that stays put, so the gray-card correction below, measured once, stays valid
+  for every take. Do not copy `wb_gains` or `wb_kelvin` between cameras: gains belong to one
+  sensor, and the kelvin reading is an estimate that sat at 15000 K in daylight on both test
+  phones.
 - **`wb_kelvin` is the fallback**, for when no card is to hand: give every camera the same
   value (5600 daylight, about 6500 overcast, 3200 tungsten). OpenCamera turns it into gains with
   a generic formula and applies no colour calibration, so identical phones match each other
@@ -317,30 +324,32 @@ differently, which settings cannot fix; expect a per-camera grade on top.
 
 ### Gray-card check and correction
 
-Locking white balance on a shared gray card removes most of the difference between
-cameras. This measures what remains and corrects it in post; with kelvin instead of a
-lock, it is the main correction.
+Each phone's auto white balance renders a gray card its own way, and between models the
+difference is large: 17% in red between the Pixel 10 Pro XL and the Moto G Play 2024. Correct
+each camera to neutral gray in post. With white balance locked, one measurement holds for
+every take under that light.
 
-1. Under one light, with both cameras on identical `setExposure` values and white
-   balance locked on the card, record a few seconds of the card filling the centre of
-   each frame.
-2. Measure the mean colour of the centre of each clip (16-bit values, R G B):
-
-   ```bash
-   ffmpeg -v error -ss 1 -i cam_a.mp4 -vf "crop=iw/4:ih/4,scale=1:1:flags=area,format=rgb48le" -frames:v 1 -f rawvideo - | od -An -tu2
-   ```
-
-3. Take camera A as the reference. For camera B, each gain is A's channel divided by
-   B's: `rr=Ra/Rb`, `gg=Ga/Gb`, `bb=Ba/Bb`. Keep them in a per-camera file.
-4. Apply B's gains to all of B's footage before grading:
+1. With exposure and white balance locked on each camera (above), record a few seconds of
+   the gray card filling the centre of each frame, in the light of the shoot.
+2. Convert a Moto clip to BT.709 first ([above](#mixing-a-pixel-and-a-moto-in-one-edit)), then
+   measure the mean colour of the centre third, as 0–255 R G B:
 
    ```bash
-   ffmpeg -i cam_b_take.mp4 -vf "colorchannelmixer=rr=1.012:gg=1.000:bb=0.987" -c:a copy cam_b_matched.mp4
+   ffmpeg -v error -ss 3 -i card.mp4 -vf "crop=iw/3:ih/3,scale=1:1:flags=area:in_range=tv:out_range=pc,format=rgb48le" -frames:v 1 -f rawvideo - | od -An -tu2 | awk '{print $1/257, $2/257, $3/257}'
    ```
 
-Expect corrections of a few percent. A larger one means the cameras were not on the
-same settings or the same build. For HLG footage this gain is applied to non-linear
-values, which is close enough for corrections this small.
+3. The camera's correction gains are `rr = G/R` and `bb = G/B`, which bring the card to
+   neutral. Keep them in a per-camera file; they hold until the light or the lock changes.
+4. Apply them to that camera's footage before grading:
+
+   ```bash
+   ffmpeg -i take.mp4 -vf "format=gbrp,colorchannelmixer=rr=0.825:bb=1.183,format=yuv420p" -c:v libx264 -crf 18 -c:a copy take_corrected.mp4
+   ```
+
+Measured on 2026-10-19 under indoor light: the Pixel needed `rr=0.825 bb=1.183`, the Moto
+`rr=0.960 bb=1.038`. With those, both rendered the card within 0.5% of neutral, at a
+different moment of the take from the one measured. For HLG footage the gains apply to
+non-linear values, so measure and correct within HLG and keep corrections modest.
 
 ### Checking that it worked
 

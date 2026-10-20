@@ -985,13 +985,15 @@ public class CameraControlReceiver extends BroadcastReceiver {
             state.put("frame_duration_ns", controller.captureResultFrameDuration());
         }
 
-        // Whether the live values have caught up with the pinned settings. Exposure
-        // within 2%: the sensor rounds to its line time (16666666 reads back 16655607).
+        // Whether the live values have caught up with the pinned settings. The sensor rounds
+        // both: exposure to its line time (16666666 reads back 16655607), ISO to its gain
+        // steps (the Pixel 10 Pro XL reads 381 back as 377). Exposure within 2%, ISO within 3%.
         boolean settled = true;
         if (!CameraController.ISO_DEFAULT.equals(isoPref)) {
             long wantExposure = prefs.getLong(PreferenceKeys.ExposureTimePreferenceKey, 0);
+            int wantIso = parseIntOr(isoPref, -1);
             settled = controller.captureResultHasIso() && controller.captureResultHasExposureTime()
-                    && String.valueOf(controller.captureResultIso()).equals(isoPref)
+                    && wantIso > 0 && Math.abs(controller.captureResultIso() - wantIso) <= wantIso * 3 / 100 + 1
                     && Math.abs(controller.captureResultExposureTime() - wantExposure) <= wantExposure / 50;
         }
         if ("manual".equals(wbPref) && !wbLocked && controller.captureResultHasWhiteBalanceTemperature()) {
@@ -1060,6 +1062,14 @@ public class CameraControlReceiver extends BroadcastReceiver {
         b.append(';');
         for (int i = 0; i < cc[1].length; i++) b.append(i == 0 ? "" : ",").append(cc[1][i]);
         return b.toString();
+    }
+
+    private static int parseIntOr(String s, int fallback) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private static String emptyToNull(String s) {
