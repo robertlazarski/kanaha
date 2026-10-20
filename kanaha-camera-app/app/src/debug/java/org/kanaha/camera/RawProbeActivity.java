@@ -71,7 +71,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * </pre>
  * Extras: {@code --ei seconds 5} (per timed phase), {@code --es format raw12} to time
  * packed RAW12 capture instead of RAW_SENSOR (dng and bits need RAW_SENSOR and are
- * skipped). Results also go to {@code <external files>/raw_probe/result.json}; the
+ * skipped). {@code --ei dng_seconds 60} adds a sustained phase that writes every frame
+ * as its own DNG for that long, {@code --ei dng_threads 3} workers; the DNGs are deleted
+ * afterwards. Results also go to {@code <external files>/raw_probe/result.json}; the
  * frames written in the write phase are deleted afterwards.
  */
 public class RawProbeActivity extends Activity {
@@ -97,11 +99,13 @@ public class RawProbeActivity extends Activity {
 
         int seconds = getIntent().getIntExtra("seconds", 5);
         boolean raw12 = "raw12".equals(getIntent().getStringExtra("format"));
+        int dngSeconds = getIntent().getIntExtra("dng_seconds", 0);
+        int dngThreads = Math.max(1, getIntent().getIntExtra("dng_threads", 3));
 
         cameraThread = new HandlerThread("RawProbeCamera");
         cameraThread.start();
         cameraHandler = new Handler(cameraThread.getLooper());
-        new Thread(() -> runProbe(seconds, raw12), "RawProbe").start();
+        new Thread(() -> runProbe(seconds, raw12, dngSeconds, dngThreads), "RawProbe").start();
     }
 
     @Override
@@ -117,7 +121,7 @@ public class RawProbeActivity extends Activity {
         runOnUiThread(() -> output.append(line + "\n"));
     }
 
-    private void runProbe(int seconds, boolean raw12) {
+    private void runProbe(int seconds, boolean raw12, int dngSeconds, int dngThreads) {
         JSONObject result = new JSONObject();
         try {
             CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
@@ -145,6 +149,9 @@ public class RawProbeActivity extends Activity {
             result.put("write", timedPhase(chars, format, size, seconds, true));
             if (!raw12) {
                 result.put("dng_and_bits", dngAndBits(chars, size));
+                if (dngSeconds > 0) {
+                    result.put("dng_sustained", dngSustained(chars, size, dngSeconds, dngThreads));
+                }
             }
             report("RESULT " + result.toString());
         } catch (Exception e) {
@@ -413,6 +420,110 @@ public class RawProbeActivity extends Activity {
         r.put("dng_file_ms", fileMs);
         r.put("budget_ms_at_30fps", Math.round(1000.0 / TARGET_FPS * 10) / 10.0);
         report("dng: " + r);
+        return r;
+    }
+
+    /**
+     * The 12-bit recorder as it would run: a 30 fps repeating request for {@code seconds},
+     * every frame written as its own DNG by {@code threads} workers. A frame that arrives
+     * while all workers and the queue are busy is dropped and counted, as a recorder
+     * would have to. Answers whether DngCreator plus storage keeps up over a whole take,
+     * not just the five frames {@link #dngAndBits} times.
+     */
+    private JSONObject dngSustained(CameraCharacteristics chars, Size size, int seconds, int threads)
+            throws Exception {
+        int maxImages = threads + 4;
+        ImageReader reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), ImageFormat.RAW_SENSOR, maxImages);
+        Map<Long, TotalCaptureResult> results = new ConcurrentHashMap<>();
+        List<Long> timestamps = Collections.synchronizedList(new ArrayList<>());
+        List<Long> frameMs = Collections.synchronizedList(new ArrayList<>());
+        AtomicInteger drops = new AtomicInteger();
+        AtomicInteger noResult = new AtomicInteger();
+        AtomicInteger failures = new AtomicInteger();
+        AtomicInteger written = new AtomicInteger();
+        AtomicLong bytes = new AtomicLong();
+        File dir = new File(probeDir(), "dng_sustained");
+        if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("could not create " + dir);
+
+        // Queue bounded so held images never exceed maxImages: threads running + queued + 2 spare.
+        java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(
+                threads, threads, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(maxImages - threads - 2));
+        reader.setOnImageAvailableListener(r -> {
+            Image image = r.acquireNextImage();
+            if (image == null) return;
+            timestamps.add(image.getTimestamp());
+            try {
+                pool.execute(() -> {
+                    try {
+                        TotalCaptureResult result = null;
+                        for (int i = 0; i < 20 && result == null; i++) {
+                            result = results.remove(image.getTimestamp());
+                            if (result == null) Thread.sleep(5);
+                        }
+                        if (result == null) {
+                            noResult.incrementAndGet();
+                            return;
+                        }
+                        File f = new File(dir, image.getTimestamp() + ".dng");
+                        long t0 = System.nanoTime();
+                        try (DngCreator creator = new DngCreator(chars, result);
+                             OutputStream out = new BufferedOutputStream(new FileOutputStream(f), 1 << 20)) {
+                            creator.writeImage(out, image);
+                        }
+                        frameMs.add((System.nanoTime() - t0) / 1_000_000);
+                        bytes.addAndGet(f.length());
+                        written.incrementAndGet();
+                    } catch (Exception e) {
+                        failures.incrementAndGet();
+                        Log.e(TAG, "dng write failed", e);
+                    } finally {
+                        image.close();
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                drops.incrementAndGet();
+                image.close();
+            }
+        }, cameraHandler);
+
+        CameraCaptureSession session = createSession(Collections.singletonList(reader.getSurface()));
+        CaptureRequest.Builder builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+        builder.addTarget(reader.getSurface());
+        builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<>(TARGET_FPS, TARGET_FPS));
+        long start = System.nanoTime();
+        session.setRepeatingRequest(builder.build(), new CameraCaptureSession.CaptureCallback() {
+            @Override
+            public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest req, TotalCaptureResult result) {
+                Long t = result.get(CaptureResult.SENSOR_TIMESTAMP);
+                if (t != null) results.put(t, result);
+            }
+        }, cameraHandler);
+        Thread.sleep(seconds * 1000L);
+        session.stopRepeating();
+        session.close();
+        pool.shutdown();
+        pool.awaitTermination(60, TimeUnit.SECONDS);
+        double wallSeconds = (System.nanoTime() - start) / 1e9;
+        reader.close();
+
+        JSONObject r = frameStats(new ArrayList<>(timestamps));
+        r.put("threads", threads);
+        r.put("dngs_written", written.get());
+        r.put("queue_drops", drops.get());
+        r.put("no_capture_result", noResult.get());
+        r.put("write_failures", failures.get());
+        r.put("mb_per_s", Math.round(bytes.get() / 1e6 / wallSeconds));
+        r.put("free_space_gb_at_end", Math.round(dir.getUsableSpace() / 1e9));
+        List<Long> ms = new ArrayList<>(frameMs);
+        Collections.sort(ms);
+        if (!ms.isEmpty()) {
+            r.put("dng_ms_median", ms.get(ms.size() / 2));
+            r.put("dng_ms_p95", ms.get(ms.size() * 95 / 100));
+            r.put("dng_ms_max", ms.get(ms.size() - 1));
+        }
+        File[] left = dir.listFiles();
+        if (left != null) for (File f : left) if (!f.delete()) Log.w(TAG, "could not delete " + f);
+        report("dng_sustained: " + r);
         return r;
     }
 

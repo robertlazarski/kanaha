@@ -473,9 +473,12 @@ three separate edges:
    replaces it: 180 GB free at 45 GB/min is four minutes of recording in total.
 2. **`DngCreator` was expected to be the wall, and measured inside budget.** It
    assembles a DNG on the CPU per image; the probe timed it at 7–10 ms of CPU and
-   21–25 ms including the file write, against 33 ms per frame at 30 fps. Five frames,
-   not a sustained run, so this moves it from "likely wall" to "probably fine, confirm
-   at 30 a second"; see the probe results below.
+   21–25 ms including the file write, against 33 ms per frame at 30 fps. **Confirmed
+   sustained, 2026-10-20:** a 60 s take writing every frame as its own DNG on four
+   worker threads kept up — 1,782 of 1,783 frames written (one dropped at start), no
+   frames missing at the sensor, 745 MB/s, 41 ms median and 96 ms worst per DNG with
+   four in flight. A 30 s take on three threads gave the same (890 of 891). Run it with
+   `--ei dng_seconds 60 --ei dng_threads 4` on `RawProbeActivity`.
 3. **Kanaha's model assumes one file per take.** The HTTP API returns a path. A
    DNG sequence is a directory of a few thousand files with no audio and no
    container, which every part of the pipeline — the service response, the
@@ -493,9 +496,9 @@ delivers most of the grading benefit for a fraction of the work and none of the
 storage cost, and it fits the existing one-file-per-take model without touching
 it.
 
-That measurement has since been taken and storage passed comfortably, which
-moves the remaining risk onto `DngCreator` throughput and the file model — both
-tractable, both real work. The implementation plan below sizes them.
+That measurement has since been taken and storage passed comfortably, and the
+sustained `DngCreator` run above passed too, which leaves the file model and
+capacity — tractable, real work. The implementation plan below sizes them.
 
 
 ---
