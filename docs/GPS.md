@@ -371,7 +371,7 @@ GPS discipline takes ~60 seconds to acquire. The operator workflow:
 ```bash
 # 1. Query GPS status on all cameras before starting
 for cam in $PIXEL $MOTOG $MOTOG5G; do
-    curl -sk ... "https://$cam:8443/.../getStatus" | python3 -c "
+    curl -s ... "https://$cam:8443/.../getStatus" | python3 -c "
 import json,sys; d=json.load(sys.stdin); s=d.get('status',d)
 gps=s.get('gps_time',0); age=s.get('gps_age_ms',0)
 print(f'GPS: {\"active\" if gps>0 and age<60000 else \"NO FIX\"} age={age}ms')
@@ -390,7 +390,7 @@ start_at=$(( $(date +%s%N) / 1000000 + 3000 ))
 
 # Fire to all three cameras simultaneously
 for cam in $PIXEL $MOTOG $MOTOG5G; do
-    curl -sk ... -d "{\"action\":\"startRecording\",\"clip_name\":\"$CLIP\",\"start_at\":$start_at}" \
+    curl -s ... -d "{\"action\":\"startRecording\",\"clip_name\":\"$CLIP\",\"start_at\":$start_at}" \
         "https://$cam:8443/.../startRecording" &
 done
 wait

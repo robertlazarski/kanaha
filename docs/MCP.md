@@ -22,7 +22,7 @@ tool definitions and service handlers differ.
 Without MCP, controlling cameras requires curl commands with mTLS certificates:
 
 ```bash
-curl -sk --http2 --cert client.crt --key client.key --cacert ca.crt \
+curl -s --http2 --cert client.crt --key client.key --cacert ca.crt \
   -H "Content-Type: application/json" \
   -d '{"action":"startRecording","clip_name":"test"}' \
   "https://192.168.1.100:8443/services/CameraControlService/startRecording"

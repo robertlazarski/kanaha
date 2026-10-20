@@ -15,13 +15,42 @@ set -e
 
 # Configuration
 ADB=$HOME/Android/Sdk/platform-tools/adb
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
-APK=$HOME/repos/kanaha/kanaha-camera-app/app/build/outputs/apk/debug/app-debug.apk
+SSL="${KANAHA_CERT_DIR:-$HOME/kanaha-ca}"   # operator.crt/.key + kanaha-ca.crt, or client.crt/.key + ca.crt
+APK_DIR=$HOME/repos/kanaha/kanaha-camera-app/app/build/outputs/apk
+PIXEL_APK=$APK_DIR/nano/debug/app-nano-debug.apk   # Pixel: nano flavor
+MOTO_APK=$APK_DIR/foss/debug/app-foss-debug.apk    # Moto: foss flavor
 
 PIXEL_IP="192.168.8.159"
 MOTO_IP="192.168.8.174"
 PIXEL_ADB="${PIXEL_IP}:5555"
 MOTO_ADB="${MOTO_IP}:5555"
+
+# Client certificate and CA, under either set of names, as in
+# tools/kanaha-discover.sh; and the name the phones' certificates carry.
+if [[ -f "$SSL/operator.crt" ]]; then
+    CERT="$SSL/operator.crt"; KEY="$SSL/operator.key"; CA="$SSL/kanaha-ca.crt"
+else
+    CERT="$SSL/client.crt"; KEY="$SSL/client.key"; CA="$SSL/ca.crt"
+fi
+CAMERA_TLS_NAME="${KANAHA_CAMERA_TLS_NAME:-camera.local}"
+
+# camera_curl ADDR PATH [curl args...]: HTTPS to a camera on 8443 with its
+# certificate verified, never -k. By address first; if the certificate names
+# the phone by DNS name instead (curl exit 51/60), again with --resolve to that
+# name, as tools/kanaha-discover.sh does. Prints the last attempt's output.
+camera_curl() {
+    local addr=$1 path=$2 out rc=0
+    shift 2
+    local args=(-s --http2 --cert "$CERT" --key "$KEY" --cacert "$CA" "$@")
+    out=$(curl "${args[@]}" "https://${addr}:8443${path}") || rc=$?
+    if [[ $rc -eq 51 || $rc -eq 60 ]]; then
+        rc=0
+        out=$(curl "${args[@]}" --resolve "${CAMERA_TLS_NAME}:8443:${addr}" \
+            "https://${CAMERA_TLS_NAME}:8443${path}") || rc=$?
+    fi
+    printf '%s\n' "$out"
+    return $rc
+}
 
 # Colors for output
 RED='\033[0;31m'
@@ -77,11 +106,9 @@ test_camera() {
     # Test 1: getStatus
     echo ""
     echo "--- Test 1: getStatus ---"
-    response=$(curl -sk --http2 --max-time 10 \
-        --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    response=$(camera_curl "$ip" "/services/CameraControlService/getStatus" --max-time 10 \
         -H "Content-Type: application/json" \
-        -d '{"action":"getStatus"}' \
-        "https://$ip:8443/services/CameraControlService/getStatus" 2>&1)
+        -d '{"action":"getStatus"}' 2>&1)
 
     if echo "$response" | grep -q '"success"'; then
         echo -e "${GREEN}PASS${NC}: getStatus returned success"
@@ -94,11 +121,9 @@ test_camera() {
     # Test 2: listFiles
     echo ""
     echo "--- Test 2: listFiles ---"
-    response=$(curl -sk --http2 --max-time 10 \
-        --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    response=$(camera_curl "$ip" "/services/CameraControlService/listFiles" --max-time 10 \
         -H "Content-Type: application/json" \
-        -d '{"action":"listFiles"}' \
-        "https://$ip:8443/services/CameraControlService/listFiles" 2>&1)
+        -d '{"action":"listFiles"}' 2>&1)
 
     if echo "$response" | grep -q '"success"'; then
         echo -e "${GREEN}PASS${NC}: listFiles returned success"
@@ -111,11 +136,9 @@ test_camera() {
     # Test 3: Security - Path Traversal Rejection
     echo ""
     echo "--- Test 3: Security - Path Traversal Rejection ---"
-    response=$(curl -sk --http2 --max-time 10 \
-        --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    response=$(camera_curl "$ip" "/services/CameraControlService/deleteFiles" --max-time 10 \
         -H "Content-Type: application/json" \
-        -d '{"action":"deleteFiles","pattern":"../../../etc/passwd"}' \
-        "https://$ip:8443/services/CameraControlService/deleteFiles" 2>&1)
+        -d '{"action":"deleteFiles","pattern":"../../../etc/passwd"}' 2>&1)
 
     if echo "$response" | grep -qi "traversal\|invalid\|rejected\|error"; then
         echo -e "${GREEN}PASS${NC}: Path traversal correctly rejected"
@@ -128,11 +151,9 @@ test_camera() {
     # Test 4: Security - Invalid Characters Rejection
     echo ""
     echo "--- Test 4: Security - Invalid Characters Rejection ---"
-    response=$(curl -sk --http2 --max-time 10 \
-        --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    response=$(camera_curl "$ip" "/services/CameraControlService/deleteFiles" --max-time 10 \
         -H "Content-Type: application/json" \
-        -d '{"action":"deleteFiles","pattern":"test; rm -rf /"}' \
-        "https://$ip:8443/services/CameraControlService/deleteFiles" 2>&1)
+        -d '{"action":"deleteFiles","pattern":"test; rm -rf /"}' 2>&1)
 
     if echo "$response" | grep -qi "invalid\|rejected\|error"; then
         echo -e "${GREEN}PASS${NC}: Shell injection pattern rejected"
@@ -145,11 +166,9 @@ test_camera() {
     # Test 5: Security - Script Injection Rejection
     echo ""
     echo "--- Test 5: Security - Script Injection Rejection ---"
-    response=$(curl -sk --http2 --max-time 10 \
-        --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    response=$(camera_curl "$ip" "/services/CameraControlService/deleteFiles" --max-time 10 \
         -H "Content-Type: application/json" \
-        -d '{"action":"deleteFiles","pattern":"<script>alert(1)</script>"}' \
-        "https://$ip:8443/services/CameraControlService/deleteFiles" 2>&1)
+        -d '{"action":"deleteFiles","pattern":"<script>alert(1)</script>"}' 2>&1)
 
     if echo "$response" | grep -qi "invalid\|rejected\|error\|injection"; then
         echo -e "${GREEN}PASS${NC}: Script injection correctly rejected"
@@ -162,11 +181,9 @@ test_camera() {
     echo ""
     echo "--- Test 6: Security - Oversized Input Rejection ---"
     long_pattern=$(python3 -c "print('A' * 300)")
-    response=$(curl -sk --http2 --max-time 10 \
-        --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    response=$(camera_curl "$ip" "/services/CameraControlService/deleteFiles" --max-time 10 \
         -H "Content-Type: application/json" \
-        -d "{\"action\":\"deleteFiles\",\"pattern\":\"$long_pattern\"}" \
-        "https://$ip:8443/services/CameraControlService/deleteFiles" 2>&1)
+        -d "{\"action\":\"deleteFiles\",\"pattern\":\"$long_pattern\"}" 2>&1)
 
     if echo "$response" | grep -qi "too long\|invalid\|rejected\|error"; then
         echo -e "${GREEN}PASS${NC}: Oversized input correctly rejected"
@@ -178,12 +195,10 @@ test_camera() {
     # Test 7: User-Agent Filtering (should block scanner tools)
     echo ""
     echo "--- Test 7: User-Agent Filtering ---"
-    response=$(curl -sk --http2 --max-time 10 \
-        --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    response=$(camera_curl "$ip" "/services/CameraControlService/getStatus" --max-time 10 \
         -H "Content-Type: application/json" \
         -H "User-Agent: Nikto/2.1.6" \
-        -d '{"action":"getStatus"}' \
-        "https://$ip:8443/services/CameraControlService/getStatus" 2>&1)
+        -d '{"action":"getStatus"}' 2>&1)
 
     if echo "$response" | grep -q "403\|Forbidden\|blocked"; then
         echo -e "${GREEN}PASS${NC}: Scanner user-agent correctly blocked"
@@ -215,11 +230,9 @@ test_camera() {
     echo "--- Test 9: Rate Limiting (LimitRequestBody) ---"
     # Create a payload larger than 64KB
     large_payload=$(python3 -c "import json; print(json.dumps({'action':'getStatus','data':'A'*70000}))")
-    response=$(curl -sk --http2 --max-time 10 -w "%{http_code}" -o /dev/null \
-        --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
+    response=$(camera_curl "$ip" "/services/CameraControlService/getStatus" --max-time 10 -w "%{http_code}" -o /dev/null \
         -H "Content-Type: application/json" \
-        -d "$large_payload" \
-        "https://$ip:8443/services/CameraControlService/getStatus" 2>&1)
+        -d "$large_payload" 2>&1)
 
     if [ "$response" = "413" ]; then
         echo -e "${GREEN}PASS${NC}: Large request correctly rejected (413)"
@@ -265,15 +278,17 @@ if $INSTALL_APK; then
     echo ""
     echo "Step 2: Installing APK..."
 
-    if [ ! -f "$APK" ]; then
-        echo -e "${RED}ERROR: APK not found at $APK${NC}"
-        echo "Run: ./gradlew assembleDebug"
-        exit 1
-    fi
+    for apk in "$PIXEL_APK" "$MOTO_APK"; do
+        if [ ! -f "$apk" ]; then
+            echo -e "${RED}ERROR: APK not found at $apk${NC}"
+            echo "Run: ./gradlew assembleNanoDebug assembleFossDebug"
+            exit 1
+        fi
+    done
 
     if $PIXEL_CONNECTED; then
         echo -n "Installing on Pixel 10 Pro XL... "
-        if $ADB -s "$PIXEL_ADB" install -r "$APK" 2>&1 | grep -q "Success"; then
+        if $ADB -s "$PIXEL_ADB" install -r "$PIXEL_APK" 2>&1 | grep -q "Success"; then
             echo -e "${GREEN}OK${NC}"
         else
             echo -e "${RED}FAILED${NC}"
@@ -282,7 +297,7 @@ if $INSTALL_APK; then
 
     if $MOTO_CONNECTED; then
         echo -n "Installing on Moto G Play 2024... "
-        if $ADB -s "$MOTO_ADB" install -r "$APK" 2>&1 | grep -q "Success"; then
+        if $ADB -s "$MOTO_ADB" install -r "$MOTO_APK" 2>&1 | grep -q "Success"; then
             echo -e "${GREEN}OK${NC}"
         else
             echo -e "${RED}FAILED${NC}"
@@ -342,7 +357,7 @@ echo "  8. Request size limits"
 echo ""
 echo "For manual recording test, run:"
 echo "  SSL=$SSL"
-echo "  curl -sk --http2 --cert \"\$SSL/client.crt\" --key \"\$SSL/client.key\" --cacert \"\$SSL/ca.crt\" \\"
-echo "    -H \"Content-Type: application/json\" -d '{\"action\":\"startRecording\"}' \\"
-echo "    https://$PIXEL_IP:8443/services/CameraControlService/startRecording"
+echo "  curl -s --http2 --cert \"$CERT\" --key \"$KEY\" --cacert \"$CA\" \\"
+echo "    --resolve $CAMERA_TLS_NAME:8443:$PIXEL_IP -H \"Content-Type: application/json\" \\"
+echo "    -d '{\"action\":\"startRecording\"}' https://$CAMERA_TLS_NAME:8443/services/CameraControlService/startRecording"
 echo ""

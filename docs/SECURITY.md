@@ -1023,25 +1023,27 @@ If the script cannot connect, test manually:
 
 ```bash
 # Setup
-SSL=$HOME/repos/kanaha/kanaha-camera-app/app/src/main/assets/ssl
+SSL=${KANAHA_CERT_DIR:-~/kanaha-ca}
+# No -k: use an address the camera's certificate names. If it names the camera
+# only as camera.local, add --resolve camera.local:8443:<ip> to each command.
 CAMERA="192.168.8.159:8443"  # or 192.168.8.174:8443 for Moto G Play 2024
 
 # Test getStatus
-curl -sk --http2 \
+curl -s --http2 \
     --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
     -H "Content-Type: application/json" \
     -d '{"action":"getStatus"}' \
     "https://$CAMERA/services/CameraControlService/getStatus"
 
 # Test path traversal rejection
-curl -sk --http2 \
+curl -s --http2 \
     --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
     -H "Content-Type: application/json" \
     -d '{"action":"deleteFiles","pattern":"../etc/passwd"}' \
     "https://$CAMERA/services/CameraControlService/deleteFiles"
 
 # Test recording (ensure camera preview is visible on phone!)
-curl -sk --http2 \
+curl -s --http2 \
     --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
     -H "Content-Type: application/json" \
     -d '{"action":"startRecording"}' \

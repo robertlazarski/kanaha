@@ -42,7 +42,33 @@
 set -e
 
 # Configuration
-SSL="${KANAHA_CERT_DIR:-$HOME/kanaha-ca}"   # client.crt, client.key, ca.crt
+SSL="${KANAHA_CERT_DIR:-$HOME/kanaha-ca}"   # operator.crt/.key + kanaha-ca.crt, or client.crt/.key + ca.crt
+# Client certificate and CA, under either set of names, as in
+# tools/kanaha-discover.sh; and the name the phones' certificates carry.
+if [[ -f "$SSL/operator.crt" ]]; then
+    CERT="$SSL/operator.crt"; KEY="$SSL/operator.key"; CA="$SSL/kanaha-ca.crt"
+else
+    CERT="$SSL/client.crt"; KEY="$SSL/client.key"; CA="$SSL/ca.crt"
+fi
+CAMERA_TLS_NAME="${KANAHA_CAMERA_TLS_NAME:-camera.local}"
+
+# camera_curl ADDR PATH [curl args...]: HTTPS to a camera on 8443 with its
+# certificate verified, never -k. By address first; if the certificate names
+# the phone by DNS name instead (curl exit 51/60), again with --resolve to that
+# name, as tools/kanaha-discover.sh does. Prints the last attempt's output.
+camera_curl() {
+    local addr=$1 path=$2 out rc=0
+    shift 2
+    local args=(-s --http2 --cert "$CERT" --key "$KEY" --cacert "$CA" "$@")
+    out=$(curl "${args[@]}" "https://${addr}:8443${path}") || rc=$?
+    if [[ $rc -eq 51 || $rc -eq 60 ]]; then
+        rc=0
+        out=$(curl "${args[@]}" --resolve "${CAMERA_TLS_NAME}:8443:${addr}" \
+            "https://${CAMERA_TLS_NAME}:8443${path}") || rc=$?
+    fi
+    printf '%s\n' "$out"
+    return $rc
+}
 PIXEL_MDNS="pixel9pro.local"
 PIXEL_IP="192.168.8.168"
 PORT=8443
@@ -140,13 +166,8 @@ api_call() {
     local timeout=${3:-15}  # Default 15 seconds, override for long operations
 
     local response
-    response=$(curl -sk --http2 --max-time "$timeout" \
-        --cert "$SSL/client.crt" \
-        --key "$SSL/client.key" \
-        --cacert "$SSL/ca.crt" \
-        -H "Content-Type: application/json" \
-        -d "$data" \
-        "https://${CAMERA_ADDR}:${PORT}/services/CameraControlService/${endpoint}" 2>&1)
+    response=$(camera_curl "$CAMERA_ADDR" "/services/CameraControlService/${endpoint}" \
+        --max-time "$timeout" -H "Content-Type: application/json" -d "$data" 2>&1)
 
     if $VERBOSE; then
         echo -e "${CYAN}Response:${NC}"

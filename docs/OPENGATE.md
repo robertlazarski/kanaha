@@ -123,11 +123,11 @@ manual controls at all.
 
 ### HTTP API
 
-Add `"open_gate": true` to the `startRecording` JSON body. Requires mTLS client cert (see `app/src/main/assets/ssl/`):
+Add `"open_gate": true` to the `startRecording` JSON body. Requires mTLS client cert (see [SECURITY.md](SECURITY.md#certificate-model-per-device-provisioning)):
 
 ```bash
 curl --cert client.crt --key client.key --cacert ca.crt \
-     --http2 -k \
+     --http2 \
      -X POST https://192.168.1.182:8443/services/CameraControlService/startRecording \
      -H 'Content-Type: application/json' \
      -d '{"action":"startRecording","clip_name":"shot01","open_gate":true}'
@@ -139,17 +139,17 @@ Or with `start_at` for synchronized multi-camera start (open gate on the Pixel o
 START_AT=$(( $(date +%s%N) / 1000000 + 5000 ))  # 5s lead time for open gate reopen
 
 # Pixel 10 Pro XL — open gate
-curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
+curl --cert client.crt --key client.key --cacert ca.crt --http2 \
      -X POST https://192.168.1.182:8443/services/CameraControlService/startRecording \
      -H 'Content-Type: application/json' \
      -d "{\"action\":\"startRecording\",\"clip_name\":\"A001\",\"open_gate\":true,\"start_at\":$START_AT}"
 
 # Phones without a 4:3 video size record standard 16:9 (open_gate ignored)
-curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
+curl --cert client.crt --key client.key --cacert ca.crt --http2 \
      -X POST https://192.168.1.95:8443/services/CameraControlService/startRecording \
      -H 'Content-Type: application/json' \
      -d "{\"action\":\"startRecording\",\"clip_name\":\"A001\",\"start_at\":$START_AT}"
-curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \
+curl --cert client.crt --key client.key --cacert ca.crt --http2 \
      -X POST https://192.168.1.170:8443/services/CameraControlService/startRecording \
      -H 'Content-Type: application/json' \
      -d "{\"action\":\"startRecording\",\"clip_name\":\"A001\",\"start_at\":$START_AT}"

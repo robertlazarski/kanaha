@@ -177,9 +177,9 @@ adb shell "run-as org.kanaha.camera cp /data/local/tmp/known_hosts /data/user/0/
 ### Example with curl
 
 ```bash
-SSL=/path/to/ssl/certs
+SSL=${KANAHA_CERT_DIR:-~/kanaha-ca}
 
-curl -sk --http2 \
+curl -s --http2 \
   --cert "$SSL/client.crt" \
   --key "$SSL/client.key" \
   --cacert "$SSL/ca.crt" \
@@ -485,14 +485,14 @@ Use the `deleteFiles` endpoint after successful transfers:
 
 ```bash
 # List files first to verify what will be deleted
-curl -sk --http2 \
+curl -s --http2 \
   --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
   -H "Content-Type: application/json" \
   -d '{"action":"listFiles"}' \
   https://camera:8443/services/CameraControlService/listFiles
 
 # Delete specific file after transfer
-curl -sk --http2 \
+curl -s --http2 \
   --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
   -H "Content-Type: application/json" \
   -d '{"action":"deleteFiles","pattern":"VID_20260104_*.mp4"}' \
@@ -505,22 +505,23 @@ curl -sk --http2 \
 #!/bin/bash
 # Transfer and cleanup workflow
 
-SSL=/path/to/ssl/certs
+SSL=${KANAHA_CERT_DIR:-~/kanaha-ca}
 CAMERA="192.168.8.168:8443"
 SERVER_ID="control1"
 
 # Step 1: Transfer all videos
 echo "Transferring videos..."
-curl -sk --http2 \
+curl -s --http2 \
   --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
   -H "Content-Type: application/json" \
   -d "{\"action\":\"sftpTransfer\",\"storage_server_id\":\"$SERVER_ID\",\"video_filename\":\"*\",\"destination_folder\":\"shoot_$(date +%Y%m%d)\"}" \
-  https://$CAMERA/services/CameraControlService/sftpTransfer
+  https://$CAMERA/services/CameraControlService/sftpTransfer > /tmp/transfer.json
 
-# Step 2: Verify transfer success before cleanup
-if [ $? -eq 0 ]; then
+# Step 2: Verify transfer success before cleanup. curl exits 0 on a failed
+# transfer too, so check the response, not $?.
+if grep -q '"success": *true' /tmp/transfer.json; then
     echo "Transfer complete. Cleaning up..."
-    curl -sk --http2 \
+    curl -s --http2 \
       --cert "$SSL/client.crt" --key "$SSL/client.key" --cacert "$SSL/ca.crt" \
       -H "Content-Type: application/json" \
       -d '{"action":"deleteFiles","pattern":"*"}' \

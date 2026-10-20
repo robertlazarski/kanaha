@@ -59,7 +59,7 @@ adb install app-debug.apk
 From a computer on the same WiFi network (requires an mTLS client cert — see [Set up mTLS](#1-set-up-mtls-ca)):
 
 ```bash
-curl -sk https://<phone-ip>:8443/services/CameraControlService/getStatus \
+curl -s https://<phone-ip>:8443/services/CameraControlService/getStatus \
   --cert client.crt --key client.key --cacert ca.crt
 ```
 
@@ -126,11 +126,13 @@ All API calls require mTLS client certificates:
 
 ```bash
 # Set certificate paths (adjust to your cert location)
-SSL=~/kanaha-certs
+SSL=${KANAHA_CERT_DIR:-~/kanaha-ca}
 CAMERA="192.168.1.100"
 
-# Convenience alias used in all examples below
-CURL="curl -sk --http2 --cert $SSL/client.crt --key $SSL/client.key --cacert $SSL/ca.crt"
+# Convenience alias used in all examples below. No -k: the camera's certificate
+# must match the address used; if it names the camera only as camera.local, add
+# --resolve camera.local:8443:$CAMERA and use https://camera.local:8443.
+CURL="curl -s --http2 --cert $SSL/client.crt --key $SSL/client.key --cacert $SSL/ca.crt"
 ```
 
 #### getStatus
