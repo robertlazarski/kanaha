@@ -110,15 +110,6 @@
             <parameter name="contentType">application/json</parameter>
         </operation>
 
-        <operation name="configure">
-            <parameter name="mcpDescription">Configure camera recording settings. Changes take effect on next startRecording.</parameter>
-            <parameter name="mcpInputSchema">{"type":"object","properties":{"resolution":{"type":"string","description":"3840x2160, 1920x1080, 1280x720. Default: 1920x1080"},"fps":{"type":"string","description":"30, 60. Default: 30"},"codec":{"type":"string","description":"H264, HEVC. Default: H264"}},"required":[]}</parameter>
-            <messageReceiver class="axis2_json_rpc_msg_recv"/>
-            <parameter name="RESTMethod">POST</parameter>
-            <parameter name="RESTLocation">/configure</parameter>
-            <parameter name="contentType">application/json</parameter>
-        </operation>
-
         <operation name="cleanupFiles">
             <parameter name="mcpDescription">Clean up video files from the device based on policy: transferred files only, all files, or files older than a threshold.</parameter>
             <parameter name="mcpInputSchema">{"type":"object","properties":{"cleanup_policy":{"type":"string","enum":["older_than_days","after_successful_transfer","all_videos","by_pattern"]},"days_threshold":{"type":"integer","minimum":1,"maximum":365,"description":"Required for older_than_days"},"file_pattern":{"type":"string","description":"Glob pattern; required for by_pattern"}},"required":["cleanup_policy"]}</parameter>

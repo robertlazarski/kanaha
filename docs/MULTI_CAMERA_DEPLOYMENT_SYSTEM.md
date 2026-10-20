@@ -181,7 +181,6 @@ Responses are `{"success":true,...}` or `{"success":false,"error":"..."}`;
 | `listFiles`, `deleteFiles`, `cleanupFiles` | Files on the device |
 | `sftpTransfer` | Send a recording and its sidecars to a storage server |
 | `describeClip` | On-device description of a recording (`nano` build) |
-| `configure` | **Not implemented**: accepted and answered, but changes nothing |
 
 `startRecording` also takes `duration` and `format`, which are logged and echoed
 back but have no effect: a recording runs until `stopRecording`. Parameters and

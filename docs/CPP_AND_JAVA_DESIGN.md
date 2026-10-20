@@ -78,7 +78,7 @@ a setting added, not a rewrite.
 
 | File | Lines | Role |
 |---|---|---|
-| `axis2c/camera_control_service.c` | 1,424 | The Axis2/C service. Parses the JSON request, dispatches on `action` (`startRecording`, `stopRecording`, `getStatus`, `listFiles`, `deleteFiles`, `cleanupFiles`, `configure`, `playTone`, `sftpTransfer`), and for each builds an Intent with `fork()`/`execvp()` (or, where `am` is refused, a request file) and waits for the response file. |
+| `axis2c/camera_control_service.c` | 1,424 | The Axis2/C service. Parses the JSON request, dispatches on `action` (`startRecording`, `stopRecording`, `getStatus`, `listFiles`, `deleteFiles`, `cleanupFiles`, `playTone`, `sftpTransfer`, `describeClip`, `setExposure`, `getExposure`), and for each builds an Intent with `fork()`/`execvp()` (or, where `am` is refused, a request file) and waits for the response file. |
 | `axis2c/kanaha_mcp.c`, `kanaha_mcp_main.c` | 633 | The MCP server: ten tools with schemas, JSON-RPC 2.0 over stdio, dispatching to the same service function. |
 | `axis2c/axis2_static_service_adapter.c` | 166 | The strong symbol `camera_control_service_invoke_json` that overrides the weak stub in Axis2/C core, converting json-c objects to and from the service's string interface. |
 

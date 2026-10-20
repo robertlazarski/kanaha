@@ -41,7 +41,7 @@ language. No curl, no certificates, no URL construction.
 
 ---
 
-## MCP Tools (12 camera operations)
+## MCP Tools (11 camera operations)
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
@@ -52,7 +52,6 @@ language. No curl, no certificates, no URL construction.
 | `listFiles` | List recorded video files | `pattern` |
 | `deleteFiles` | Delete files by pattern | `pattern` (required) |
 | `sftpTransfer` | Transfer to storage server | `storage_server_id`, `video_filename` |
-| `configure` | Set resolution, fps, codec | `resolution`, `fps`, `codec` |
 | `cleanupFiles` | Delete files by policy: `older_than_days`, `after_successful_transfer`, `all_videos`, `by_pattern` | `cleanup_policy` (required), `days_threshold`, `file_pattern` |
 | `describeClip` | Describe a finished recording from sampled frames with the on-device model (nano flavor; see `GOOGLE_NANO_INTEGRATION.md`); writes `<basename>.kanaha.json` | `video_filename` (required), `frame_count`, `positions`, `write_sidecar`, `max_dimension` |
 | `setExposure` | Pin ISO, shutter, white balance, focus and stabilization so cameras match, or return to auto | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone`, `fps` |
@@ -224,26 +223,6 @@ $CURL -d '{"action":"listFiles"}' "$BASE/listFiles"
         "..."
     ]
 }
-```
-
-### configure
-
-**curl:**
-```bash
-$CURL -H "Content-Type: application/json" \
-  -d '{"action":"configure","resolution":"1920x1080","fps":"30","codec":"H264"}' \
-  "$BASE/configure"
-```
-
-**MCP equivalent:**
-```json
-{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{
-  "name":"configure","arguments":{"resolution":"1920x1080","fps":"30","codec":"H264"}}}
-```
-
-**Response:**
-```json
-{"success": true, "message": "Camera configured", "resolution": "1920x1080", "fps": "30", "codec": "H264"}
 ```
 
 ---

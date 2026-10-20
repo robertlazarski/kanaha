@@ -354,9 +354,6 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     case "getStatus":
                         response = handleGetStatus(context, intent);
                         break;
-                    case "configure":
-                        response = handleConfigure(context, intent);
-                        break;
                     case "sftp_transfer":
                     case "sftpTransfer":
                         response = handleSftpTransfer(context, intent);
@@ -462,6 +459,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
             if (hlg10Error != null) {
                 return createErrorResponse(operationId, hlg10Error);
             }
+            // The size the session will record at, which can differ from the quality asked
+            // for: "4K" is 1920x1080 on a 1080p phone, open gate is the phone's 4:3 size.
+            String resolution = recordingResolution(mainActivity);
 
             long now = System.currentTimeMillis();
             long delayMs = startAt > 0 ? startAt - now : 0;
@@ -489,6 +489,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 response.put("timestamp", now);
                 response.put("open_gate", openGate);
                 response.put("hlg10", hlg10);
+                if (resolution != null) response.put("resolution", resolution);
                 response.put("message", "Recording scheduled");
                 return response;
             }
@@ -507,6 +508,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             response.put("format", format);
             response.put("open_gate", openGate);
             response.put("hlg10", hlg10);
+            if (resolution != null) response.put("resolution", resolution);
 
             if (success) {
                 response.put("message", "Recording started successfully");
@@ -1080,47 +1082,6 @@ public class CameraControlReceiver extends BroadcastReceiver {
     private static Long optionalLong(Intent intent, String key) {
         String value = emptyToNull(intent.getStringExtra(key));
         return value == null ? null : Long.parseLong(value);
-    }
-
-    /**
-     * Handle configure request from native layer
-     */
-    private JSONObject handleConfigure(Context context, Intent intent) throws JSONException {
-        String operationId = intent.getStringExtra("operation_id");
-        String resolution = intent.getStringExtra("resolution");
-        String fps = intent.getStringExtra("fps");
-        String codec = intent.getStringExtra("codec");
-
-        Log.i(TAG, String.format("Configure: operation=%s, resolution=%s, fps=%s, codec=%s",
-                operationId, resolution, fps, codec));
-
-        try {
-            MainActivity mainActivity = MainActivity.getInstance();
-            if (mainActivity == null) {
-                return createErrorResponse(operationId, "MainActivity instance not available");
-            }
-
-            boolean success = configureCameraSettings(mainActivity, resolution, fps, codec);
-
-            JSONObject response = new JSONObject();
-            response.put("success", success);
-            response.put("operation_id", operationId);
-            response.put("resolution", resolution);
-            response.put("fps", fps);
-            response.put("codec", codec);
-
-            if (success) {
-                response.put("message", "Camera configured successfully");
-            } else {
-                response.put("error", "Failed to configure camera");
-            }
-
-            return response;
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error configuring camera", e);
-            return createErrorResponse(operationId, "Exception configuring camera: " + e.getMessage());
-        }
     }
 
     /**
@@ -2022,6 +1983,26 @@ public class CameraControlReceiver extends BroadcastReceiver {
         return null;
     }
 
+    /** The recording size of the current camera session as "WxH", read on the UI thread; null if unknown. */
+    private static String recordingResolution(MainActivity mainActivity) throws InterruptedException {
+        AtomicReference<String> size = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        mainActivity.runOnUiThread(() -> {
+            try {
+                net.sourceforge.opencamera.preview.VideoProfile profile = mainActivity.getPreview().getVideoProfile();
+                if (profile != null && profile.videoFrameWidth > 0) {
+                    size.set(profile.videoFrameWidth + "x" + profile.videoFrameHeight);
+                }
+            } catch (RuntimeException e) {
+                Log.w(TAG, "recordingResolution: video profile unavailable", e);
+            } finally {
+                latch.countDown();
+            }
+        });
+        latch.await(1, TimeUnit.SECONDS);
+        return size.get();
+    }
+
     /**
      * Whether a video encoder on this device can take width x height for H.264, the default
      * output. The camera offers sizes no encoder takes: under Camera2 the Moto G Play 2024
@@ -2286,24 +2267,6 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
         } catch (Exception e) {
             Log.e(TAG, "configureOpenGate: error", e);
-        }
-    }
-
-    /**
-     * Configure camera settings
-     */
-    private static boolean configureCameraSettings(MainActivity mainActivity, String resolution, String fps, String codec) {
-        Log.i(TAG, String.format("Configuring camera: resolution=%s, fps=%s, codec=%s", resolution, fps, codec));
-
-        try {
-            // TODO: Integrate with OpenCamera settings configuration
-            // This would modify the camera preview and recording settings
-
-            return true; // Placeholder success
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error configuring camera settings", e);
-            return false;
         }
     }
 

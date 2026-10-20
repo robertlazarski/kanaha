@@ -224,20 +224,6 @@ static const char SCHEMA_GET_EXPOSURE[] =
     "\"required\":[]"
     "}";
 
-static const char SCHEMA_CONFIGURE[] =
-    "{"
-    "\"type\":\"object\","
-    "\"properties\":{"
-        "\"resolution\":{\"type\":\"string\","
-            "\"description\":\"Video resolution: 3840x2160, 1920x1080, 1280x720. Default: 1920x1080\"},"
-        "\"fps\":{\"type\":\"string\","
-            "\"description\":\"Frames per second: 30, 60. Default: 30\"},"
-        "\"codec\":{\"type\":\"string\","
-            "\"description\":\"Video codec: H264, HEVC. Default: H264\"}"
-    "},"
-    "\"required\":[]"
-    "}";
-
 static const char SCHEMA_CLEANUP_FILES[] =
     "{"
     "\"type\":\"object\","
@@ -334,12 +320,6 @@ static const kanaha_mcp_tool_t kanaha_mcp_tools[] = {
         "Report the exposure, white balance and focus modes in force, the camera's live "
         "values, what it supports and its ranges.",
         SCHEMA_GET_EXPOSURE
-    },
-    {
-        "configure",
-        "Configure camera recording settings: resolution, frame rate, and codec. "
-        "Changes take effect on the next startRecording call.",
-        SCHEMA_CONFIGURE
     },
     {
         "cleanupFiles",
@@ -490,7 +470,7 @@ static json_object *mcp_handle_tools_call(
         *out_code = MCP_ERR_METHOD_NOT_FOUND;
         *out_msg  = "Unknown tool. Available: getStatus, startRecording, "
                     "stopRecording, playTone, listFiles, deleteFiles, "
-                    "sftpTransfer, configure, cleanupFiles";
+                    "sftpTransfer, cleanupFiles, describeClip, setExposure, getExposure";
         return NULL;
     }
 

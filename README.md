@@ -18,7 +18,7 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 - **Recording Start Sidecar** - Writes `kanaha_recording_start.json` at recording start (millisecond precision, GPS time). It marks when the start fired, not the first frame, which came 0.38–1.12 s later on the phones measured, so it locates takes rather than aligning them
 - **Open Gate Recording** - Full 4:3 sensor field of view on supported devices (2560×1920 on the Pixel 10 Pro XL, the largest 4:3 frame its encoder accepts; less resolution than 4K, more of the scene vertically); see [Open Gate Recording](docs/OPENGATE.md)
 - **On-Device Clip Description** - `describeClip` samples frames from a finished recording and describes them with Gemini Nano through ML Kit, writing a `<clip>.kanaha.json` sidecar that travels with the video. Opt-in `nano` build flavour; the default `foss` build keeps the operation and reports the model unavailable. See [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md)
-- **MCP (AI Assistant) Support** - [Model Context Protocol](https://modelcontextprotocol.io/) integration lets Claude Desktop and other AI assistants discover and control cameras as tools. 12 camera operations exposed with full parameter schemas. 117 KB native binary, no JVM; see [MCP Documentation](docs/MCP.md)
+- **MCP (AI Assistant) Support** - [Model Context Protocol](https://modelcontextprotocol.io/) integration lets Claude Desktop and other AI assistants discover and control cameras as tools. 11 camera operations exposed with full parameter schemas. 117 KB native binary, no JVM; see [MCP Documentation](docs/MCP.md)
 
 ## Installation
 
@@ -336,7 +336,6 @@ Response (10 tools with full inputSchema):
       {"name": "listFiles",      "description": "List recorded video files on the device.", "...": "..."},
       {"name": "deleteFiles",    "description": "Delete files matching a glob pattern.", "...": "..."},
       {"name": "sftpTransfer",   "description": "Transfer file via SFTP with Ed25519 SSH key auth.", "...": "..."},
-      {"name": "configure",      "description": "Set camera resolution, fps, codec.", "...": "..."},
       {"name": "cleanupFiles",   "description": "Clean up transferred files.", "...": "..."},
       {"name": "describeClip",   "description": "Describe a recording with the on-device model (nano flavor).", "...": "..."}
     ]
@@ -515,7 +514,7 @@ See [Security Documentation](docs/SECURITY.md) for threat model, certificate man
 | [SMPTE Timecode Setup](docs/IRIG_PRO_SMPTE_TIMECODE_SETUP.md) | iRig Pro I/O + Tentacle Sync hardware timecode setup |
 | [GPS Synchronization](docs/GPS.md) | GPS/NTP soft sync, `start_at` scheduled recording, software slate (`playTone`), sync sidecar — vs. SMPTE/LTC for consumer and security use cases |
 | [Threading Model](docs/THREAD_MODEL.md) | IPC pipeline threading: C Apache/Axis2 worker → Android UI thread → background handler; JMM visibility rules, `CountDownLatch` patterns |
-| [MCP (AI Assistant)](docs/MCP.md) | Model Context Protocol integration — 12 camera tools, Claude Desktop config, live Pixel 9 Pro examples |
+| [MCP (AI Assistant)](docs/MCP.md) | Model Context Protocol integration — 11 camera tools, Claude Desktop config, live Pixel 9 Pro examples |
 | [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md) | `describeClip`: per-clip descriptions from Gemini Nano via ML Kit, the `.kanaha.json` sidecar, the `foss`/`nano` build flavors, and why the `nano` build is private-use only under GPL v3 |
 | [C and Java Design](docs/CPP_AND_JAVA_DESIGN.md) | Where Java starts and ends in this app, the Intent seam and its request-file fallback for devices that refuse `am`, and the licence boundary between OpenCamera (GPL) and the Axis2/C service (Apache 2.0) |
 | [Why Not the NDK Camera API](docs/NDK_INSTEAD_OF_OPENCAMERA_REJECTED.md) | The case for replacing OpenCamera with NDK camera code, and why fifteen years of device coverage won the argument |

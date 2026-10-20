@@ -16,7 +16,6 @@
  *   - listFiles       (list recorded video files)
  *   - deleteFiles     (delete recorded files by pattern)
  *   - sftpTransfer    (transfer files to storage server)
- *   - configure       (set camera resolution, fps, codec)
  *   - cleanupFiles    (clean up transferred files)
  *   - describeClip    (on-device description of a recording; nano flavor)
  *   - setExposure     (pin ISO, shutter, white balance, focus, stabilization)

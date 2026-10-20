@@ -294,6 +294,24 @@ static int send_intent_and_wait_for_response(
 }
 
 /*
+ * For callers that need only success or failure. The helper leaves the response
+ * file in place on success, for callers that read it (getStatus, listFiles); a
+ * caller that does not read it must remove it, or one file is left in the cache
+ * directory per call.
+ */
+static int send_intent_and_discard_response(
+    const char* operation_id,
+    const intent_extra_t* extras,
+    int num_extras
+) {
+    int result = send_intent_and_wait_for_response_ex(operation_id, extras, num_extras, 0);
+    char response_file[256];
+    snprintf(response_file, sizeof(response_file), "%s%s.json", RESPONSE_FILE_PREFIX, operation_id);
+    unlink(response_file);
+    return result;
+}
+
+/*
  * As above, but with keep_response_file set the response file is left in place
  * even when the Java side reported success:false, so a caller that passes the
  * Java response through (describe_clip) can hand the client the reason and the
@@ -588,7 +606,8 @@ static void create_error_response(char* buffer, size_t size, const char* error) 
  * ======================================================================== */
 
 int camera_device_start_recording_impl(const char* clip_name, const char* quality, int duration, const char* format, long long start_at, int open_gate,
-                                       int hlg10, char* reason, size_t reason_size);
+                                       int hlg10, char* reason, size_t reason_size,
+                                       char* resolution, size_t resolution_size);
 
 /* setExposure fields as the Java side takes them: numbers as their JSON text,
  * "" when not given; stabilization -1 when not given. */
@@ -613,7 +632,6 @@ int camera_device_get_status_impl(char* status_json, size_t buffer_size);
 int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
 int camera_device_init_impl(void);
 void camera_device_cleanup_impl(void);
-int camera_device_configure_impl(const char* resolution, const char* fps, const char* codec);
 int camera_device_sftp_transfer_impl(const char* storage_server_id, const char* video_filename, const char* destination_folder);
 int camera_device_cleanup_files_impl(const char* cleanup_policy, int days_threshold, const char* file_pattern);
 int camera_device_delete_files_impl(const char* pattern);
@@ -686,15 +704,21 @@ int camera_control_service_invoke_json_impl(
         int hlg10 = extract_json_bool(json_request, "hlg10", 0);
 
         char reason[384] = "";
+        char resolution[32] = "";
         int result = camera_device_start_recording_impl(clip_name, quality, duration, format, start_at, open_gate,
-                                                        hlg10, reason, sizeof(reason));
+                                                        hlg10, reason, sizeof(reason),
+                                                        resolution, sizeof(resolution));
 
         if (result == 0) {
-            char esc_clip[513], esc_quality[129];   /* 2*src+1 worst-case escaping */
+            /* quality is what was asked for; resolution is what the camera records,
+             * which differs on a phone whose encoder cannot take the request. */
+            char esc_clip[513], esc_quality[129], esc_res[65];   /* 2*src+1 worst-case escaping */
             snprintf(json_response, response_size,
-                "{\"success\":true,\"message\":\"Recording started\",\"clip_name\":\"%s\",\"quality\":\"%s\",\"hlg10\":%s}",
+                "{\"success\":true,\"message\":\"Recording started\",\"clip_name\":\"%s\",\"quality\":\"%s\","
+                "\"resolution\":\"%s\",\"hlg10\":%s}",
                 json_escape(clip_name, esc_clip, sizeof(esc_clip)),
                 json_escape(quality, esc_quality, sizeof(esc_quality)),
+                json_escape(resolution, esc_res, sizeof(esc_res)),
                 hlg10 ? "true" : "false");
         } else if (reason[0]) {
             /* The Java side's own reason, such as the camera app being in the
@@ -725,28 +749,6 @@ int camera_control_service_invoke_json_impl(
             snprintf(json_response, response_size, "{\"success\":true,\"status\":%s}", status_buffer);
         } else {
             create_error_response(json_response, response_size, "Failed to get status");
-        }
-    }
-    else if (strcmp(action, "configure") == 0 || strcmp(action, "configure_settings") == 0) {
-        char resolution[64] = "1920x1080";
-        char fps[16] = "30";
-        char codec[32] = "H.264";
-
-        extract_json_string(json_request, "resolution", resolution, sizeof(resolution));
-        extract_json_string(json_request, "fps", fps, sizeof(fps));
-        extract_json_string(json_request, "codec", codec, sizeof(codec));
-
-        int result = camera_device_configure_impl(resolution, fps, codec);
-
-        if (result == 0) {
-            char esc_res[129], esc_fps[33], esc_codec[65];  /* 2*src+1 worst-case escaping */
-            snprintf(json_response, response_size,
-                "{\"success\":true,\"message\":\"Camera configured\",\"resolution\":\"%s\",\"fps\":\"%s\",\"codec\":\"%s\"}",
-                json_escape(resolution, esc_res, sizeof(esc_res)),
-                json_escape(fps, esc_fps, sizeof(esc_fps)),
-                json_escape(codec, esc_codec, sizeof(esc_codec)));
-        } else {
-            create_error_response(json_response, response_size, "Failed to configure camera");
         }
     }
     else if (strcmp(action, "list_files") == 0 || strcmp(action, "listFiles") == 0) {
@@ -972,7 +974,9 @@ int camera_device_start_recording_impl(
     int open_gate,
     int hlg10,
     char* reason,
-    size_t reason_size
+    size_t reason_size,
+    char* resolution,
+    size_t resolution_size
 ) {
     LOGI("camera_device_start_recording_impl called");
     LOGI("  clip_name: %s", clip_name ? clip_name : "NULL");
@@ -1014,28 +1018,34 @@ int camera_device_start_recording_impl(
 
     LOGI("Sending secure intent broadcast to start recording");
 
-    /* Keep the response file on failure: it holds the Java side's reason. */
+    /* Keep the response file either way and read it here: on success it carries the
+     * recording resolution, on failure the Java side's reason. Then remove it. */
     int result = send_intent_and_wait_for_response_ex(operation_id, extras,
                                                       (int)(sizeof(extras) / sizeof(extras[0])), 1);
     if (result == 0) {
         LOGI("Recording started successfully via secure IPC");
     } else {
         LOGE("Failed to start recording via secure IPC");
-        char response_file[256];
-        snprintf(response_file, sizeof(response_file), "%s%s.json", RESPONSE_FILE_PREFIX, operation_id);
-        FILE* file = fopen(response_file, "r");
-        if (file) {
-            char response_buffer[4096];
-            size_t bytes_read = fread(response_buffer, 1, sizeof(response_buffer) - 1, file);
-            fclose(file);
-            response_buffer[bytes_read] = '\0';
-            if (reason && reason_size > 0 &&
-                !extract_json_string(response_buffer, "error", reason, reason_size)) {
-                reason[0] = '\0';
-            }
-        }
-        unlink(response_file);
     }
+    char response_file[256];
+    snprintf(response_file, sizeof(response_file), "%s%s.json", RESPONSE_FILE_PREFIX, operation_id);
+    FILE* file = fopen(response_file, "r");
+    if (file) {
+        char response_buffer[4096];
+        size_t bytes_read = fread(response_buffer, 1, sizeof(response_buffer) - 1, file);
+        fclose(file);
+        response_buffer[bytes_read] = '\0';
+        if (result == 0) {
+            if (resolution && resolution_size > 0 &&
+                !extract_json_string(response_buffer, "resolution", resolution, resolution_size)) {
+                resolution[0] = '\0';
+            }
+        } else if (reason && reason_size > 0 &&
+                   !extract_json_string(response_buffer, "error", reason, reason_size)) {
+            reason[0] = '\0';
+        }
+    }
+    unlink(response_file);
 
     return result;
 }
@@ -1061,7 +1071,7 @@ int camera_device_stop_recording_impl(void) {
 
     LOGI("Sending secure intent broadcast to stop recording");
 
-    int result = send_intent_and_wait_for_response(operation_id, extras, 2);
+    int result = send_intent_and_discard_response(operation_id, extras, 2);
     if (result == 0) {
         LOGI("Recording stopped successfully via secure IPC");
     } else {
@@ -1145,23 +1155,6 @@ void camera_device_cleanup_impl(void) {
 }
 
 /**
- * Configure camera settings for Android
- */
-int camera_device_configure_impl(
-    const char* resolution,
-    const char* fps,
-    const char* codec
-) {
-    LOGI("camera_device_configure_impl called");
-    LOGI("  resolution: %s", resolution ? resolution : "NULL");
-    LOGI("  fps: %s", fps ? fps : "NULL");
-    LOGI("  codec: %s", codec ? codec : "NULL");
-
-    LOGI("Camera configuration completed successfully");
-    return 0;
-}
-
-/**
  * SFTP file transfer implementation for Android (Security-Hardened)
  * Uses Internal Intent IPC (NO JNI) to communicate with CameraControlReceiver
  */
@@ -1227,7 +1220,7 @@ int camera_device_sftp_transfer_impl(
 
     LOGI("Sending secure intent broadcast for SFTP transfer");
 
-    int result = send_intent_and_wait_for_response(operation_id, extras, 5);
+    int result = send_intent_and_discard_response(operation_id, extras, 5);
     if (result == 0) {
         LOGI("File transferred successfully via secure IPC");
     } else {
@@ -1300,7 +1293,7 @@ int camera_device_cleanup_files_impl(
             {"--ei", "days_threshold", days_str}
         };
         LOGI("Sending secure intent broadcast for file cleanup (older_than_days)");
-        result = send_intent_and_wait_for_response(operation_id, extras, 4);
+        result = send_intent_and_discard_response(operation_id, extras, 4);
     } else if (strcmp(cleanup_policy, "by_pattern") == 0) {
         intent_extra_t extras[] = {
             {"--es", "action", "cleanup_files"},
@@ -1309,7 +1302,7 @@ int camera_device_cleanup_files_impl(
             {"--es", "file_pattern", file_pattern}
         };
         LOGI("Sending secure intent broadcast for file cleanup (by_pattern)");
-        result = send_intent_and_wait_for_response(operation_id, extras, 4);
+        result = send_intent_and_discard_response(operation_id, extras, 4);
     } else {
         intent_extra_t extras[] = {
             {"--es", "action", "cleanup_files"},
@@ -1317,7 +1310,7 @@ int camera_device_cleanup_files_impl(
             {"--es", "cleanup_policy", cleanup_policy}
         };
         LOGI("Sending secure intent broadcast for file cleanup");
-        result = send_intent_and_wait_for_response(operation_id, extras, 3);
+        result = send_intent_and_discard_response(operation_id, extras, 3);
     }
 
     if (result == 0) {
@@ -1364,7 +1357,7 @@ int camera_device_delete_files_impl(const char* pattern) {
 
     LOGI("Sending secure intent broadcast to delete files");
 
-    int result = send_intent_and_wait_for_response(operation_id, extras, 3);
+    int result = send_intent_and_discard_response(operation_id, extras, 3);
     if (result == 0) {
         LOGI("Files deleted successfully via secure IPC");
     } else {
@@ -1611,7 +1604,7 @@ int camera_device_play_tone_impl(int frequency, int duration_ms, long long start
         {"--es", "start_at",     start_at_str}
     };
 
-    int result = send_intent_and_wait_for_response(operation_id, extras, 5);
+    int result = send_intent_and_discard_response(operation_id, extras, 5);
     LOGI("camera_device_play_tone_impl: result=%d", result);
     return result;
 }
