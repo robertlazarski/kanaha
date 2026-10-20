@@ -221,8 +221,9 @@ are in [IRIG_PRO_SMPTE_TIMECODE_SETUP.md](IRIG_PRO_SMPTE_TIMECODE_SETUP.md).
 - **`start_at`**: every camera fires at the same wall-clock millisecond, so WiFi
   delivery delay does not skew the start. It must be 50 ms to 30 s in the future;
   outside that window the camera starts immediately.
-- **The recording-start sidecar**, `kanaha_recording_start.json`, records when the start
-  fired, not the first frame. Measured on 2026-10-19, the Pixel 10 Pro XL's first frame came
+- **The recording-start sidecar**, one per recording (`<basename>.kanaha_start.json`,
+  carried by `sftpTransfer` and `deleteFiles`), records when the start fired, not the first
+  frame. Measured on 2026-10-19, the Pixel 10 Pro XL's first frame came
   0.38 s after `start_at` and the Moto G Play 2024's 1.12 s after, while their sidecars were
   9 ms apart: the sidecar alone left the two clips 0.74 s (22 frames) apart. Use it to find
   the takes, not to align them.

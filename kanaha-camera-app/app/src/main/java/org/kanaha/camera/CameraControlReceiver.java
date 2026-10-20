@@ -475,8 +475,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     long fireTime = System.currentTimeMillis();
                     Log.i(TAG, "Scheduled recording start firing at " + fireTime);
-                    writeSyncSidecar(context, clip, fireTime, og, tenBit);
-                    startRecordingInternal(activity, clip);
+                    if (startRecordingInternal(activity, clip)) {
+                        writeSyncSidecar(context, clip, fireTime, og, tenBit);
+                    }
                 }, delayMs);
 
                 JSONObject response = new JSONObject();
@@ -495,8 +496,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
             }
 
             // Immediate start (no start_at or already past)
-            writeSyncSidecar(context, clipName, System.currentTimeMillis(), openGate, hlg10);
+            long startMs = System.currentTimeMillis();
             boolean success = startRecordingInternal(mainActivity, clipName);
+            if (success) {
+                writeSyncSidecar(context, clipName, startMs, openGate, hlg10);
+            }
 
             // Create response JSON
             JSONObject response = new JSONObject();
@@ -1215,7 +1219,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         }
 
         // A clip's description sidecar (<basename>.kanaha.json) travels with it.
-        final File[] filesToTransfer = withDescriptionSidecars(context, videosToTransfer);
+        final File[] filesToTransfer = withSidecars(context, videosToTransfer);
 
         // Execute SFTP transfer in background thread
         java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
@@ -1287,7 +1291,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
         try {
             File videoDir = getVideoDirectory(context);
-            File[] filesToDelete = withDescriptionSidecars(context, findFilesToDelete(videoDir, pattern));
+            File[] filesToDelete = withSidecars(context, findFilesToDelete(videoDir, pattern));
 
             if (filesToDelete == null || filesToDelete.length == 0) {
                 JSONObject response = new JSONObject();
@@ -2369,6 +2373,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
      * ==================================================================== */
 
     private static final String DESCRIPTION_SIDECAR_SUFFIX = ".kanaha.json";
+    private static final String START_SIDECAR_SUFFIX = ".kanaha_start.json";
 
     private JSONObject handleDescribeClip(Context context, Intent intent) throws JSONException {
         final String operationId = intent.getStringExtra("operation_id");
@@ -2546,7 +2551,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         return m;
     }
 
-    /** Directory the sidecars live in: the app's own external files dir, next to kanaha_recording_start.json. */
+    /** Directory the sidecars live in: the app's own external files dir. */
     private static File sidecarDirectory(Context context) {
         File dir = context.getExternalFilesDir(null);
         if (dir == null) dir = context.getFilesDir();
@@ -2562,14 +2567,23 @@ public class CameraControlReceiver extends BroadcastReceiver {
         return new File(sidecarDirectory(context), base + DESCRIPTION_SIDECAR_SUFFIX);
     }
 
-    /** The given clips plus every existing description sidecar that belongs to one of them. */
-    private static File[] withDescriptionSidecars(Context context, File[] videos) {
+    /** <video basename>.kanaha_start.json, the recording-start sidecar for a clip. */
+    private static File startSidecarFor(Context context, String videoName) {
+        int dot = videoName.lastIndexOf('.');
+        String base = dot > 0 ? videoName.substring(0, dot) : videoName;
+        return new File(sidecarDirectory(context), base + START_SIDECAR_SUFFIX);
+    }
+
+    /** The given clips plus every existing sidecar (description, recording start) that belongs to one of them. */
+    private static File[] withSidecars(Context context, File[] videos) {
         if (videos == null) return new File[0];
         java.util.ArrayList<File> all = new java.util.ArrayList<>();
         for (File v : videos) {
             all.add(v);
             File sc = descriptionSidecarFor(context, v);
             if (sc.exists()) all.add(sc);
+            File start = startSidecarFor(context, v.getName());
+            if (start.exists()) all.add(start);
         }
         return all.toArray(new File[0]);
     }
@@ -2577,7 +2591,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
     /**
      * Write the per-clip description sidecar. Writes to a temp name and renames
      * so a reader never sees a partial file. recording_start_ms is copied from
-     * kanaha_recording_start.json when that file names this clip, so a consumer
+     * the clip's recording-start sidecar when it has one, so a consumer
      * can convert time_ms to wall-clock without a second lookup.
      */
     private static File writeDescriptionSidecar(Context context, File video, long durationMs,
@@ -2611,35 +2625,17 @@ public class CameraControlReceiver extends BroadcastReceiver {
         }
     }
 
-    /**
-     * recording_start_ms from kanaha_recording_start.json when that file
-     * belongs to this clip, else 0. The start sidecar records the most recent
-     * recording and its clip_name is the caller's label, not the file name
-     * OpenCamera chose (VID_<timestamp>.mp4), so the name rarely matches.
-     * The reliable test is time: the file's modification time is the end of
-     * the recording, so start ≈ mtime − duration; accept within a minute.
-     */
+    /** recording_start_ms from the clip's own recording-start sidecar, else 0. */
     private static long recordingStartFor(Context context, File video, long durationMs) {
         try {
-            File f = new File(sidecarDirectory(context), "kanaha_recording_start.json");
+            File f = startSidecarFor(context, video.getName());
             if (!f.isFile()) return 0;
             StringBuilder sb = new StringBuilder();
             try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(f))) {
                 String line;
                 while ((line = br.readLine()) != null) sb.append(line);
             }
-            JSONObject start = new JSONObject(sb.toString());
-            long startMs = start.optLong("recording_start_ms", 0);
-            if (startMs <= 0) return 0;
-            String clip = start.optString("clip_name", "");
-            String base = video.getName();
-            int dot = base.lastIndexOf('.');
-            if (dot > 0) base = base.substring(0, dot);
-            boolean nameMatches = !clip.isEmpty()
-                    && (clip.equals(video.getName()) || clip.equals(base) || video.getName().contains(clip));
-            long expectedStart = video.lastModified() - Math.max(0, durationMs);
-            boolean timeMatches = Math.abs(expectedStart - startMs) < 60_000L;
-            return (nameMatches || timeMatches) ? startMs : 0;
+            return new JSONObject(sb.toString()).optLong("recording_start_ms", 0);
         } catch (Exception ignored) {}
         return 0;
     }
@@ -2733,73 +2729,76 @@ public class CameraControlReceiver extends BroadcastReceiver {
     }
 
     /**
-     * Write a JSON sidecar file capturing the exact recording start time in milliseconds.
+     * Write the recording-start sidecar for the recording just started: <video
+     * basename>.kanaha_start.json in the sidecar directory, one per recording, so a
+     * later take does not overwrite an earlier one's. Called once the recording has
+     * started, when the file name is known.
      *
-     * Analog of the BWF Time Reference embedded in broadcast WAV files (parseLTC.sh reads it
-     * via "sndfile-info --broadcast f8.wav | grep 'Time ref'" to compute f8_start_timecode).
-     * MP4 files only carry creation_time at 1-second resolution; this sidecar gives ms precision.
-     *
-     * File: DCIM/OpenCamera/kanaha_recording_start.json
      * Content:
-     *   recording_start_ms  — System.currentTimeMillis() at the moment recording starts
-     *   clip_name           — requested clip name prefix
-     *   gps_time            — Location.getTime() of most recent GPS fix (ms since epoch)
-     *   gps_age_ms          — age of the GPS fix at recording start
+     *   file                — the recording's file name
+     *   recording_start_ms  — System.currentTimeMillis() when the start was triggered,
+     *                         not the first frame, which comes later (0.38 s on the
+     *                         Pixel 10 Pro XL, 1.12 s on the Moto G Play 2024)
+     *   clip_name           — requested clip name label
+     *   open_gate, hlg10    — how it was recorded
+     *   gps_time, gps_age_ms — most recent GPS fix and its age at the start, if any
      *
-     * parseWithoutLTC.sh reads this file from the camera transfer directory to compute
-     * sub-second trim offsets: laptop_ms = recording_start_ms - clock_offset_ms.
-     * Combined with NTP RTT correction this yields ~100–200 ms accuracy; with a software
-     * slate it improves to ~1–5 ms.
+     * MP4 files carry creation_time only to the second; this gives the trigger to the
+     * millisecond. Clips are aligned on SMPTE timecode; the sidecar locates takes.
+     * Pull via ADB from /storage/emulated/0/Android/data/org.kanaha.camera/files/.
      */
     private void writeSyncSidecar(Context context, String clipName, long recordingStartMs, boolean openGate, boolean hlg10) {
         try {
+            MainActivity mainActivity = MainActivity.getInstance();
+            String videoName = mainActivity != null ? mainActivity.getApplicationInterface().getLastVideoFileName() : null;
+            if (videoName == null) {
+                Log.w(TAG, "Recording-start sidecar not written: recording file name unknown");
+                return;
+            }
             JSONObject sidecar = new JSONObject();
+            sidecar.put("file", videoName);
             sidecar.put("recording_start_ms", recordingStartMs);
             sidecar.put("clip_name", clipName != null ? clipName : "");
             sidecar.put("open_gate", openGate);
             sidecar.put("hlg10", hlg10);
 
-            // Add GPS fix time if available (same pattern as addCameraStatusDetails)
-            MainActivity mainActivity = MainActivity.getInstance();
-            if (mainActivity != null) {
-                try {
-                    Location gpsLoc = null;
-                    net.sourceforge.opencamera.LocationSupplier locationSupplier =
-                            mainActivity.getLocationSupplier();
-                    if (locationSupplier != null) {
-                        gpsLoc = locationSupplier.getLocation();
+            // GPS fix time if available (same pattern as addCameraStatusDetails)
+            try {
+                Location gpsLoc = null;
+                net.sourceforge.opencamera.LocationSupplier locationSupplier =
+                        mainActivity.getLocationSupplier();
+                if (locationSupplier != null) {
+                    gpsLoc = locationSupplier.getLocation();
+                }
+                if (gpsLoc == null
+                        && context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                           == PackageManager.PERMISSION_GRANTED) {
+                    LocationManager lm = (LocationManager)
+                            mainActivity.getSystemService(Context.LOCATION_SERVICE);
+                    if (lm != null) {
+                        gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
                     }
-                    if (gpsLoc == null
-                            && context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-                               == PackageManager.PERMISSION_GRANTED) {
-                        LocationManager lm = (LocationManager)
-                                mainActivity.getSystemService(Context.LOCATION_SERVICE);
-                        if (lm != null) {
-                            gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-                        }
-                    }
-                    if (gpsLoc != null && gpsLoc.getTime() > 0) {
-                        sidecar.put("gps_time", gpsLoc.getTime());
-                        sidecar.put("gps_age_ms", recordingStartMs - gpsLoc.getTime());
-                    }
-                } catch (SecurityException ignored) {}
-            }
+                }
+                if (gpsLoc != null && gpsLoc.getTime() > 0) {
+                    sidecar.put("gps_time", gpsLoc.getTime());
+                    sidecar.put("gps_age_ms", recordingStartMs - gpsLoc.getTime());
+                }
+            } catch (SecurityException ignored) {}
 
-            // Write to app's own external files dir — no scoped storage permission needed
-            // from BroadcastReceiver context. Path:
-            //   /storage/emulated/0/Android/data/org.kanaha.camera/files/kanaha_recording_start.json
-            // Pull via ADB: adb pull /storage/emulated/0/Android/data/org.kanaha.camera/files/kanaha_recording_start.json
-            File dir = context.getExternalFilesDir(null);
-            if (dir == null) dir = context.getFilesDir(); // fallback to internal
-            if (!dir.exists()) dir.mkdirs();
-            File sidecarFile = new File(dir, "kanaha_recording_start.json");
-            try (FileWriter fw = new FileWriter(sidecarFile)) {
+            // Temp name then rename, so a reader never sees a partial file.
+            File target = startSidecarFor(context, videoName);
+            File tmp = new File(target.getParentFile(), target.getName() + ".tmp");
+            try (FileWriter fw = new FileWriter(tmp)) {
                 fw.write(sidecar.toString(2));
             }
-            Log.i(TAG, "Sync sidecar written: " + sidecarFile.getAbsolutePath()
+            if (!tmp.renameTo(target)) {
+                Log.w(TAG, "Could not rename recording-start sidecar into place: " + target);
+                return;
+            }
+            Log.i(TAG, "Recording-start sidecar written: " + target.getAbsolutePath()
                     + "  recording_start_ms=" + recordingStartMs);
         } catch (Exception e) {
-            Log.w(TAG, "Failed to write sync sidecar (non-fatal)", e);
+            Log.w(TAG, "Failed to write recording-start sidecar (non-fatal)", e);
         }
     }
 

@@ -15,7 +15,7 @@ Kanaha transforms Android phones into network-controllable cameras with a secure
 - **Synchronized Start** - `start_at` parameter fires all cameras at the same UTC millisecond, independent of network delivery timing
 - **Software Sync Slate** - for shoots without timecode, `playTone` plays a synthesized sine wave on all cameras + laptop simultaneously; onset detection in post gives ~1–5 ms inter-camera sync
 - **GPS Timestamping** - `getStatus` exposes GPS fix time and age for clock quality assessment
-- **Recording Start Sidecar** - Writes `kanaha_recording_start.json` at recording start (millisecond precision, GPS time). It marks when the start fired, not the first frame, which came 0.38–1.12 s later on the phones measured, so it locates takes rather than aligning them
+- **Recording Start Sidecar** - Writes `<recording>.kanaha_start.json` for each recording when it starts (millisecond precision, GPS time). It marks when the start fired, not the first frame, which came 0.38–1.12 s later on the phones measured, so it locates takes rather than aligning them
 - **Open Gate Recording** - Full 4:3 sensor field of view on supported devices (2560×1920 on the Pixel 10 Pro XL, the largest 4:3 frame its encoder accepts; less resolution than 4K, more of the scene vertically); see [Open Gate Recording](docs/OPENGATE.md)
 - **On-Device Clip Description** - `describeClip` samples frames from a finished recording and describes them with Gemini Nano through ML Kit, writing a `<clip>.kanaha.json` sidecar that travels with the video. Opt-in `nano` build flavour; the default `foss` build keeps the operation and reports the model unavailable. See [On-Device Clip Description](docs/GOOGLE_NANO_INTEGRATION.md)
 - **MCP (AI Assistant) Support** - [Model Context Protocol](https://modelcontextprotocol.io/) integration lets Claude Desktop and other AI assistants discover and control cameras as tools. 11 camera operations exposed with full parameter schemas. 117 KB native binary, no JVM; see [MCP Documentation](docs/MCP.md)
@@ -408,7 +408,7 @@ no URL, so for them `"action"` is what selects the tool.
 
 **`start_at` parameter** (on `startRecording` and `playTone`): Pass a future UTC epoch millisecond timestamp. The camera schedules the action internally and returns immediately. Send to multiple cameras simultaneously — each fires at the same wall-clock time regardless of network delivery timing. See [Quick Start](#5-control-via-api) for curl examples.
 
-**`kanaha_recording_start.json` sidecar**: Written automatically to `DCIM/OpenCamera/` when recording starts. Contains `recording_start_ms` (ms precision), `clip_name`, and GPS fix time if available. Transfer it alongside the video with `sftpTransfer` using `"video_filename":"kanaha_recording_start.json"`. `parseWithoutLTC.sh` reads this for sub-second trim offsets — the software equivalent of a BWF Time Reference.
+**Recording-start sidecar**: each recording gets `<recording basename>.kanaha_start.json` (for `VID_20261019_142007.mp4`, `VID_20261019_142007.kanaha_start.json`) in the app's external files directory, written once the recording has started. Contains `file`, `recording_start_ms` (when the start fired, to the millisecond; not the first frame), `clip_name`, `open_gate`, `hlg10` and the GPS fix time if available. `sftpTransfer` and `deleteFiles` carry it with its recording. Clips are aligned on SMPTE timecode; the sidecar locates takes.
 
 ## Multi-Camera Setup
 

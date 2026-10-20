@@ -123,7 +123,7 @@ The fix (implemented this session): `addCameraStatusDetails()` now calls `mainAc
 |------|------|--------|
 | `LocationSupplier.getLocation()` preferred over `getLastKnownLocation()` | `CameraControlReceiver.java` | ✅ Done |
 | `playTone` action + `handlePlayTone()` + `playToneNow()` via `AudioTrack` | `CameraControlReceiver.java` | ✅ Done |
-| `writeSyncSidecar()` — writes `kanaha_recording_start.json` at recording start | `CameraControlReceiver.java` | ✅ Done |
+| `writeSyncSidecar()` — writes the recording-start sidecar (per recording, `<basename>.kanaha_start.json`, since 2026-10-19) | `CameraControlReceiver.java` | ✅ Done |
 | `play_tone` / `playTone` routing + `camera_device_play_tone_impl()` | `camera_control_service.c` | ✅ Done |
 | `find_tone_onset()` bandpass+silencedetect helper | `parseWithoutLTC.sh` | ✅ Done |
 | Slate mode in Step 1 (onset-based offsets when `SLATE_AT_MS` set) | `parseWithoutLTC.sh` | ✅ Done |
@@ -133,7 +133,7 @@ The fix (implemented this session): `addCameraStatusDetails()` now calls `mainAc
 | `get_status()` displays `gps_age_ms` with colour coding | `test-triple-camera-workflow.sh` | ✅ Done |
 | `start_recording()` accepts `start_at` parameter | `test-triple-camera-workflow.sh` | ✅ Done |
 | `play_slate_all()` — sends `playTone(start_at=T)` to all cameras + laptop | `test-triple-camera-workflow.sh` | ✅ Done |
-| `transfer_sidecar()` — transfers `kanaha_recording_start.json` after MP4 | `test-triple-camera-workflow.sh` | ✅ Done |
+| `transfer_sidecar()` — transfers each recording's start sidecar after its MP4 | `test-triple-camera-workflow.sh` | ✅ Done |
 | README.md updated with all new API parameters and links | `README.md` | ✅ Done |
 
 ### What remains
@@ -310,13 +310,13 @@ For the vast majority of Android-phone multi-camera use cases, GPS sync is not a
 - `gps_age_ms` field — milliseconds since GPS fix was obtained
 - `extract_json_long()` in C layer — 64-bit timestamp extraction for the Intent pipeline
 - `playTone` API — synthesized `AudioTrack MODE_STATIC` sine wave (default 1 kHz, 500 ms) with 5 ms linear fades; same `start_at` scheduling as `startRecording`
-- `writeSyncSidecar()` — writes `DCIM/OpenCamera/kanaha_recording_start.json` at the moment recording starts, capturing `recording_start_ms` (ms precision), `clip_name`, `gps_time`, `gps_age_ms`
+- `writeSyncSidecar()` — writes the recording-start sidecar at the moment recording starts (one file per recording, `<basename>.kanaha_start.json` in the app's external files directory, since 2026-10-19), capturing `recording_start_ms` (ms precision), `clip_name`, `gps_time`, `gps_age_ms`
 
 **The sidecar JSON — the Kanaha analog of the BWF Time Reference:**
 
 `parseLTC.sh` extracts an absolute recording start time from Broadcast Wave Format metadata embedded in the Zoom F8 WAV file (`sndfile-info --broadcast f8.wav | grep "Time ref"`). This gives a sample-count-from-midnight that, divided by sample rate, yields the exact moment the F8 started recording — enabling precise trim arithmetic in post.
 
-MP4 files carry only `creation_time` in the `mvhd` box, at 1-second resolution. `kanaha_recording_start.json` fills this gap: a tiny JSON file written alongside the video at the exact millisecond `startRecordingInternal()` fires. `parseWithoutLTC.sh` reads it via `read_sidecar_ms()`, replacing the filename-epoch fallback (which could be off by up to 999 ms due to rounding). The arithmetic is identical to `parseLTC.sh`:
+MP4 files carry only `creation_time` in the `mvhd` box, at 1-second resolution. The recording-start sidecar fills this gap: a tiny JSON file written alongside the video at the exact millisecond `startRecordingInternal()` fires. `parseWithoutLTC.sh` reads it via `read_sidecar_ms()`, replacing the filename-epoch fallback (which could be off by up to 999 ms due to rounding). The arithmetic is identical to `parseLTC.sh`:
 
 ```
 parseLTC.sh:       trim = epoch_start - epoch_f8_start       (seconds, from WAV metadata)
@@ -326,7 +326,7 @@ parseWithoutLTC.sh: trim = (cam_recording_start_ms - cam_clock_offset_ms) - ref_
 **Test script additions** (`test-triple-camera-workflow.sh`):
 
 - `play_slate_all()` — computes `start_at = now + 3000ms`, fires `playTone` to all active cameras in parallel, plays the same tone on the laptop speaker via `ffplay` at the same scheduled moment, writes `start_at` to `/tmp/kanaha_slate_at.txt`
-- `transfer_sidecar()` — transfers `kanaha_recording_start.json` after each MP4 SFTP transfer
+- `transfer_sidecar()` — transfers each recording's start sidecar after its MP4
 - Integrated into the recording workflow: slate fires 1 second after recording starts, laptop `ffplay` tone plays at the same `start_at`
 
 ### Sync Method Comparison (Kanaha-Specific)

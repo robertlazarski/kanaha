@@ -185,8 +185,8 @@ One file per clip, next to the recording-start sidecar the app already writes:
 total (the sum of the frames): not frame extraction or downscaling. It is the
 same value the `describeClip` response reports.
 
-`recording_start_ms` is copied from `kanaha_recording_start.json` when that file
-refers to the same clip, so a consumer can convert `time_ms` to wall-clock and
+`recording_start_ms` is copied from the clip's own recording-start sidecar,
+`<basename>.kanaha_start.json`, when it has one, so a consumer can convert `time_ms` to wall-clock and
 line it up with kanaha-audio's keyword and event timestamps without a second
 lookup. The existing start sidecar is left unchanged.
 
@@ -525,14 +525,13 @@ implementation starts, not trusted from here:
 ## Deviations from this design (as implemented)
 
 - **The sidecar lives in the app's own external files directory**, next to
-  `kanaha_recording_start.json`, not next to the video. OpenCamera records into
+  the clip's `<basename>.kanaha_start.json`, not next to the video. OpenCamera records into
   `DCIM/OpenCamera`, where scoped storage does not let the app write a
   non-media file. The response and `listFiles` carry the sidecar's path, and
   `deleteFiles` and `sftpTransfer` match it by basename.
-- **`recording_start_ms` is matched by time, not name.** The start sidecar's
-  `clip_name` is the caller's label; OpenCamera names the file by timestamp.
-  The start is copied when the file's modification time minus its duration is
-  within a minute of `recording_start_ms`, or when the names do match.
+- **`recording_start_ms` is matched by file name.** Since 2026-10-19 each
+  recording has its own start sidecar named after the video file, so the match
+  is exact; before that a single shared start file was matched by time.
 - **The handler runs inline on the receiver's worker thread**, exactly like
   `sftpTransfer`, rather than finishing the broadcast first. That is the
   pattern the app already relies on and it stays within the C side's 20-minute

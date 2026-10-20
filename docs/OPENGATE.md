@@ -10,7 +10,7 @@ Add `"open_gate": true` to a `startRecording` request. The camera reopens at its
 - The **Pixel 10 Pro XL** records open gate at 2560×1920 and the **Moto G Play 2024** at 1600×1200 under the Camera2 API (both limited by their encoders). A phone with no 4:3 video size falls back silently to their existing quality (no error returned; `open_gate: false` in the sidecar confirms it was not applied).
 - The `startRecording` call **blocks 3–5 s** while the camera session reopens at 4:3. Account for this in `start_at` scheduling — use at least a 5 s lead time.
 - After an open gate session, the **next standard recording** triggers a second session reopen to reset quality back to 16:9. This is intentional and takes another ~2 s.
-- The sidecar JSON (`kanaha_recording_start.json`) includes `"open_gate": true` so post scripts know which clips need reframing.
+- Each recording's start sidecar (`<basename>.kanaha_start.json`) includes `"open_gate": true` so post scripts know which clips need reframing.
 
 **Most bugs come from:**
 - Editing `camera_control_service.c` but **not rebuilding `libhttpd.so`** — Gradle does not rebuild it. Run `build-android.sh` at the repository root, which relinks it and installs it into `jniLibs`. See [Build Process](#build-process-modifying-the-c-layer) below.
@@ -177,10 +177,11 @@ See `docs/THREAD_MODEL.md` for the full threading model, JMM visibility rules, a
 
 ### Sidecar JSON
 
-The `kanaha_recording_start.json` sidecar now includes `open_gate`:
+Each recording's start sidecar, `<basename>.kanaha_start.json`, includes `open_gate`:
 
 ```json
 {
+  "file": "VID_20260308_084000.mp4",
   "recording_start_ms": 1741452000123,
   "clip_name": "A001",
   "open_gate": true,
@@ -192,7 +193,7 @@ The `kanaha_recording_start.json` sidecar now includes `open_gate`:
 Pull via ADB:
 ```bash
 adb -s <pixel-serial> pull \
-  /storage/emulated/0/Android/data/org.kanaha.camera/files/kanaha_recording_start.json
+  /storage/emulated/0/Android/data/org.kanaha.camera/files/VID_20260308_084000.kanaha_start.json
 ```
 
 ---

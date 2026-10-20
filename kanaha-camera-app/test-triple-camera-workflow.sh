@@ -58,7 +58,7 @@ MOTOG5G_IP="192.168.1.170"
 PIXEL_ADB="192.168.1.182:5555"
 MOTOG_ADB="192.168.1.95:36181"
 MOTOG5G_ADB="192.168.1.170:37797"
-SIDECAR_DEVICE_PATH="/storage/emulated/0/Android/data/org.kanaha.camera/files/kanaha_recording_start.json"
+SIDECAR_DEVICE_DIR="/storage/emulated/0/Android/data/org.kanaha.camera/files"
 
 # Human-readable names
 PIXEL_NAME="Pixel 9 Pro"
@@ -367,17 +367,21 @@ play_slate_all() {
     echo -e "  ${GREEN}Slate dispatched — /tmp/kanaha_slate_at.txt written${NC}"
 }
 
-# Transfer the sync sidecar JSON from a camera to the local destination directory.
-# kanaha_recording_start.json is written by CameraControlReceiver.writeSyncSidecar()
-# at the moment recording starts — the Kanaha analog of the BWF Time Reference in
-# broadcast WAV files (parseLTC.sh f8_start_timecode). parseWithoutLTC.sh reads it
-# for ms-precision start times instead of 1-second filename timestamps.
+# Transfer each pulled recording's start sidecar, <basename>.kanaha_start.json,
+# written by CameraControlReceiver.writeSyncSidecar() when the recording starts.
+# parseWithoutLTC.sh reads it for ms-precision start times instead of 1-second
+# filename timestamps.
 transfer_sidecar() {
     local adb_serial=$1
     local destination=$2
-    # Sidecar is in app's external files dir (not DCIM) due to scoped storage —
-    # use ADB pull instead of sftpTransfer API.
-    adb -s "$adb_serial" pull "$SIDECAR_DEVICE_PATH" "$destination/" >/dev/null 2>&1 || true
+    local f
+    # Sidecars are in the app's external files dir (not DCIM) due to scoped storage,
+    # so pull them with ADB alongside the recordings already in $destination.
+    for f in "$destination"/*.mp4; do
+        [ -e "$f" ] || continue
+        adb -s "$adb_serial" pull "$SIDECAR_DEVICE_DIR/$(basename "$f" .mp4).kanaha_start.json" \
+            "$destination/" >/dev/null 2>&1 || true
+    done
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────

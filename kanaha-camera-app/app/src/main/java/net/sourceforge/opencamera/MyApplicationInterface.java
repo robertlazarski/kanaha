@@ -347,6 +347,31 @@ public class MyApplicationInterface extends BasicApplicationInterface {
         return createOutputVideoMediaStore(false, extension, new Date());
     }
 
+    /** Kanaha: the file name of the video being recorded, or last recorded; null if unknown.
+     *  For a content URI (scoped storage) the name comes from its DISPLAY_NAME.
+     */
+    public String getLastVideoFileName() {
+        switch( createOutputVideoMethod() ) {
+            case FILE:
+                return last_video_file != null ? last_video_file.getName() : null;
+            case SAF:
+            case MEDIASTORE:
+                if( last_video_file_uri == null )
+                    return null;
+                try( android.database.Cursor cursor = main_activity.getContentResolver().query(last_video_file_uri,
+                        new String[]{ android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null) ) {
+                    if( cursor != null && cursor.moveToFirst() )
+                        return cursor.getString(0);
+                }
+                catch(RuntimeException e) {
+                    Log.e(TAG, "getLastVideoFileName: could not query " + last_video_file_uri, e);
+                }
+                return null;
+            default:
+                return null;
+        }
+    }
+
     public File createOutputVideoFile(boolean is_preshot, String extension, Date date) throws IOException {
         last_video_file = storageUtils.createOutputMediaFile(is_preshot ? StorageUtils.MEDIA_TYPE_PRESHOT : StorageUtils.MEDIA_TYPE_VIDEO, "", extension, date);
         return last_video_file;
