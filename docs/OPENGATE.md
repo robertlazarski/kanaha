@@ -132,7 +132,7 @@ curl --cert client.crt --key client.key --cacert ca.crt \
 Or with `start_at` for synchronized multi-camera start (open gate on the Pixel only):
 
 ```bash
-START_AT=$(date -d "+5 seconds" +%s%3N)  # 5s lead time for open gate reopen
+START_AT=$(( $(date +%s%N) / 1000000 + 5000 ))  # 5s lead time for open gate reopen
 
 # Pixel 10 Pro XL — open gate
 curl --cert client.crt --key client.key --cacert ca.crt --http2 -k \

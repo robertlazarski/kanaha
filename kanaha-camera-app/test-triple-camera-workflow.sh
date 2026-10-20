@@ -337,7 +337,8 @@ play_slate_all() {
     local dur=${2:-500}
     local lead=${3:-3000}
 
-    local start_at=$(( $(date +%s%3N) + lead ))
+    # Milliseconds as %s%N / 1e6: uutils date (Ubuntu 25.10+) ignores the width in %3N
+    local start_at=$(( $(date +%s%N) / 1000000 + lead ))
     echo "$start_at" > /tmp/kanaha_slate_at.txt
 
     local dur_s
@@ -352,7 +353,7 @@ play_slate_all() {
 
     # Play the same tone on the laptop speaker at the same scheduled moment
     local now
-    now=$(date +%s%3N)
+    now=$(( $(date +%s%N) / 1000000 ))
     local delay_s
     delay_s=$(awk "BEGIN {printf \"%.3f\", ($start_at - $now) / 1000.0}")
     if command -v ffplay &>/dev/null; then
@@ -449,7 +450,7 @@ echo ""
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 CLIP="${CLIP_NAME}_${TIMESTAMP}"
 VID_PATTERN="VID_$(date +%Y%m%d)*.mp4"
-REC_START_AT=$(( $(date +%s%3N) + 2000 ))   # fire in 2s — enough for requests to arrive
+REC_START_AT=$(( $(date +%s%N) / 1000000 + 2000 ))   # fire in 2s — enough for requests to arrive
 
 PIXEL_PID=""; MOTOG_PID=""; MOTOG5G_PID=""
 

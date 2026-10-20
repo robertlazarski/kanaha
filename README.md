@@ -175,7 +175,7 @@ $CURL -H "Content-Type: application/json" \
 
 # Scheduled start — all cameras fire at the same wall-clock millisecond
 # Compute start_at = 3 seconds from now (laptop clock, ms since epoch)
-START_AT=$(( $(date +%s%3N) + 3000 ))
+START_AT=$(( $(date +%s%N) / 1000000 + 3000 ))
 
 $CURL -H "Content-Type: application/json" \
   -d "{\"action\":\"startRecording\",\"clip_name\":\"sync_test\",\"start_at\":$START_AT}" \
@@ -284,7 +284,7 @@ $CURL -H "Content-Type: application/json" \
   "https://$CAMERA:8443/services/CameraControlService/playTone"
 
 # Scheduled — all cameras play at the same wall-clock millisecond
-START_AT=$(( $(date +%s%3N) + 3000 ))
+START_AT=$(( $(date +%s%N) / 1000000 + 3000 ))
 
 for cam in $PIXEL $MOTOG $MOTOG5G; do
   $CURL -H "Content-Type: application/json" \
@@ -417,7 +417,7 @@ SSL=~/kanaha-certs
 
 # Scheduled simultaneous start — all cameras fire at the same wall-clock millisecond
 # regardless of when the HTTP request arrives. Use start_at to eliminate WiFi RTT skew.
-START_AT=$(( $(date +%s%3N) + 3000 ))   # 3 seconds from now
+START_AT=$(( $(date +%s%N) / 1000000 + 3000 ))   # 3 seconds from now
 
 for cam in 192.168.1.{100,101,102}; do
   curl -s --http2 \

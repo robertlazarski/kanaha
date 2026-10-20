@@ -201,14 +201,14 @@ Cameras are aligned in post, from three things recorded at the start of each tak
 
 ```bash
 CAMS=$(./tools/kanaha-discover.sh --kind camera --json | jq -r '.[].ip')
-START_AT=$(( $(date +%s%3N) + 3000 ))
+START_AT=$(( $(date +%s%N) / 1000000 + 3000 ))
 for ip in $CAMS; do
   $CURL -H "Content-Type: application/json" \
     -d "{\"action\":\"startRecording\",\"clip_name\":\"scene_01\",\"start_at\":$START_AT}" \
     "https://$ip:8443/services/CameraControlService/startRecording" &
 done
 wait
-SLATE_AT=$(( $(date +%s%3N) + 2000 ))
+SLATE_AT=$(( $(date +%s%N) / 1000000 + 2000 ))
 for ip in $CAMS; do
   $CURL -H "Content-Type: application/json" \
     -d "{\"action\":\"playTone\",\"frequency\":1000,\"duration_ms\":500,\"start_at\":$SLATE_AT}" \

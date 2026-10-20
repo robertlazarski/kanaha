@@ -386,7 +386,7 @@ done
 
 ```bash
 # Compute start_at for 3 seconds from now
-start_at=$(( $(date +%s%3N) + 3000 ))
+start_at=$(( $(date +%s%N) / 1000000 + 3000 ))
 
 # Fire to all three cameras simultaneously
 for cam in $PIXEL $MOTOG $MOTOG5G; do
