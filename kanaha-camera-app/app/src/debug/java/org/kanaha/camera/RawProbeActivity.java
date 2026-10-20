@@ -24,8 +24,17 @@ import android.os.HandlerThread;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
+import android.graphics.SurfaceTexture;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.AudioTimestamp;
+import android.media.MediaRecorder;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.view.Surface;
+import android.view.TextureView;
 import android.view.WindowManager;
+import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -33,6 +42,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
@@ -73,7 +83,17 @@ import java.util.concurrent.atomic.AtomicLong;
  * packed RAW12 capture instead of RAW_SENSOR (dng and bits need RAW_SENSOR and are
  * skipped). {@code --ei dng_seconds 60} adds a sustained phase that writes every frame
  * as its own DNG for that long, {@code --ei dng_threads 3} workers; the DNGs are deleted
- * afterwards. Results also go to {@code <external files>/raw_probe/result.json}; the
+ * afterwards.
+ *
+ * <p>Take mode, {@code --ei take_seconds 300}, skips the phases above and records one
+ * song-length take the way a 12-bit recorder would: live preview on screen alongside the
+ * RAW stream, every frame written as a DNG ({@code --ez packed true} for 12-bit packed
+ * through {@link PackedDngWriter}, else DngCreator's 16-bit), optionally a WAV from the
+ * audio input ({@code --ez audio true}), and every 10 s the frames, drops and thermal
+ * state. Each DNG is synced to storage and deleted once written, except the first
+ * {@code --ei keep 3} kept as samples, so a take larger than the free space can run.
+ * Syncing and deleting thirty large files a second is not what a recorder does, and
+ * costs more than writing; {@code --ei keep 99999 --ez sync false} keeps every frame. Results also go to {@code <external files>/raw_probe/result.json}; the
  * frames written in the write phase are deleted afterwards.
  */
 public class RawProbeActivity extends Activity {
@@ -83,6 +103,7 @@ public class RawProbeActivity extends Activity {
     private static final int WRITE_BUFFERS = 8;
 
     private TextView output;
+    private TextureView previewView;
     private HandlerThread cameraThread;
     private Handler cameraHandler;
     private volatile CameraDevice camera;
@@ -91,28 +112,52 @@ public class RawProbeActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // A take lasts minutes; if the phone locks, the activity stops being visible and the
+        // camera service takes the camera away mid-take. Show over the lock screen instead.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+        }
         output = new TextView(this);
         output.setTextIsSelectable(true);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(output);
-        setContentView(scroll);
+        previewView = new TextureView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.addView(previewView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        layout.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        setContentView(layout);
+        if (savedInstanceState != null) {
+            // Recreated (screen, lock or configuration change) with the same launch extras: a
+            // second run would clear the take folder and start over. Run once per launch.
+            report("recreated after a run; not starting another (launch again with am start -S)");
+            return;
+        }
 
         int seconds = getIntent().getIntExtra("seconds", 5);
         boolean raw12 = "raw12".equals(getIntent().getStringExtra("format"));
         int dngSeconds = getIntent().getIntExtra("dng_seconds", 0);
         int dngThreads = Math.max(1, getIntent().getIntExtra("dng_threads", 3));
+        TakeOptions take = new TakeOptions();
+        take.seconds = getIntent().getIntExtra("take_seconds", 0);
+        take.threads = dngThreads;
+        take.packed = getIntent().getBooleanExtra("packed", false);
+        take.audio = getIntent().getBooleanExtra("audio", false);
+        take.keep = getIntent().getIntExtra("keep", 3);
+        take.sync = getIntent().getBooleanExtra("sync", true);
 
         cameraThread = new HandlerThread("RawProbeCamera");
         cameraThread.start();
         cameraHandler = new Handler(cameraThread.getLooper());
-        new Thread(() -> runProbe(seconds, raw12, dngSeconds, dngThreads), "RawProbe").start();
+        new Thread(() -> runProbe(seconds, raw12, dngSeconds, dngThreads, take), "RawProbe").start();
     }
 
     @Override
     protected void onDestroy() {
         CameraDevice c = camera;
         if (c != null) c.close();
-        cameraThread.quitSafely();
+        if (cameraThread != null) cameraThread.quitSafely();
         super.onDestroy();
     }
 
@@ -121,7 +166,7 @@ public class RawProbeActivity extends Activity {
         runOnUiThread(() -> output.append(line + "\n"));
     }
 
-    private void runProbe(int seconds, boolean raw12, int dngSeconds, int dngThreads) {
+    private void runProbe(int seconds, boolean raw12, int dngSeconds, int dngThreads, TakeOptions take) {
         JSONObject result = new JSONObject();
         try {
             CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
@@ -145,6 +190,11 @@ public class RawProbeActivity extends Activity {
                     + ", " + seconds + " s per timed phase");
 
             camera = openCamera(manager, cameraId);
+            if (take.seconds > 0) {
+                result.put("take", take(chars, size, take));
+                report("RESULT " + result.toString());
+                return;
+            }
             result.put("capture", timedPhase(chars, format, size, seconds, false));
             result.put("write", timedPhase(chars, format, size, seconds, true));
             if (!raw12) {
@@ -525,6 +575,331 @@ public class RawProbeActivity extends Activity {
         if (left != null) for (File f : left) if (!f.delete()) Log.w(TAG, "could not delete " + f);
         report("dng_sustained: " + r);
         return r;
+    }
+
+    static final class TakeOptions {
+        int seconds, threads, keep;
+        boolean packed, audio, sync;
+    }
+
+    /**
+     * One song-length take as a 12-bit recorder would run it; see the class comment. The
+     * timeline has one row per 10 s, so a recorder that keeps up at first and falls behind
+     * as the phone heats shows where it happened.
+     */
+    private JSONObject take(CameraCharacteristics chars, Size size, TakeOptions opt) throws Exception {
+        final int threads = opt.threads;
+        final int maxImages = threads + 4;
+        ImageReader reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), ImageFormat.RAW_SENSOR, maxImages);
+        Map<Long, TotalCaptureResult> results = new ConcurrentHashMap<>();
+        AtomicInteger frames = new AtomicInteger();
+        AtomicInteger written = new AtomicInteger();
+        AtomicInteger drops = new AtomicInteger();
+        AtomicInteger failures = new AtomicInteger();
+        AtomicInteger missing = new AtomicInteger();
+        AtomicLong bytes = new AtomicLong();
+        AtomicLong lastTs = new AtomicLong();
+        AtomicLong firstTs = new AtomicLong();
+        List<Long> frameMs = Collections.synchronizedList(new ArrayList<>());
+        final long frameNs = 1_000_000_000L / TARGET_FPS;
+        File dir = new File(probeDir(), "take");
+        File[] old = dir.listFiles();
+        if (old != null) for (File f : old) if (!f.delete()) Log.w(TAG, "could not delete " + f);
+        if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("could not create " + dir);
+
+        // Packed takes arm first: one frame becomes the DngCreator template (about 0.6 s of
+        // work), and only then does the take start counting, as a recorder arms before it
+        // rolls. Building it mid-take stalled the workers and dropped the first frames.
+        PackedDngWriter[] packer = new PackedDngWriter[1];
+        java.util.concurrent.atomic.AtomicBoolean templating = new java.util.concurrent.atomic.AtomicBoolean();
+        CountDownLatch armed = new CountDownLatch(opt.packed ? 1 : 0);
+        java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(
+                threads, threads, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(maxImages - threads - 2));
+        reader.setOnImageAvailableListener(r -> {
+            Image image = r.acquireNextImage();
+            if (image == null) return;
+            if (armed.getCount() > 0) {
+                if (!templating.compareAndSet(false, true)) {
+                    image.close();
+                    return;
+                }
+                new Thread(() -> {
+                    try {
+                        TotalCaptureResult result = null;
+                        for (int i = 0; i < 40 && result == null; i++) {
+                            result = results.get(image.getTimestamp());
+                            if (result == null) Thread.sleep(5);
+                        }
+                        if (result == null) throw new IllegalStateException("no capture result for the template frame");
+                        ByteArrayOutputStream template = new ByteArrayOutputStream(26 << 20);
+                        try (DngCreator creator = new DngCreator(chars, result)) {
+                            creator.writeImage(template, image);
+                        }
+                        byte[] t = template.toByteArray();
+                        try (FileOutputStream tf = new FileOutputStream(new File(dir, "template_dngcreator.dng"))) {
+                            tf.write(t);
+                        }
+                        PackedDngWriter w = PackedDngWriter.fromTemplate(t);
+                        // Pack the frame a few times unwritten: the first passes run interpreted
+                        // (about 0.4 s each) until the JIT compiles the loop, which dropped frames.
+                        Image.Plane plane = image.getPlanes()[0];
+                        for (int i = 0; i < 4; i++) w.write(new DiscardingOutputStream(), plane.getBuffer(), plane.getRowStride());
+                        packer[0] = w;
+                    } catch (Exception e) {
+                        Log.e(TAG, "template failed", e);
+                    } finally {
+                        image.close();
+                        armed.countDown();
+                    }
+                }, "RawProbeTemplate").start();
+                return;
+            }
+            long ts = image.getTimestamp();
+            firstTs.compareAndSet(0, ts);
+            long prev = lastTs.getAndSet(ts);
+            if (prev != 0) {
+                long gap = Math.round((double) (ts - prev) / frameNs);
+                if (gap > 1) missing.addAndGet((int) (gap - 1));
+            }
+            int index = frames.getAndIncrement();
+            try {
+                pool.execute(() -> {
+                    try {
+                        TotalCaptureResult result = null;
+                        for (int i = 0; i < 20 && result == null; i++) {
+                            result = results.remove(image.getTimestamp());
+                            if (result == null) Thread.sleep(5);
+                        }
+                        if (result == null) {
+                            failures.incrementAndGet();
+                            return;
+                        }
+                        File f = new File(dir, String.format(java.util.Locale.US, "frame_%06d.dng", index));
+                        long t0 = System.nanoTime();
+                        try (FileOutputStream fos = new FileOutputStream(f);
+                             OutputStream out = new BufferedOutputStream(fos, 1 << 20)) {
+                            if (opt.packed) {
+                                Image.Plane plane = image.getPlanes()[0];
+                                packer[0].write(out, plane.getBuffer(), plane.getRowStride());
+                            } else {
+                                try (DngCreator creator = new DngCreator(chars, result)) {
+                                    creator.writeImage(out, image);
+                                }
+                            }
+                            out.flush();
+                            // On flash before any delete, or the page cache hides the cost. A
+                            // take that keeps every frame (--ei keep 99999 --ez sync false)
+                            // writes as a recorder would, leaving flushing to the kernel.
+                            if (opt.sync) fos.getFD().sync();
+                        }
+                        frameMs.add((System.nanoTime() - t0) / 1_000_000);
+                        bytes.addAndGet(f.length());
+                        written.incrementAndGet();
+                        if (index >= opt.keep && !f.delete()) Log.w(TAG, "could not delete " + f);
+                    } catch (Exception e) {
+                        failures.incrementAndGet();
+                        Log.e(TAG, "dng write failed", e);
+                    } finally {
+                        image.close();
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                drops.incrementAndGet();
+                image.close();
+            }
+        }, cameraHandler);
+
+        List<Surface> surfaces = new ArrayList<>();
+        surfaces.add(reader.getSurface());
+        Surface preview = previewSurface();
+        if (preview != null) surfaces.add(preview);
+        CameraCaptureSession session = createSession(surfaces);
+        CaptureRequest.Builder builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+        for (Surface s : surfaces) builder.addTarget(s);
+        builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<>(TARGET_FPS, TARGET_FPS));
+
+        AudioCapture audio = opt.audio ? new AudioCapture(new File(dir, "take.wav")) : null;
+        if (audio != null) audio.start();
+        PowerManager power = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        JSONArray timeline = new JSONArray();
+        long start = System.nanoTime();
+        session.setRepeatingRequest(builder.build(), new CameraCaptureSession.CaptureCallback() {
+            @Override
+            public void onCaptureCompleted(CameraCaptureSession s, CaptureRequest req, TotalCaptureResult result) {
+                Long t = result.get(CaptureResult.SENSOR_TIMESTAMP);
+                if (t != null) results.put(t, result);
+            }
+        }, cameraHandler);
+
+        if (!armed.await(10, TimeUnit.SECONDS) || (opt.packed && packer[0] == null)) {
+            session.stopRepeating();
+            session.close();
+            reader.close();
+            throw new IllegalStateException("could not build the DNG template");
+        }
+        start = System.nanoTime();
+        int maxThermal = 0;
+        float minHeadroom = Float.NaN;
+        int[] last = new int[4];
+        for (int t = 10; t <= opt.seconds; t += 10) {
+            Thread.sleep(Math.max(0, start / 1_000_000 + t * 1000L - System.nanoTime() / 1_000_000));
+            JSONObject row = new JSONObject();
+            int f = frames.get(), w = written.get(), d = drops.get(), m = missing.get();
+            row.put("t", t);
+            row.put("frames", f - last[0]);
+            row.put("written", w - last[1]);
+            row.put("drops", d - last[2]);
+            row.put("missing", m - last[3]);
+            last = new int[]{f, w, d, m};
+            int thermal = power.getCurrentThermalStatus();
+            maxThermal = Math.max(maxThermal, thermal);
+            row.put("thermal", thermal);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                float headroom = power.getThermalHeadroom(10);
+                row.put("headroom", Math.round(headroom * 100) / 100.0);
+                if (!Float.isNaN(headroom)) minHeadroom = Float.isNaN(minHeadroom) ? headroom : Math.min(minHeadroom, headroom);
+            }
+            row.put("free_gb", Math.round(dir.getUsableSpace() / 1e9));
+            timeline.put(row);
+            report("take " + row);
+        }
+        session.stopRepeating();
+        session.close();
+        if (audio != null) audio.stop();
+        pool.shutdown();
+        pool.awaitTermination(60, TimeUnit.SECONDS);
+        double wallSeconds = (System.nanoTime() - start) / 1e9;
+        reader.close();
+
+        JSONObject r = new JSONObject();
+        r.put("seconds", opt.seconds);
+        r.put("format", opt.packed ? "dng_12bit_packed" : "dng_16bit_dngcreator");
+        r.put("preview", preview != null);
+        r.put("threads", threads);
+        r.put("frames", frames.get());
+        r.put("written", written.get());
+        r.put("queue_drops", drops.get());
+        r.put("missing_at_sensor", missing.get());
+        r.put("failures", failures.get());
+        r.put("mb_per_s", Math.round(bytes.get() / 1e6 / wallSeconds));
+        if (written.get() > 0) r.put("mb_per_frame", Math.round(bytes.get() / 1e5 / written.get()) / 10.0);
+        r.put("max_thermal_status", maxThermal);
+        if (!Float.isNaN(minHeadroom)) r.put("min_headroom", Math.round(minHeadroom * 100) / 100.0);
+        List<Long> ms = new ArrayList<>(frameMs);
+        Collections.sort(ms);
+        if (!ms.isEmpty()) {
+            r.put("frame_ms_median", ms.get(ms.size() / 2));
+            r.put("frame_ms_p95", ms.get(ms.size() * 95 / 100));
+            r.put("frame_ms_max", ms.get(ms.size() - 1));
+        }
+        if (audio != null) r.put("audio", audio.summary(firstTs.get(), chars));
+        r.put("kept", dir.getAbsolutePath());
+        r.put("timeline", timeline);
+        report("take: " + r);
+        return r;
+    }
+
+    /** The on-screen preview's surface, or null if the view never became available. */
+    private Surface previewSurface() throws InterruptedException {
+        CountDownLatch ready = new CountDownLatch(1);
+        runOnUiThread(() -> {
+            if (previewView.isAvailable()) {
+                ready.countDown();
+            } else {
+                previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+                    @Override public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) { ready.countDown(); }
+                    @Override public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) { }
+                    @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture st) { return true; }
+                    @Override public void onSurfaceTextureUpdated(SurfaceTexture st) { }
+                });
+            }
+        });
+        if (!ready.await(5, TimeUnit.SECONDS)) return null;
+        SurfaceTexture st = previewView.getSurfaceTexture();
+        st.setDefaultBufferSize(1440, 1080);
+        return new Surface(st);
+    }
+
+    /**
+     * A WAV from the audio input (the iRig when one is attached), 48 kHz stereo 16-bit,
+     * with the boot-time instant of its first sample, so it can be placed against the
+     * sensor timestamps of the frames.
+     */
+    private final class AudioCapture {
+        private static final int RATE = 48000;
+        private final File file;
+        private AudioRecord record;
+        private Thread thread;
+        private volatile boolean running;
+        private long dataBytes;
+        private long firstSampleBootNs;
+        private int overruns;
+
+        AudioCapture(File file) { this.file = file; }
+
+        @SuppressLint("MissingPermission") // Kanaha Camera holds RECORD_AUDIO
+        void start() {
+            int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT);
+            record = new AudioRecord(MediaRecorder.AudioSource.UNPROCESSED, RATE, AudioFormat.CHANNEL_IN_STEREO,
+                    AudioFormat.ENCODING_PCM_16BIT, Math.max(min * 4, RATE * 4 / 2));
+            running = true;
+            record.startRecording();
+            thread = new Thread(() -> {
+                byte[] buf = new byte[RATE * 4 / 10];   // 100 ms
+                try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+                    raf.setLength(0);
+                    raf.write(new byte[44]);            // header written at the end
+                    while (running) {
+                        int n = record.read(buf, 0, buf.length);
+                        if (n < 0) { overruns++; continue; }
+                        if (firstSampleBootNs == 0 && dataBytes == 0 && n > 0) {
+                            AudioTimestamp at = new AudioTimestamp();
+                            if (record.getTimestamp(at, AudioTimestamp.TIMEBASE_BOOTTIME) == AudioRecord.SUCCESS) {
+                                firstSampleBootNs = at.nanoTime - at.framePosition * 1_000_000_000L / RATE;
+                            }
+                        }
+                        raf.write(buf, 0, n);
+                        dataBytes += n;
+                    }
+                    raf.seek(0);
+                    raf.write(wavHeader(dataBytes));
+                } catch (Exception e) {
+                    Log.e(TAG, "audio capture failed", e);
+                }
+            }, "RawProbeAudio");
+            thread.start();
+        }
+
+        void stop() throws InterruptedException {
+            running = false;
+            record.stop();
+            thread.join(5000);
+            record.release();
+        }
+
+        JSONObject summary(long firstFrameNs, CameraCharacteristics chars) throws Exception {
+            JSONObject a = new JSONObject();
+            a.put("file", file.getName());
+            a.put("seconds", Math.round(dataBytes / (RATE * 4.0) * 10) / 10.0);
+            a.put("read_errors", overruns);
+            Integer source = chars.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE);
+            boolean realtime = source != null && source == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME;
+            a.put("sensor_clock", realtime ? "boottime" : "unknown");
+            if (realtime && firstSampleBootNs != 0 && firstFrameNs != 0) {
+                // Positive: the first frame was exposed this long after the first audio sample.
+                a.put("first_frame_after_first_sample_ms", Math.round((firstFrameNs - firstSampleBootNs) / 1e5) / 10.0);
+            }
+            return a;
+        }
+
+        private byte[] wavHeader(long data) {
+            ByteBuffer h = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+            h.put("RIFF".getBytes()).putInt((int) (36 + data)).put("WAVE".getBytes());
+            h.put("fmt ".getBytes()).putInt(16).putShort((short) 1).putShort((short) 2)
+                    .putInt(RATE).putInt(RATE * 4).putShort((short) 4).putShort((short) 16);
+            h.put("data".getBytes()).putInt((int) data);
+            return h.array();
+        }
     }
 
     /**
