@@ -2,10 +2,13 @@
 <!-- Debug builds only: the 12-bit RAW probe never ships in a release. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
-        <!-- Exported so `adb shell am start` can launch it; see RawProbeActivity. -->
+        <!-- Exported so `adb shell am start` can launch it; see RawProbeActivity.
+             configChanges: the lock screen is portrait, so locking during a take rotated
+             and recreated the activity, and the old instance closed the camera mid-take. -->
         <activity
             android:name="org.kanaha.camera.RawProbeActivity"
             android:exported="true"
-            android:screenOrientation="landscape" />
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density" />
     </application>
 </manifest>

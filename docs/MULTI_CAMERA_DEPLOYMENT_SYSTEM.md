@@ -203,6 +203,12 @@ are in [IRIG_PRO_SMPTE_TIMECODE_SETUP.md](IRIG_PRO_SMPTE_TIMECODE_SETUP.md).
   from it instead of the built-in microphone, so the camera's audio track holds timecode,
   not scene sound. Record sound on a separate recorder fed from the same timecode.
 - **Kanaha does not generate or read timecode itself**; it records what the iRig delivers.
+- **Pin the shutter, or the camera is not running at 30 fps.** On auto exposure in a dim
+  room the Pixel 10 Pro XL picked a 33.2 ms shutter and its sensor ran at 29.74 fps: about
+  60 frames, two seconds, short over a four-minute song against 30 fps timecode. With
+  `setExposure` `{"iso": 800, "exposure_time_ns": 16666667, "fps": 30}` (1/60 s) a 10-bit
+  HLG open-gate clip measured 29.998 fps (2026-10-20). Set timecode to 30 non-drop to
+  match; drop-frame exists only at 29.97, and it skips frame numbers, never frames.
 - **Reading it on Linux:** `ltcdump` (from [x42 ltc-tools](https://github.com/x42/ltc-tools),
   built from source; not packaged for Ubuntu) decodes the audio. Extract the track first:
 

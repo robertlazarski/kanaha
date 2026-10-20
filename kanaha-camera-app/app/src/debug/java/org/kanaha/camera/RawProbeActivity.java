@@ -146,6 +146,8 @@ public class RawProbeActivity extends Activity {
         take.audio = getIntent().getBooleanExtra("audio", false);
         take.keep = getIntent().getIntExtra("keep", 3);
         take.sync = getIntent().getBooleanExtra("sync", true);
+        take.exposureNs = getIntent().getLongExtra("exposure_ns", 0);
+        take.iso = getIntent().getIntExtra("iso", 0);
 
         cameraThread = new HandlerThread("RawProbeCamera");
         cameraThread.start();
@@ -578,7 +580,8 @@ public class RawProbeActivity extends Activity {
     }
 
     static final class TakeOptions {
-        int seconds, threads, keep;
+        int seconds, threads, keep, iso;
+        long exposureNs;
         boolean packed, audio, sync;
     }
 
@@ -717,6 +720,14 @@ public class RawProbeActivity extends Activity {
         CaptureRequest.Builder builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
         for (Surface s : surfaces) builder.addTarget(s);
         builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<>(TARGET_FPS, TARGET_FPS));
+        if (opt.exposureNs > 0 && opt.iso > 0) {
+            // Manual exposure with the frame duration pinned: auto exposure in a dim room picks
+            // a shutter close to the whole frame time, and the sensor then ran at 29.75 fps.
+            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+            builder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, opt.exposureNs);
+            builder.set(CaptureRequest.SENSOR_SENSITIVITY, opt.iso);
+            builder.set(CaptureRequest.SENSOR_FRAME_DURATION, 1_000_000_000L / TARGET_FPS);
+        }
 
         AudioCapture audio = opt.audio ? new AudioCapture(new File(dir, "take.wav")) : null;
         if (audio != null) audio.start();
@@ -773,6 +784,11 @@ public class RawProbeActivity extends Activity {
 
         JSONObject r = new JSONObject();
         r.put("seconds", opt.seconds);
+        if (firstTs.get() != 0 && lastTs.get() > firstTs.get()) {
+            // From sensor timestamps, so it is the rate the frames were exposed at.
+            r.put("sensor_fps", Math.round((frames.get() - 1) / ((lastTs.get() - firstTs.get()) / 1e9) * 1000) / 1000.0);
+        }
+        if (opt.exposureNs > 0) r.put("exposure", opt.exposureNs + " ns, ISO " + opt.iso);
         r.put("format", opt.packed ? "dng_12bit_packed" : "dng_16bit_dngcreator");
         r.put("preview", preview != null);
         r.put("threads", threads);
