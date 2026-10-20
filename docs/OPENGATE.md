@@ -91,12 +91,17 @@ Measured on the device, Android 14, 2026-10-19, with Kanaha switched to the Came
 (Settings > Camera API). Motorola phones default to Camera1, which has no 10-bit, RAW or
 manual controls at all.
 
+- **A 1080p camera.** Its hardware encoder (`c2.qti.avc.encoder`) is declared for
+  1920×1088 at most. The camera offers far larger streams (16:9 up to 4080×2296, 4:3 up to
+  4080×3072), and the encoder refuses them, so `quality: "4K"` records the largest size the
+  encoder takes, 1920×1080. Before 2026-10-19 Kanaha picked 4080×1836 and every default
+  recording failed. (The old `OMX.qcom` entries in `/vendor/etc/media_codecs.xml`, which list
+  4096×2176, are not the encoder in use.)
 - **8-bit H.264** only. The camera does not advertise 10-bit video, and `startRecording`
   refuses `hlg10` with that reason; `getStatus` reports `supports_hlg10: false`.
-- **Open gate works, at 1600×1200.** The camera offers 4:3 streams up to 4080×3072, but its
-  hardware encoders (`OMX.qcom.video.encoder.avc`/`.hevc`) stop at 4096×2176, and 1600×1200
-  is the largest 4:3 size that fits. Recorded at exactly that, with the exposure settings
-  surviving the reopen.
+- **Open gate works, at 1600×1200**, the largest 4:3 size the encoder accepts in practice
+  (it takes 1600×1200 although the declaration says 1088 lines). Recorded at exactly that,
+  with the exposure settings surviving the reopen.
 - **RAW is 10-bit** (white level 1023), stills only; Kanaha records no RAW video.
 - **Its files are tagged differently from the Pixel's:** full range (`yuvj420p`,
   `color_range=pc`) and BT.601 colour (`bt470bg`, `smpte170m`), where the Pixel writes limited

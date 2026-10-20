@@ -44,6 +44,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 import android.media.CamcorderProfile;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
+import android.media.MediaFormat;
 import net.sourceforge.opencamera.MainActivity;
 import net.sourceforge.opencamera.PreferenceKeys;
 import net.sourceforge.opencamera.cameracontroller.CameraController;
@@ -2009,6 +2012,41 @@ public class CameraControlReceiver extends BroadcastReceiver {
         return null;
     }
 
+    /**
+     * Whether a video encoder on this device can take width x height for H.264, the default
+     * output. The camera offers sizes no encoder takes: under Camera2 the Moto G Play 2024
+     * offers 4080x1836, its encoder (declared for 1920x1088) refuses the width, and the
+     * recording never starts.
+     *
+     * Not VideoCapabilities.isSizeSupported(): it applies the declared width and height
+     * ranges literally and rejects 1600x1200 on that Moto, which records it fine. The rule
+     * below, the long side within the encoder's largest dimension and the frame's 16x16 blocks
+     * within the largest frame's, is inferred from what both test phones accepted and refused
+     * (Pixel 10 Pro XL: 3840x2160 and 2560x1920 yes, 4032x3024 no), not documented anywhere.
+     */
+    private static boolean encoderSupports(int width, int height) {
+        try {
+            for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+                if (!info.isEncoder()) continue;
+                for (String type : info.getSupportedTypes()) {
+                    if (!type.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_AVC)) continue;
+                    MediaCodecInfo.VideoCapabilities caps = info.getCapabilitiesForType(type).getVideoCapabilities();
+                    if (caps == null) continue;
+                    int maxW = caps.getSupportedWidths().getUpper();
+                    int maxH = caps.getSupportedHeights().getUpper();
+                    int maxSide = Math.max(maxW, maxH);
+                    long maxBlocks = (long) ((maxW + 15) / 16) * ((maxH + 15) / 16);
+                    long blocks = (long) ((width + 15) / 16) * ((height + 15) / 16);
+                    if (width <= maxSide && height <= maxSide && blocks <= maxBlocks) return true;
+                }
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "encoderSupports: codec list unavailable, not filtering", e);
+            return true;
+        }
+        return false;
+    }
+
     private static void configureRecordingQuality(MainActivity mainActivity, String quality) {
         Log.i(TAG, "configureRecordingQuality: " + quality);
         try {
@@ -2048,6 +2086,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
             for (String qs : supportedQualities) {
                 CamcorderProfile profile = preview.getCamcorderProfile(qs);
                 if (profile == null) continue;
+                if (!encoderSupports(profile.videoFrameWidth, profile.videoFrameHeight)) {
+                    Log.i(TAG, "configureRecordingQuality: skipping " + profile.videoFrameWidth + "x"
+                            + profile.videoFrameHeight + ", which the video encoder does not accept");
+                    continue;
+                }
                 if (profile.videoFrameWidth == targetW && profile.videoFrameHeight == targetH) {
                     matched = qs;
                     break;
@@ -2058,14 +2101,17 @@ public class CameraControlReceiver extends BroadcastReceiver {
             if (matched != null) {
                 final String finalQuality = matched;
                 Log.i(TAG, "configureRecordingQuality: " + quality + " -> " + finalQuality);
+                // Read before the preference changes: the size the camera session is open at.
+                String current = preview.getVideoQualityHander().getCurrentVideoQuality();
                 mainActivity.runOnUiThread(() ->
                     mainActivity.getApplicationInterface().setVideoQualityPref(finalQuality));
 
-                // If the last recording used open gate, the camera session is still configured
-                // at the 4:3 quality. setVideoQualityPref() only takes effect on session reopen,
-                // so trigger a photo→video cycle to apply the new quality before recording starts.
-                if (lastRecordingWasOpenGate) {
-                    Log.i(TAG, "configureRecordingQuality: reopening session to reset from open gate quality");
+                // setVideoQualityPref() only takes effect on session reopen, so trigger a
+                // photo→video cycle whenever the session is at a different quality: after open
+                // gate, and after any earlier request for another size. Without the second
+                // case a quality change applied one take late.
+                if (lastRecordingWasOpenGate || !finalQuality.equals(current)) {
+                    Log.i(TAG, "configureRecordingQuality: reopening session to apply " + finalQuality + " (was " + current + ")");
                     mainActivity.runOnUiThread(() -> {
                         if (preview.isVideo()) mainActivity.clickedSwitchVideo(null); // video → photo
                     });
@@ -2141,6 +2187,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     int w = profile.videoFrameWidth;
                     int h = profile.videoFrameHeight;
                     if (w <= 0 || h <= 0) continue;
+                    if (!encoderSupports(w, h)) continue;
                     double ratio = (double) w / h;
                     if (Math.abs(ratio - TARGET_RATIO) <= EPSILON) {
                         int area = w * h;

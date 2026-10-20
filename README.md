@@ -184,7 +184,7 @@ $CURL -H "Content-Type: application/json" \
 
 Request parameters:
 - `clip_name` *(optional)* — prefix for the output filename. Default: auto-generated.
-- `quality` *(optional)* — video quality hint (e.g. `"high"`, `"low"`). Default: app setting.
+- `quality` *(optional)* — `"4K"` (default), `"1080p"`, `"720p"`, `"480p"`, or an OpenCamera quality string. Kanaha records the camera size nearest the request that the phone's video encoder accepts, so `"4K"` gives 1920×1080 on a 1080p phone such as the Moto G Play 2024 rather than failing.
 - `duration` *(optional)* — recording duration in seconds. `0` = record until stopRecording.
 - `format` *(optional)* — container format. Default: `"MP4"`.
 - `open_gate` *(optional)* — `true` to record the full 4:3 sensor field of view (2560×1920 on the Pixel 10 Pro XL, smaller than 4K in both directions; see OPENGATE.md). The call blocks 3–5 s while the camera session reopens. The Moto G Play 2024 records 1600×1200 under the Camera2 API; a phone with no 4:3 video size ignores the flag and records normally. Default: `false`. See [Open Gate Recording](docs/OPENGATE.md).

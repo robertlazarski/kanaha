@@ -297,7 +297,8 @@ wait
   on Camera1 they refuse with that instruction. Check what each supports with
   `getExposure` (`supports`, `ranges`). Pick values every camera accepts: with a Pixel
   10 Pro XL and a Moto G Play 2024 that means ISO 100–5333, 24 or 30 fps (the Moto has no
-  60), and stabilization off (the Moto has none).
+  60), and stabilization off (the Moto has none). The Moto records 1920×1080 at most, so a
+  mixed edit is a 1080p edit, or a 4K one with the Moto's shots upscaled.
 
 ### Mixing a Pixel and a Moto in one edit
 
