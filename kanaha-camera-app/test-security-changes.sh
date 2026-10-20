@@ -20,8 +20,8 @@ APK_DIR=$HOME/repos/kanaha/kanaha-camera-app/app/build/outputs/apk
 PIXEL_APK=$APK_DIR/nano/debug/app-nano-debug.apk   # Pixel: nano flavor
 MOTO_APK=$APK_DIR/foss/debug/app-foss-debug.apk    # Moto: foss flavor
 
-PIXEL_IP="192.168.8.159"
-MOTO_IP="192.168.8.174"
+PIXEL_IP="${PIXEL_IP:-192.168.8.159}"   # override when DHCP moves a phone
+MOTO_IP="${MOTO_IP:-192.168.8.174}"
 PIXEL_ADB="${PIXEL_IP}:5555"
 MOTO_ADB="${MOTO_IP}:5555"
 
@@ -192,25 +192,9 @@ test_camera() {
         echo "  Response: ${response:0:100}..."
     fi
 
-    # Test 7: User-Agent Filtering (should block scanner tools)
+    # Test 7: Check Audit Log
     echo ""
-    echo "--- Test 7: User-Agent Filtering ---"
-    response=$(camera_curl "$ip" "/services/CameraControlService/getStatus" --max-time 10 \
-        -H "Content-Type: application/json" \
-        -H "User-Agent: Nikto/2.1.6" \
-        -d '{"action":"getStatus"}' 2>&1)
-
-    if echo "$response" | grep -q "403\|Forbidden\|blocked"; then
-        echo -e "${GREEN}PASS${NC}: Scanner user-agent correctly blocked"
-    elif echo "$response" | grep -q '"success"'; then
-        echo -e "${YELLOW}WARN${NC}: Scanner user-agent was NOT blocked (may be OK if UA filtering disabled)"
-    else
-        echo -e "${YELLOW}INFO${NC}: Response: $response"
-    fi
-
-    # Test 8: Check Audit Log
-    echo ""
-    echo "--- Test 8: Audit Log Check ---"
+    echo "--- Test 7: Audit Log Check ---"
     if [ -n "$adb_target" ]; then
         echo "Pulling audit log via ADB..."
         audit_log=$($ADB -s "$adb_target" shell "run-as org.kanaha.camera cat files/apache/logs/audit.log 2>/dev/null | tail -5" 2>/dev/null || echo "")
@@ -225,9 +209,9 @@ test_camera() {
         echo -e "${YELLOW}SKIP${NC}: ADB not connected, cannot check audit log"
     fi
 
-    # Test 9: Rate Limiting Headers
+    # Test 8: Request size limit
     echo ""
-    echo "--- Test 9: Rate Limiting (LimitRequestBody) ---"
+    echo "--- Test 8: Request Size (LimitRequestBody) ---"
     # Create a payload larger than 64KB
     large_payload=$(python3 -c "import json; print(json.dumps({'action':'getStatus','data':'A'*70000}))")
     response=$(camera_curl "$ip" "/services/CameraControlService/getStatus" --max-time 10 -w "%{http_code}" -o /dev/null \
@@ -351,9 +335,8 @@ echo "  2. Path traversal rejection"
 echo "  3. Shell injection rejection"
 echo "  4. Script injection rejection"
 echo "  5. Input length limits"
-echo "  6. User-Agent filtering"
-echo "  7. Audit logging"
-echo "  8. Request size limits"
+echo "  6. Audit logging"
+echo "  7. Request size limits"
 echo ""
 echo "For manual recording test, run:"
 echo "  SSL=$SSL"

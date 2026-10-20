@@ -18,7 +18,6 @@ Kanaha implements defense-in-depth with security enforced at multiple layers:
 │  └── See: MULTI_CAMERA_DEPLOYMENT_SYSTEM.md                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  Layer 2: Apache HTTP Server                                    │
-│  ├── User-Agent filtering (blocks scanning tools)               │
 │  ├── Security headers (HSTS, X-Frame-Options, etc.)             │
 │  └── See: httpd.conf                                            │
 ├─────────────────────────────────────────────────────────────────┤
@@ -523,52 +522,6 @@ grep "|10.0.0.99|" camera-*.log
 cat camera-*.log | grep "|10.0.0.99|" | sort -t'|' -k1
 ```
 
-## User-Agent Filtering
-
-Location: `app/src/main/assets/apache/httpd.conf`
-
-The Apache server blocks known security scanning and penetration testing tools:
-
-### Blocked Tools
-
-| Category | Tools |
-|----------|-------|
-| **Proxies** | Burp Suite, OWASP ZAP, WebScarab |
-| **Vulnerability Scanners** | Nikto, Nessus, OpenVAS, Acunetix, AppScan |
-| **Web Fuzzers** | wfuzz, ffuf, gobuster, dirbuster, skipfish |
-| **SQL Injection** | sqlmap, Havij |
-| **Exploitation** | Metasploit, Commix |
-| **Brute Force** | Hydra, Medusa |
-| **Network Scanners** | Nmap, Masscan |
-| **Other** | Nuclei, Jaeles, Arachni, w3af |
-
-### Allowed Tools
-
-Legitimate command-line tools are permitted:
-- `curl`, `wget`, `httpie`
-- `python-requests`, `libcurl`
-- Standard browser user agents
-
-### Configuration
-
-```apache
-# Block security scanners
-SetEnvIfNoCase User-Agent "burp" blocked_ua=1
-SetEnvIfNoCase User-Agent "nikto" blocked_ua=1
-# ... (see httpd.conf for full list)
-
-# Block empty user agents
-SetEnvIf User-Agent "^$" blocked_ua=1
-
-# Deny blocked requests
-<Location "/">
-    <RequireAll>
-        Require all granted
-        Require not env blocked_ua
-    </RequireAll>
-</Location>
-```
-
 ## C Layer Security (camera_control_service.c)
 
 Location: `app/src/main/cpp/axis2c/camera_control_service.c`
@@ -923,7 +876,6 @@ Kanaha has no automated dependency scan. Every native library it ships is pinned
 - [ ] CA private key (`ca.key`) kept off-device, never shipped in the APK
 - [ ] SSH keys for SFTP use ed25519
 - [ ] `known_hosts` file includes server fingerprints
-- [ ] Apache user-agent filtering enabled
 - [ ] Audit logging enabled and monitored
 - [ ] Document which devices have the shared certificate (for recovery)
 
@@ -997,9 +949,8 @@ For each camera, the following tests are executed:
 | **4. Shell Injection** | `curl ... -d '{"action":"deleteFiles","pattern":"test; rm -rf /"}'` | Error: invalid characters rejected |
 | **5. Script Injection** | `curl ... -d '{"action":"deleteFiles","pattern":"<script>alert(1)</script>"}'` | Error: injection attempt rejected |
 | **6. Input Length** | `curl ... -d '{"action":"deleteFiles","pattern":"AAA...(300 chars)"}'` | Error: too long rejected |
-| **7. User-Agent Filter** | `curl ... -H "User-Agent: Nikto/2.1.6"` | HTTP 403 Forbidden |
-| **8. Audit Log** | `adb shell "run-as org.kanaha.camera cat files/apache/logs/audit.log"` | Log entries exist |
-| **9. Request Size** | `curl ... -d '{"action":"getStatus","data":"AAA...(70KB)"}' ` | HTTP 413 Request Too Large |
+| **7. Audit Log** | `adb shell "run-as org.kanaha.camera cat files/apache/logs/audit.log"` | Log entries exist |
+| **8. Request Size** | `curl ... -d '{"action":"getStatus","data":"AAA...(70KB)"}' ` | HTTP 413 Request Too Large |
 
 ### Running the Test Script
 
@@ -1096,13 +1047,10 @@ PASS: Script injection correctly rejected
 --- Test 6: Security - Oversized Input Rejection ---
 PASS: Oversized input correctly rejected
 
---- Test 7: User-Agent Filtering ---
-PASS: Scanner user-agent correctly blocked
-
---- Test 8: Audit Log Check ---
+--- Test 7: Audit Log Check ---
 PASS: Audit log exists and contains entries
 
---- Test 9: Rate Limiting (LimitRequestBody) ---
+--- Test 8: Request Size (LimitRequestBody) ---
 PASS: Large request correctly rejected (413)
 
 --- Pixel 10 Pro XL Tests Complete ---
@@ -1133,12 +1081,10 @@ These security measures are implemented via **configuration only** (no code chan
 | XSS protection | `Header always set X-XSS-Protection` | httpd.conf |
 | Clickjack protection | `Header always set X-Frame-Options` | httpd.conf |
 | MIME sniffing protection | `Header always set X-Content-Type-Options` | httpd.conf |
-| User-agent filtering | `SetEnvIfNoCase User-Agent "burp" blocked_ua=1` | httpd.conf |
 | Anti-caching (API) | `Header always set Cache-Control "no-store"` | ssl.conf |
 | Request size limit | `LimitRequestBody 65536` | httpd.conf |
 | Header size limit | `LimitRequestFieldSize 4096` | httpd.conf |
 | Connection timeout | `Timeout 30` | httpd.conf |
-| Bandwidth limit | `SetEnv rate-limit 50` (if mod_ratelimit) | httpd.conf |
 | Security audit log | `CustomLog "logs/audit.log" mtls_audit` | httpd.conf |
 
 ### Rate Limiting and DoS Protection
@@ -1164,29 +1110,10 @@ Timeout 30
 | `LimitRequestFieldSize` | Limits header injection vectors |
 | `Timeout 30` | Closes slow/hanging connections |
 
-#### mod_reqtimeout (If Available)
-
-```apache
-<IfModule mod_reqtimeout.c>
-    RequestReadTimeout header=10-20,MinRate=500
-    RequestReadTimeout body=10-30,MinRate=1000
-</IfModule>
-```
-
-This provides granular timeout control based on data rate, defeating slow-read attacks.
-
-#### mod_ratelimit (If Available)
-
-```apache
-<IfModule mod_ratelimit.c>
-    <Location "/services">
-        SetOutputFilter RATE_LIMIT
-        SetEnv rate-limit 50  # 50 KB/s per connection
-    </Location>
-</IfModule>
-```
-
-**Note:** To enable `mod_ratelimit`, rebuild httpd with this module statically linked.
+Only core directives are used. `mod_reqtimeout`, `mod_ratelimit`, `mod_setenvif`
+and `mod_deflate` are not linked into this httpd, so `httpd.conf` carries no
+directives for them: an `<IfModule>` block for a missing module is skipped
+silently and would only look like protection.
 
 ## Why These Protections Are Sufficient
 
@@ -1211,7 +1138,7 @@ This fundamentally limits the attack surface to **authorized clients only**. Man
 | **Rebuilding httpd for mod_ratelimit** | Core Apache `LimitRequest*` and `Timeout` directives already provide DoS protection. With mTLS, attackers can't connect anyway. The effort of cross-compiling additional modules doesn't justify the marginal improvement. |
 | **Rebuilding httpd for mod_reqtimeout** | The global `Timeout 30` directive already mitigates Slowloris attacks. Granular per-phase timeouts add complexity without significant benefit for a private camera network. |
 | **C layer input validation hardening** | Java's `SecurityValidator` class already catches path traversal, injection attempts, and malformed input before it reaches the C layer. Adding redundant validation in C is defense-in-depth that's unlikely to catch anything the Java layer missed. |
-| **Improving User-Agent filtering** | This is fundamentally security-by-obscurity. Attackers can trivially change their User-Agent string. The real protection is mTLS - UA filtering just reduces noise from casual scans. |
+| **User-Agent filtering** | Removed. Without a client certificate the TLS handshake fails before any header is read; with one, the caller already has full access and sets any User-Agent it likes. It also never ran: `mod_setenvif` is not linked. |
 | **OCSP Stapling** | Kanaha uses a self-signed CA, not a public CA. OCSP is for checking revocation status with the CA in real-time, but with a private CA we control the CRL directly. OCSP adds complexity and external dependencies for no benefit. |
 | **IP allowlisting** | While easy to implement (`Require ip 192.168.x.x`), it reduces deployment flexibility and is redundant with mTLS. Certificate-based authentication is stronger than IP-based because certificates can be revoked individually while IPs are often dynamic. |
 
