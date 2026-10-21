@@ -56,7 +56,7 @@ language. No curl, no certificates, no URL construction.
 | `describeClip` | Describe a finished recording from sampled frames with the on-device model (nano flavor; see `GOOGLE_NANO_INTEGRATION.md`); writes `<basename>.kanaha.json` | `video_filename` (required), `frame_count`, `positions`, `write_sidecar`, `max_dimension` |
 | `setExposure` | Pin ISO, shutter, white balance, focus and stabilization so cameras match, or return to auto | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone`, `fps`, `codec`, `bitrate` |
 | `getExposure` | Modes in force, live values, support flags and ranges | — |
-| `setZoom` | Zoom at once or as a smooth ramp, now or at a scheduled time, while recording; cues queue, `clear` cancels | `ratio`, `duration_ms`, `start_at`, `clear` |
+| `setZoom` | Zoom at once or as a smooth ramp, now or at a scheduled time, while recording; cues queue, `clear` cancels | `ratio`, `duration_ms`, `step_ms`, `start_at`, `clear` |
 
 All tools have full `inputSchema` with parameter types, descriptions, and
 defaults. Claude reads the schema and constructs valid requests without

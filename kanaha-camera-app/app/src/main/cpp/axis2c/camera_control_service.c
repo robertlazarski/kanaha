@@ -633,8 +633,8 @@ typedef struct {
 
 int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_response, size_t response_size);
 int camera_device_get_exposure_impl(char* json_response, size_t response_size);
-int camera_device_set_zoom_impl(const char* ratio, const char* duration_ms, const char* start_at, int clear,
-                                char* json_response, size_t response_size);
+int camera_device_set_zoom_impl(const char* ratio, const char* duration_ms, const char* start_at,
+                                const char* step_ms, int clear, char* json_response, size_t response_size);
 int camera_device_stop_recording_impl(void);
 int camera_device_get_status_impl(char* status_json, size_t buffer_size);
 int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
@@ -940,17 +940,18 @@ int camera_control_service_invoke_json_impl(
     }
     else if (strcmp(action, "set_zoom") == 0 || strcmp(action, "setZoom") == 0) {
         /* Numbers go to Java as text; it checks the range against the camera's zoom. */
-        char ratio[32], duration_ms[32], start_at[32];
+        char ratio[32], duration_ms[32], start_at[32], step_ms[32];
         int r = extract_json_number_token(json_request, "ratio", ratio, sizeof(ratio));
         int d = extract_json_number_token(json_request, "duration_ms", duration_ms, sizeof(duration_ms));
         int s = extract_json_number_token(json_request, "start_at", start_at, sizeof(start_at));
+        int st = extract_json_number_token(json_request, "step_ms", step_ms, sizeof(step_ms));
         int clear = extract_json_bool(json_request, "clear", 0);
-        if (r < 0 || d < 0 || s < 0) {
+        if (r < 0 || d < 0 || s < 0 || st < 0) {
             create_error_response(json_response, response_size,
-                                  "ratio, duration_ms and start_at must be numbers");
+                                  "ratio, duration_ms, start_at and step_ms must be numbers");
         } else if (r == 0 && !clear) {
             create_error_response(json_response, response_size, "ratio is required, e.g. 2.0 for 2x (or clear: true)");
-        } else if (camera_device_set_zoom_impl(ratio, duration_ms, start_at, clear, json_response, response_size) != 0) {
+        } else if (camera_device_set_zoom_impl(ratio, duration_ms, start_at, step_ms, clear, json_response, response_size) != 0) {
             create_error_response(json_response, response_size, "Failed to set zoom");
         }
     }
@@ -1513,8 +1514,8 @@ int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_re
                                  json_response, response_size);
 }
 
-int camera_device_set_zoom_impl(const char* ratio, const char* duration_ms, const char* start_at, int clear,
-                                char* json_response, size_t response_size) {
+int camera_device_set_zoom_impl(const char* ratio, const char* duration_ms, const char* start_at,
+                                const char* step_ms, int clear, char* json_response, size_t response_size) {
     LOGI("camera_device_set_zoom_impl called: ratio=%s duration_ms=%s start_at=%s", ratio, duration_ms, start_at);
 
     if (!json_response || response_size == 0) return -1;
@@ -1529,6 +1530,7 @@ int camera_device_set_zoom_impl(const char* ratio, const char* duration_ms, cons
         {"--es", "ratio", ratio},
         {"--es", "duration_ms", duration_ms},
         {"--es", "start_at", start_at},
+        {"--es", "step_ms", step_ms},
         {"--es", "clear", clear ? "1" : ""}
     };
     return send_and_pass_through("set_zoom", operation_id, extras,

@@ -267,7 +267,8 @@ $CURL -H "Content-Type: application/json" \
 
 - `ratio` — the target, within `getExposure` `ranges.zoom_min`–`zoom_max`; out of range is refused. `duration_ms` (0–60000) ramps to it, easing in and out at an even apparent speed; omitted, the zoom is immediate.
 - `start_at` — 50 ms to 10 minutes ahead. Cues queue, so a song's cue list can be sent before the take; a cue that fires takes over from any ramp in progress. `{"clear": true}` cancels every queued cue and the ramp in progress.
-- `getExposure` reports the current `zoom`.
+- `step_ms` (33–500, default 33) sets how often a ramp moves; `getExposure` reports the current `zoom`.
+- **On the Moto G Play 2024 a ramp drops frames** — about one per second of zooming, at a 33 or a 100 ms step — while an instant change (no `duration_ms`) dropped none in testing (2026-10-20). For a timecoded take, prefer punch-ins on the Moto.
 
 #### listFiles
 
@@ -421,7 +422,7 @@ no URL, so for them `"action"` is what selects the tool.
 | `/describeClip` | POST | `video_filename`, `frame_count`, `positions`, `write_sidecar`, `max_dimension` | Describe a recording with the on-device model (Gemini Nano, `nano` flavor only); writes `<basename>.kanaha.json` |
 | `/setExposure` | POST | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone`, `fps`, `codec`, `bitrate` | Pin exposure, white balance, focus and stabilization so cameras match; refused out of range or while recording |
 | `/getExposure` | POST | — | Modes in force, live values (feed them to `setExposure` on other cameras), support flags and ranges |
-| `/setZoom` | POST | `ratio`, `duration_ms`, `start_at`, `clear` | Zoom at once or as a smooth ramp, now or at a scheduled time, while recording; cues queue, `clear` cancels them |
+| `/setZoom` | POST | `ratio`, `duration_ms`, `step_ms`, `start_at`, `clear` | Zoom at once or as a smooth ramp, now or at a scheduled time, while recording; cues queue, `clear` cancels them |
 | `/playTone` | POST | `frequency`, `duration_ms`, `start_at` | Play synthesized sine wave for software sync slate |
 
 **`start_at` parameter** (on `startRecording` and `playTone`): Pass a future UTC epoch millisecond timestamp. The camera schedules the action internally and returns immediately. Send to multiple cameras simultaneously — each fires at the same wall-clock time regardless of network delivery timing. See [Quick Start](#5-control-via-api) for curl examples.

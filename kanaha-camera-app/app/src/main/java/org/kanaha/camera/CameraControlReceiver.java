@@ -1118,7 +1118,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
     private static final java.util.concurrent.atomic.AtomicInteger zoomCuesPending = new java.util.concurrent.atomic.AtomicInteger();
     static final long ZOOM_MAX_DURATION_MS = 60_000;
     static final long ZOOM_MAX_START_AHEAD_MS = 10 * 60_000;
-    private static final long ZOOM_STEP_MS = 33;   // one step per frame at 30 fps
+    static final long ZOOM_STEP_MS_DEFAULT = 33;   // one step per frame at 30 fps
 
     /**
      * setZoom: zoom to {@code ratio}, at once or as a ramp over {@code duration_ms}, now or at
@@ -1136,6 +1136,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String ratioArg = emptyToNull(intent.getStringExtra("ratio"));
         if (clear) {
             if (ratioArg != null || emptyToNull(intent.getStringExtra("duration_ms")) != null
+                    || emptyToNull(intent.getStringExtra("step_ms")) != null
                     || emptyToNull(intent.getStringExtra("start_at")) != null) {
                 return createErrorResponse(operationId, "clear takes no other fields");
             }
@@ -1156,7 +1157,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             return response;
         }
         final float ratio;
-        final long durationMs, startAt;
+        final long durationMs, startAt, stepMs;
         try {
             String r = ratioArg;
             if (r == null) {
@@ -1167,11 +1168,16 @@ public class CameraControlReceiver extends BroadcastReceiver {
             durationMs = d == null ? 0 : d;
             Long at = optionalLong(intent, "start_at");
             startAt = at == null ? 0 : at;
+            Long st = optionalLong(intent, "step_ms");
+            stepMs = st == null ? ZOOM_STEP_MS_DEFAULT : st;
         } catch (NumberFormatException e) {
             return createErrorResponse(operationId, "ratio must be a number; duration_ms and start_at whole numbers");
         }
         if (Float.isNaN(ratio) || Float.isInfinite(ratio) || ratio <= 0) {
             return createErrorResponse(operationId, "ratio must be a positive number, e.g. 2.0 for 2x");
+        }
+        if (stepMs < 33 || stepMs > 500) {
+            return createErrorResponse(operationId, "step_ms must be 33 to 500");
         }
         if (durationMs < 0 || durationMs > ZOOM_MAX_DURATION_MS) {
             return createErrorResponse(operationId, "duration_ms must be 0 to " + ZOOM_MAX_DURATION_MS);
@@ -1202,7 +1208,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (delayMs > 0) zoomCuesPending.incrementAndGet();
         ZOOM_HANDLER.postAtTime(() -> {
                     if (delayMs > 0) zoomCuesPending.decrementAndGet();
-                    startZoomRamp(mainActivity, ratio, durationMs);
+                    startZoomRamp(mainActivity, ratio, durationMs, stepMs);
                 }, ZOOM_CUE_TOKEN, SystemClock.uptimeMillis() + delayMs);
 
         JSONObject response = new JSONObject();
@@ -1211,6 +1217,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         response.put("ratio", (double) ratio);
         response.put("ratio_now", Math.round(preview.getAppliedZoomRatio() * 1000) / 1000.0);
         response.put("duration_ms", durationMs);
+        if (durationMs > 0) response.put("step_ms", stepMs);
         response.put("scheduled", delayMs > 0);
         if (delayMs > 0) {
             response.put("start_at", startAt);
@@ -1223,7 +1230,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         return response;
     }
 
-    private static void startZoomRamp(MainActivity activity, float target, long durationMs) {
+    private static void startZoomRamp(MainActivity activity, float target, long durationMs, long stepMs) {
         Preview start = activity.getPreview();
         if (start == null) return;
         final float from = start.getAppliedZoomRatio();
@@ -1244,7 +1251,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 float x = t / (float) durationMs;
                 float eased = x * x * (3 - 2 * x);   // smoothstep: starts and ends gently
                 preview.setZoomRatio((float) (from * Math.pow(target / from, eased)));
-                ZOOM_HANDLER.postAtTime(this, ZOOM_RAMP_TOKEN, SystemClock.uptimeMillis() + ZOOM_STEP_MS);
+                ZOOM_HANDLER.postAtTime(this, ZOOM_RAMP_TOKEN, SystemClock.uptimeMillis() + stepMs);
             }
         }.run();
     }

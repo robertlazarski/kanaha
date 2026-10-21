@@ -230,7 +230,7 @@ static const char SCHEMA_GET_EXPOSURE[] =
     "}";
 
 static const char SCHEMA_SET_ZOOM[] =
-    "{\"type\":\"object\",\"properties\":{\"ratio\":{\"type\":\"number\",\"exclusiveMinimum\":0,\"description\":\"Target zoom, within getExposure ranges.zoom_min to zoom_max\"},\"duration_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":60000,\"description\":\"Ramp length; 0 or absent = at once\"},\"start_at\":{\"type\":\"integer\",\"description\":\"Epoch ms on the camera clock, 50 ms to 10 minutes ahead; absent = now. Cues queue, so a song's list can be sent up front\"},\"clear\":{\"type\":\"boolean\",\"description\":\"Cancel every queued cue and any ramp in progress; no other fields\"}},\"required\":[]}";
+    "{\"type\":\"object\",\"properties\":{\"ratio\":{\"type\":\"number\",\"exclusiveMinimum\":0,\"description\":\"Target zoom, within getExposure ranges.zoom_min to zoom_max\"},\"duration_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":60000,\"description\":\"Ramp length; 0 or absent = at once\"},\"start_at\":{\"type\":\"integer\",\"description\":\"Epoch ms on the camera clock, 50 ms to 10 minutes ahead; absent = now. Cues queue, so a song's list can be sent up front\"},\"step_ms\":{\"type\":\"integer\",\"minimum\":33,\"maximum\":500,\"description\":\"Time between ramp steps; default 33 (every frame at 30 fps)\"},\"clear\":{\"type\":\"boolean\",\"description\":\"Cancel every queued cue and any ramp in progress; no other fields\"}},\"required\":[]}";
 
 static const char SCHEMA_CLEANUP_FILES[] =
     "{"
