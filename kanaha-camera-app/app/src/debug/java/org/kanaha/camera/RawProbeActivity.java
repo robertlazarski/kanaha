@@ -93,7 +93,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * state. Each DNG is synced to storage and deleted once written, except the first
  * {@code --ei keep 3} kept as samples, so a take larger than the free space can run.
  * Syncing and deleting thirty large files a second is not what a recorder does, and
- * costs more than writing; {@code --ei keep 99999 --ez sync false} keeps every frame. Results also go to {@code <external files>/raw_probe/result.json}; the
+ * costs more than writing; {@code --ei keep 99999 --ez sync false} keeps every frame.
+ * {@code --ei buffer 40} (packed only) copies each frame out of the camera's buffer into
+ * one of 40 preallocated buffers (25 MB each) and releases the camera's at once, so a
+ * storage stall of about a second fills the buffers instead of dropping frames. Results also go to {@code <external files>/raw_probe/result.json}; the
  * frames written in the write phase are deleted afterwards.
  */
 public class RawProbeActivity extends Activity {
@@ -148,6 +151,7 @@ public class RawProbeActivity extends Activity {
         take.sync = getIntent().getBooleanExtra("sync", true);
         take.exposureNs = getIntent().getLongExtra("exposure_ns", 0);
         take.iso = getIntent().getIntExtra("iso", 0);
+        take.buffer = getIntent().getIntExtra("buffer", 0);
 
         cameraThread = new HandlerThread("RawProbeCamera");
         cameraThread.start();
@@ -580,7 +584,7 @@ public class RawProbeActivity extends Activity {
     }
 
     static final class TakeOptions {
-        int seconds, threads, keep, iso;
+        int seconds, threads, keep, iso, buffer;
         long exposureNs;
         boolean packed, audio, sync;
     }
@@ -616,8 +620,13 @@ public class RawProbeActivity extends Activity {
         PackedDngWriter[] packer = new PackedDngWriter[1];
         java.util.concurrent.atomic.AtomicBoolean templating = new java.util.concurrent.atomic.AtomicBoolean();
         CountDownLatch armed = new CountDownLatch(opt.packed ? 1 : 0);
+        final boolean buffered = opt.packed && opt.buffer > 0;
+        BlockingQueue<ByteBuffer> frameBuffers = new ArrayBlockingQueue<>(Math.max(1, opt.buffer));
+        int[] frameStride = new int[1];
+        AtomicInteger buffersLow = new AtomicInteger(Integer.MAX_VALUE);
         java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(
-                threads, threads, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(maxImages - threads - 2));
+                threads, threads, 0, TimeUnit.SECONDS,
+                buffered ? new java.util.concurrent.LinkedBlockingQueue<>() : new ArrayBlockingQueue<>(maxImages - threads - 2));
         reader.setOnImageAvailableListener(r -> {
             Image image = r.acquireNextImage();
             if (image == null) return;
@@ -647,8 +656,17 @@ public class RawProbeActivity extends Activity {
                         // (about 0.4 s each) until the JIT compiles the loop, which dropped frames.
                         Image.Plane plane = image.getPlanes()[0];
                         for (int i = 0; i < 4; i++) w.write(new DiscardingOutputStream(), plane.getBuffer(), plane.getRowStride());
+                        if (buffered) {
+                            frameStride[0] = plane.getRowStride();
+                            int frameBytes = plane.getBuffer().remaining();
+                            // Shared memory, not allocateDirect: on Android direct buffers come out
+                            // of the Java heap, capped well below the ~1 GB a second of frames needs.
+                            for (int i = 0; i < opt.buffer; i++) {
+                                frameBuffers.add(android.os.SharedMemory.create("take" + i, frameBytes).mapReadWrite());
+                            }
+                        }
                         packer[0] = w;
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         Log.e(TAG, "template failed", e);
                     } finally {
                         image.close();
@@ -665,6 +683,45 @@ public class RawProbeActivity extends Activity {
                 if (gap > 1) missing.addAndGet((int) (gap - 1));
             }
             int index = frames.getAndIncrement();
+            if (buffered) {
+                ByteBuffer copy = frameBuffers.poll();
+                if (copy == null) {
+                    drops.incrementAndGet();
+                    image.close();
+                    return;
+                }
+                buffersLow.accumulateAndGet(frameBuffers.size(), Math::min);
+                copy.clear();
+                copy.put(image.getPlanes()[0].getBuffer());
+                copy.flip();
+                image.close();   // the camera has its buffer back at once
+                if (pool.isShutdown()) {   // a frame after the take ended
+                    frameBuffers.add(copy);
+                    return;
+                }
+                pool.execute(() -> {
+                    File f = new File(dir, String.format(java.util.Locale.US, "frame_%06d.dng", index));
+                    try {
+                        long t0 = System.nanoTime();
+                        try (FileOutputStream fos = new FileOutputStream(f);
+                             OutputStream out = new BufferedOutputStream(fos, 1 << 20)) {
+                            packer[0].write(out, copy, frameStride[0]);
+                            out.flush();
+                            if (opt.sync) fos.getFD().sync();
+                        }
+                        frameMs.add((System.nanoTime() - t0) / 1_000_000);
+                        bytes.addAndGet(f.length());
+                        written.incrementAndGet();
+                        if (index >= opt.keep && !f.delete()) Log.w(TAG, "could not delete " + f);
+                    } catch (Exception e) {
+                        failures.incrementAndGet();
+                        Log.e(TAG, "dng write failed", e);
+                    } finally {
+                        frameBuffers.add(copy);
+                    }
+                });
+                return;
+            }
             try {
                 pool.execute(() -> {
                     try {
@@ -792,6 +849,10 @@ public class RawProbeActivity extends Activity {
         r.put("format", opt.packed ? "dng_12bit_packed" : "dng_16bit_dngcreator");
         r.put("preview", preview != null);
         r.put("threads", threads);
+        if (buffered) {
+            r.put("buffer_frames", opt.buffer);
+            r.put("buffers_free_min", buffersLow.get() == Integer.MAX_VALUE ? opt.buffer : buffersLow.get());
+        }
         r.put("frames", frames.get());
         r.put("written", written.get());
         r.put("queue_drops", drops.get());
