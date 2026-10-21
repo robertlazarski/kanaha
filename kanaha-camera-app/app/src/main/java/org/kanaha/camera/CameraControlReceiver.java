@@ -27,6 +27,7 @@ import android.media.AudioFormat;
 import android.media.AudioTrack;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.preference.PreferenceManager;
 import android.util.Log;
 import org.json.JSONArray;
@@ -377,6 +378,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     case "describe_clip":
                     case "describeClip":
                         response = handleDescribeClip(context, intent);
+                        break;
+                    case "set_zoom":
+                    case "setZoom":
+                        response = handleSetZoom(intent);
                         break;
                     case "set_exposure":
                     case "setExposure":
@@ -1082,6 +1087,12 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (manualFocus) {
             ranges.put("focus_distance_max", (double) preview.getMinimumFocusDistance());
         }
+        supports.put("zoom", preview.supportsZoom());
+        if (preview.supportsZoom()) {
+            state.put("zoom", Math.round(preview.getAppliedZoomRatio() * 1000) / 1000.0);
+            ranges.put("zoom_min", (double) preview.getMinZoomRatio());
+            ranges.put("zoom_max", (double) preview.getMaxZoomRatio());
+        }
         supports.put("stabilization", preview.supportsVideoStabilization());
         supports.put("tone_curve", preview.supportsTonemapCurve());
         ranges.put("fixed_fps", new org.json.JSONArray(fixedFrameRates(controller)));
@@ -1093,6 +1104,149 @@ public class CameraControlReceiver extends BroadcastReceiver {
         state.put("supports", supports);
         state.put("ranges", ranges);
         return state;
+    }
+
+    /**
+     * Zoom runs on the UI thread. Scheduled cues queue under ZOOM_CUE_TOKEN, so a song's
+     * cue list can be sent up front; a cue that fires (or an immediate setZoom) takes over
+     * from any ramp in progress by bumping zoomGeneration. clear cancels both.
+     */
+    private static final Handler ZOOM_HANDLER = new Handler(Looper.getMainLooper());
+    private static final Object ZOOM_CUE_TOKEN = new Object();
+    private static final Object ZOOM_RAMP_TOKEN = new Object();
+    private static int zoomGeneration;   // UI thread only
+    private static final java.util.concurrent.atomic.AtomicInteger zoomCuesPending = new java.util.concurrent.atomic.AtomicInteger();
+    static final long ZOOM_MAX_DURATION_MS = 60_000;
+    static final long ZOOM_MAX_START_AHEAD_MS = 10 * 60_000;
+    private static final long ZOOM_STEP_MS = 33;   // one step per frame at 30 fps
+
+    /**
+     * setZoom: zoom to {@code ratio}, at once or as a ramp over {@code duration_ms}, now or at
+     * {@code start_at} (epoch ms on this device's clock, so a push-in can land on a moment in
+     * the song). Allowed while recording; that is what it is for. Digital zoom crops the sensor
+     * before scaling, so it loses no resolution until the crop is narrower than the video
+     * (about 2.5x for the Moto's 1600-wide open gate from its 4080-wide sensor).
+     * The ramp eases in and out and moves the ratio geometrically, so the apparent speed of
+     * the push-in is even; Camera2 applies each step exactly (CONTROL_ZOOM_RATIO).
+     * Scheduled cues queue (send a song's cue list up front); {@code clear} cancels them all.
+     */
+    private JSONObject handleSetZoom(Intent intent) throws JSONException {
+        String operationId = intent.getStringExtra("operation_id");
+        boolean clear = "1".equals(intent.getStringExtra("clear"));
+        String ratioArg = emptyToNull(intent.getStringExtra("ratio"));
+        if (clear) {
+            if (ratioArg != null || emptyToNull(intent.getStringExtra("duration_ms")) != null
+                    || emptyToNull(intent.getStringExtra("start_at")) != null) {
+                return createErrorResponse(operationId, "clear takes no other fields");
+            }
+            CountDownLatch done = new CountDownLatch(1);
+            ZOOM_HANDLER.post(() -> {
+                ZOOM_HANDLER.removeCallbacksAndMessages(ZOOM_CUE_TOKEN);
+                ZOOM_HANDLER.removeCallbacksAndMessages(ZOOM_RAMP_TOKEN);
+                zoomGeneration++;
+                zoomCuesPending.set(0);
+                done.countDown();
+            });
+            try { done.await(2, TimeUnit.SECONDS); } catch (InterruptedException ignored) { }
+            JSONObject response = new JSONObject();
+            response.put("success", true);
+            response.put("operation_id", operationId);
+            response.put("cleared", true);
+            response.put("message", "Zoom cues and any ramp in progress cancelled; zoom stays where it is");
+            return response;
+        }
+        final float ratio;
+        final long durationMs, startAt;
+        try {
+            String r = ratioArg;
+            if (r == null) {
+                return createErrorResponse(operationId, "ratio is required, e.g. 2.0 for 2x (or clear: true)");
+            }
+            ratio = Float.parseFloat(r);
+            Long d = optionalLong(intent, "duration_ms");
+            durationMs = d == null ? 0 : d;
+            Long at = optionalLong(intent, "start_at");
+            startAt = at == null ? 0 : at;
+        } catch (NumberFormatException e) {
+            return createErrorResponse(operationId, "ratio must be a number; duration_ms and start_at whole numbers");
+        }
+        if (Float.isNaN(ratio) || Float.isInfinite(ratio) || ratio <= 0) {
+            return createErrorResponse(operationId, "ratio must be a positive number, e.g. 2.0 for 2x");
+        }
+        if (durationMs < 0 || durationMs > ZOOM_MAX_DURATION_MS) {
+            return createErrorResponse(operationId, "duration_ms must be 0 to " + ZOOM_MAX_DURATION_MS);
+        }
+        long now = System.currentTimeMillis();
+        long delayMs = startAt == 0 ? 0 : startAt - now;
+        if (startAt != 0 && (delayMs < 50 || delayMs > ZOOM_MAX_START_AHEAD_MS)) {
+            return createErrorResponse(operationId, "start_at must be 50 ms to " + ZOOM_MAX_START_AHEAD_MS / 60_000
+                    + " minutes ahead on this device's clock (epoch ms); it was " + delayMs + " ms away");
+        }
+
+        MainActivity mainActivity = MainActivity.getInstance();
+        if (mainActivity == null) {
+            return createErrorResponse(operationId, "MainActivity instance not available");
+        }
+        if (mainActivity.isAppPaused()) {
+            return createErrorResponse(operationId, CAMERA_NOT_IN_FOREGROUND);
+        }
+        Preview preview = mainActivity.getPreview();
+        if (preview == null || !preview.supportsZoom()) {
+            return createErrorResponse(operationId, "This camera does not support zoom");
+        }
+        float min = preview.getMinZoomRatio(), max = preview.getMaxZoomRatio();
+        if (ratio < min - 0.001f || ratio > max + 0.001f) {
+            return createErrorResponse(operationId, "ratio must be between " + min + " and " + max);
+        }
+
+        if (delayMs > 0) zoomCuesPending.incrementAndGet();
+        ZOOM_HANDLER.postAtTime(() -> {
+                    if (delayMs > 0) zoomCuesPending.decrementAndGet();
+                    startZoomRamp(mainActivity, ratio, durationMs);
+                }, ZOOM_CUE_TOKEN, SystemClock.uptimeMillis() + delayMs);
+
+        JSONObject response = new JSONObject();
+        response.put("success", true);
+        response.put("operation_id", operationId);
+        response.put("ratio", (double) ratio);
+        response.put("ratio_now", Math.round(preview.getAppliedZoomRatio() * 1000) / 1000.0);
+        response.put("duration_ms", durationMs);
+        response.put("scheduled", delayMs > 0);
+        if (delayMs > 0) {
+            response.put("start_at", startAt);
+            response.put("delay_ms", delayMs);
+        }
+        response.put("cues_pending", zoomCuesPending.get());
+        response.put("zoom_min", (double) min);
+        response.put("zoom_max", (double) max);
+        response.put("recording", isRecordingActive(mainActivity));
+        return response;
+    }
+
+    private static void startZoomRamp(MainActivity activity, float target, long durationMs) {
+        Preview start = activity.getPreview();
+        if (start == null) return;
+        final float from = start.getAppliedZoomRatio();
+        final long t0 = SystemClock.uptimeMillis();
+        final int generation = ++zoomGeneration;   // a ramp in progress stops at its next step
+        ZOOM_HANDLER.removeCallbacksAndMessages(ZOOM_RAMP_TOKEN);
+        Log.i(TAG, "Zoom " + from + "x -> " + target + "x over " + durationMs + " ms");
+        new Runnable() {
+            @Override
+            public void run() {
+                Preview preview = activity.getPreview();
+                if (preview == null || generation != zoomGeneration) return;
+                long t = SystemClock.uptimeMillis() - t0;
+                if (durationMs <= 0 || t >= durationMs) {
+                    preview.setZoomRatio(target);
+                    return;
+                }
+                float x = t / (float) durationMs;
+                float eased = x * x * (3 - 2 * x);   // smoothstep: starts and ends gently
+                preview.setZoomRatio((float) (from * Math.pow(target / from, eased)));
+                ZOOM_HANDLER.postAtTime(this, ZOOM_RAMP_TOKEN, SystemClock.uptimeMillis() + ZOOM_STEP_MS);
+            }
+        }.run();
     }
 
     /** Kanaha's codec names and OpenCamera's output format values; MP4 only. */

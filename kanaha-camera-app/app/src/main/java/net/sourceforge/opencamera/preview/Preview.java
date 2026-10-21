@@ -4507,6 +4507,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
     public void zoomTo(int new_zoom_factor, boolean allow_smooth_zoom, boolean allow_zoom_transition) {
         if( MyDebug.LOG )
             Log.d(TAG, "ZoomTo(): " + new_zoom_factor);
+        kanaha_zoom_ratio = -1.0f;
         if( new_zoom_factor < 0 )
             new_zoom_factor = 0;
         else if( new_zoom_factor > max_zoom_factor )
@@ -4571,6 +4572,41 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
                 clearFocusAreas();
             }
         }
+    }
+
+    /** Kanaha: the ratio last applied by setZoomRatio(), or -1 once zoomTo() has snapped to a step. */
+    private float kanaha_zoom_ratio = -1.0f;
+
+    /** Kanaha (setZoom): zoom to any ratio between getMinZoomRatio() and getMaxZoomRatio().
+     *  On Camera2 the ratio is applied exactly (CONTROL_ZOOM_RATIO), so a ramp of many small
+     *  steps is smooth; the zoom index and saved preference follow the nearest step, as pinch
+     *  zoom does. Call on the UI thread. Returns the ratio applied, or -1 without zoom.
+     */
+    public float setZoomRatio(float ratio) {
+        if( camera_controller == null || !has_zoom || zoom_ratios == null )
+            return -1.0f;
+        ratio = Math.max(getMinZoomRatio(), Math.min(getMaxZoomRatio(), ratio));
+        if( zoom_transition_runnable != null ) {
+            zoom_transition_handler.removeCallbacks(zoom_transition_runnable);
+            zoom_transition_runnable = null;
+        }
+        int nearest = 0;
+        for(int i=1;i<=max_zoom_factor;i++) {
+            if( Math.abs(zoom_ratios.get(i)/100.0f - ratio) < Math.abs(zoom_ratios.get(nearest)/100.0f - ratio) )
+                nearest = i;
+        }
+        camera_controller.setZoom(nearest, using_android_l ? ratio : -1.0f);
+        applicationInterface.setZoomPref(nearest);
+        kanaha_zoom_ratio = using_android_l ? ratio : zoom_ratios.get(nearest)/100.0f;
+        return kanaha_zoom_ratio;
+    }
+
+    /** Kanaha: the zoom ratio in effect, exact after setZoomRatio(); getZoomRatio() reports the
+     *  nearest zoom step, which OpenCamera's UI relies on. */
+    public float getAppliedZoomRatio() {
+        if( kanaha_zoom_ratio > 0.0f )
+            return kanaha_zoom_ratio;
+        return getZoomRatio();
     }
 
     public void setFocusDistance(float new_focus_distance, boolean is_target_distance, boolean show_toast) {

@@ -229,6 +229,9 @@ static const char SCHEMA_GET_EXPOSURE[] =
     "\"required\":[]"
     "}";
 
+static const char SCHEMA_SET_ZOOM[] =
+    "{\"type\":\"object\",\"properties\":{\"ratio\":{\"type\":\"number\",\"exclusiveMinimum\":0,\"description\":\"Target zoom, within getExposure ranges.zoom_min to zoom_max\"},\"duration_ms\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":60000,\"description\":\"Ramp length; 0 or absent = at once\"},\"start_at\":{\"type\":\"integer\",\"description\":\"Epoch ms on the camera clock, 50 ms to 10 minutes ahead; absent = now. Cues queue, so a song's list can be sent up front\"},\"clear\":{\"type\":\"boolean\",\"description\":\"Cancel every queued cue and any ramp in progress; no other fields\"}},\"required\":[]}";
+
 static const char SCHEMA_CLEANUP_FILES[] =
     "{"
     "\"type\":\"object\","
@@ -325,6 +328,11 @@ static const kanaha_mcp_tool_t kanaha_mcp_tools[] = {
         "Report the exposure, white balance and focus modes in force, the camera's live "
         "values, what it supports and its ranges.",
         SCHEMA_GET_EXPOSURE
+    },
+    {
+        "setZoom",
+        "Zoom to ratio (e.g. 2.0), at once or as a smooth ramp over duration_ms, now or at start_at (epoch ms on the camera's clock), so a push-in lands on a moment in the song. Allowed while recording. Digital zoom loses no resolution until the crop is narrower than the video (about 2.5x for a 1600-wide open gate from a 4080-wide sensor). Out-of-range values are refused; scheduled cues queue, a cue that fires takes over from a ramp in progress, and clear cancels them all. getExposure reports zoom and ranges.zoom_min/zoom_max.",
+        SCHEMA_SET_ZOOM
     },
     {
         "cleanupFiles",
@@ -475,7 +483,8 @@ static json_object *mcp_handle_tools_call(
         *out_code = MCP_ERR_METHOD_NOT_FOUND;
         *out_msg  = "Unknown tool. Available: getStatus, startRecording, "
                     "stopRecording, playTone, listFiles, deleteFiles, "
-                    "sftpTransfer, cleanupFiles, describeClip, setExposure, getExposure";
+                    "sftpTransfer, cleanupFiles, describeClip, setExposure, getExposure, "
+                    "setZoom";
         return NULL;
     }
 

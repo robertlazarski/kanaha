@@ -20,6 +20,7 @@
  *   - describeClip    (on-device description of a recording; nano flavor)
  *   - setExposure     (pin ISO, shutter, white balance, focus, stabilization)
  *   - getExposure     (modes, live values and ranges)
+ *   - setZoom         (zoom, or a timed ramp, while recording)
  *
  * Usage (Claude Desktop claude_desktop_config.json):
  * {

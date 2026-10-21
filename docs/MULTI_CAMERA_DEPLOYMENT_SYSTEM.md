@@ -177,6 +177,7 @@ Responses are `{"success":true,...}` or `{"success":false,"error":"..."}`;
 | `startRecording` | `clip_name`, `quality`, `start_at`, `open_gate`, `hlg10` |
 | `stopRecording` | |
 | `setExposure` / `getExposure` | Pin and read exposure, white balance, focus, stabilization, tone curve, frame rate, codec and bitrate; see [Matching cameras](#matching-cameras) |
+| `setZoom` | Zoom or ramp the zoom during a take, scheduled to a moment in the song; cues queue |
 | `playTone` | Audio sync slate, optionally at `start_at` |
 | `listFiles`, `deleteFiles`, `cleanupFiles` | Files on the device |
 | `sftpTransfer` | Send a recording and its sidecars to a storage server |

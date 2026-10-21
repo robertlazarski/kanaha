@@ -254,6 +254,21 @@ Values outside the camera's range are refused, never clamped, since a clamped va
 
 `getExposure` returns `exposure_mode`, `wb_mode`, `focus_mode`, `stabilization`, `tone`, `fps`, `codec`, `bitrate`, `settled` (whether the live values have caught up with pinned settings; `setExposure` waits up to 2 s for it), the live `iso`, `exposure_time_ns` (also as `shutter`, e.g. `"1/60"`), `wb_kelvin`, `wb_gains`, `focus_distance` and `frame_duration_ns`, plus `supports` and `ranges` objects. `wb_mode` is `locked` while a white balance lock is in force. The exposure and focus values can be sent unchanged to `setExposure` on other cameras; see [Multi-Camera Setup](#multi-camera-setup). White balance cannot: `wb_gains` belong to one sensor, and `wb_kelvin` under auto white balance is OpenCamera's estimate from those gains, which can be far off (the Pixel 10 Pro XL and Moto G Play 2024 both report 15000 K in daylight). Lock each camera and correct each from a gray card in post, or give every camera the same `wb_kelvin`.
 
+#### setZoom
+
+Zoom during a take, for a push-in or pull-back as an effect. Digital zoom crops the sensor before scaling, so it costs no resolution until the crop is narrower than the video: about 2.5x for the Moto G Play 2024's 1600×1200 open gate from its 4080-wide sensor.
+
+```bash
+# Push in to 2.5x over 8 s, starting at a moment in the song (epoch ms on the camera's clock)
+$CURL -H "Content-Type: application/json" \
+  -d "{\"action\":\"setZoom\",\"ratio\":2.5,\"duration_ms\":8000,\"start_at\":$AT}" \
+  "https://$CAMERA:8443/services/CameraControlService/setZoom"
+```
+
+- `ratio` — the target, within `getExposure` `ranges.zoom_min`–`zoom_max`; out of range is refused. `duration_ms` (0–60000) ramps to it, easing in and out at an even apparent speed; omitted, the zoom is immediate.
+- `start_at` — 50 ms to 10 minutes ahead. Cues queue, so a song's cue list can be sent before the take; a cue that fires takes over from any ramp in progress. `{"clear": true}` cancels every queued cue and the ramp in progress.
+- `getExposure` reports the current `zoom`.
+
 #### listFiles
 
 ```bash
@@ -406,6 +421,7 @@ no URL, so for them `"action"` is what selects the tool.
 | `/describeClip` | POST | `video_filename`, `frame_count`, `positions`, `write_sidecar`, `max_dimension` | Describe a recording with the on-device model (Gemini Nano, `nano` flavor only); writes `<basename>.kanaha.json` |
 | `/setExposure` | POST | `auto`, `lock`, `iso`, `exposure_time_ns`, `wb_kelvin`, `wb`, `focus`, `focus_distance`, `stabilization`, `tone`, `fps`, `codec`, `bitrate` | Pin exposure, white balance, focus and stabilization so cameras match; refused out of range or while recording |
 | `/getExposure` | POST | — | Modes in force, live values (feed them to `setExposure` on other cameras), support flags and ranges |
+| `/setZoom` | POST | `ratio`, `duration_ms`, `start_at`, `clear` | Zoom at once or as a smooth ramp, now or at a scheduled time, while recording; cues queue, `clear` cancels them |
 | `/playTone` | POST | `frequency`, `duration_ms`, `start_at` | Play synthesized sine wave for software sync slate |
 
 **`start_at` parameter** (on `startRecording` and `playTone`): Pass a future UTC epoch millisecond timestamp. The camera schedules the action internally and returns immediately. Send to multiple cameras simultaneously — each fires at the same wall-clock time regardless of network delivery timing. See [Quick Start](#5-control-via-api) for curl examples.

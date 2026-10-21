@@ -633,6 +633,8 @@ typedef struct {
 
 int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_response, size_t response_size);
 int camera_device_get_exposure_impl(char* json_response, size_t response_size);
+int camera_device_set_zoom_impl(const char* ratio, const char* duration_ms, const char* start_at, int clear,
+                                char* json_response, size_t response_size);
 int camera_device_stop_recording_impl(void);
 int camera_device_get_status_impl(char* status_json, size_t buffer_size);
 int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
@@ -934,6 +936,22 @@ int camera_control_service_invoke_json_impl(
     else if (strcmp(action, "get_exposure") == 0 || strcmp(action, "getExposure") == 0) {
         if (camera_device_get_exposure_impl(json_response, response_size) != 0) {
             create_error_response(json_response, response_size, "Failed to get exposure");
+        }
+    }
+    else if (strcmp(action, "set_zoom") == 0 || strcmp(action, "setZoom") == 0) {
+        /* Numbers go to Java as text; it checks the range against the camera's zoom. */
+        char ratio[32], duration_ms[32], start_at[32];
+        int r = extract_json_number_token(json_request, "ratio", ratio, sizeof(ratio));
+        int d = extract_json_number_token(json_request, "duration_ms", duration_ms, sizeof(duration_ms));
+        int s = extract_json_number_token(json_request, "start_at", start_at, sizeof(start_at));
+        int clear = extract_json_bool(json_request, "clear", 0);
+        if (r < 0 || d < 0 || s < 0) {
+            create_error_response(json_response, response_size,
+                                  "ratio, duration_ms and start_at must be numbers");
+        } else if (r == 0 && !clear) {
+            create_error_response(json_response, response_size, "ratio is required, e.g. 2.0 for 2x (or clear: true)");
+        } else if (camera_device_set_zoom_impl(ratio, duration_ms, start_at, clear, json_response, response_size) != 0) {
+            create_error_response(json_response, response_size, "Failed to set zoom");
         }
     }
     else if (strcmp(action, "play_tone") == 0 || strcmp(action, "playTone") == 0) {
@@ -1491,6 +1509,29 @@ int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_re
         {"--es", "stabilization", req->stabilization < 0 ? "" : (req->stabilization ? "1" : "0")}
     };
     return send_and_pass_through("set_exposure", operation_id, extras,
+                                 (int)(sizeof(extras) / sizeof(extras[0])),
+                                 json_response, response_size);
+}
+
+int camera_device_set_zoom_impl(const char* ratio, const char* duration_ms, const char* start_at, int clear,
+                                char* json_response, size_t response_size) {
+    LOGI("camera_device_set_zoom_impl called: ratio=%s duration_ms=%s start_at=%s", ratio, duration_ms, start_at);
+
+    if (!json_response || response_size == 0) return -1;
+
+    char operation_id[64];
+    generate_operation_id(operation_id, sizeof(operation_id));
+
+    /* Absent fields go as "" and the Java side treats them as not given. */
+    intent_extra_t extras[] = {
+        {"--es", "action", "set_zoom"},
+        {"--es", "operation_id", operation_id},
+        {"--es", "ratio", ratio},
+        {"--es", "duration_ms", duration_ms},
+        {"--es", "start_at", start_at},
+        {"--es", "clear", clear ? "1" : ""}
+    };
+    return send_and_pass_through("set_zoom", operation_id, extras,
                                  (int)(sizeof(extras) / sizeof(extras[0])),
                                  json_response, response_size);
 }
