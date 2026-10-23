@@ -896,6 +896,22 @@ feeds through a named pipe (`DngHelper`). After optimisation one Pixel core enco
 camera running, thermal status 1 (2026-10-22). Output is checked bit-exact against
 the source frames by decoding both with ffmpeg.
 
+**A whole song, 2026-10-23: no dropped frame.** First the frames went to the helper
+through a pipe: as the phone warmed, pushing 25 MB a frame through it rose past the
+33 ms a frame allows, and a 270 s take dropped up to 5%. Now the helper maps the
+app's frame buffers (SharedMemory, descriptors passed once over a Unix socket) and
+only a slot number travels per frame. A 270 s take at 30 fps, 1/60, ISO 400, three
+encoder threads: 8,100 of 8,100 frames written, 97 GB at 361 MB/s, never fewer than
+32 of 40 buffers free, thermal status 2 at most. Compression settles at about 72 ms
+a frame warm and reached 82 ms in the last 20 s; for takes much past 4.5 minutes,
+use four threads.
+
+What a take delivers: a folder of `frame_NNNNNN.dng` (lossless 12-bit, 4080×3072)
+and `take.wav` (the iRig's timecode), not one file. Developing the DNGs properly
+(the camera's colour matrix, white balance, lens shading) is `darktable-cli` or
+`rawtherapee-cli`; ffmpeg reads them but demosaics without the colour data. ffmpeg
+then encodes the developed frames and the WAV into one file per take for the edit.
+
 ---
 
 ### Suggested order, and why
