@@ -675,9 +675,10 @@ public class RawProbeActivity extends Activity {
                             int frameBytes = plane.getBuffer().remaining();
                             if (viaHelper) {
                                 // memfd shared memory the helper maps: frames are never copied to it.
+                                // Not in frameBuffers yet: each arrives when the helper releases it,
+                                // after it has checked the buffer's marker.
                                 helperBuffers.addAll(helper.allocate(opt.buffer, frameBytes));
                                 for (int i = 0; i < helperBuffers.size(); i++) slotOf.put(helperBuffers.get(i), i);
-                                frameBuffers.addAll(helperBuffers);
                             } else {
                                 // Shared memory, not allocateDirect: on Android direct buffers come out
                                 // of the Java heap, capped well below the ~1 GB a second of frames needs.
@@ -835,6 +836,8 @@ public class RawProbeActivity extends Activity {
             session.stopRepeating();
             session.close();
             reader.close();
+            if (audio != null) audio.stop();     // or it records on after the take has failed
+            if (helper != null) helper.abort();
             throw new IllegalStateException("could not build the DNG template");
         }
         // The helper gets the take and the buffers' descriptors; each released slot

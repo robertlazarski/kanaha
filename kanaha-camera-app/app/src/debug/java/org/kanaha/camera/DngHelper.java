@@ -3,7 +3,9 @@ package org.kanaha.camera;
 import android.content.Context;
 import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
+import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
+import android.os.SharedMemory;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
@@ -17,10 +19,8 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -36,7 +36,7 @@ import java.util.function.IntConsumer;
  * executable in nativeLibraryDir that ProcessBuilder runs as a child process.
  *
  * <p>Frames are not streamed to it. The take's frame buffers are shared memory
- * (memfd) made here; their file descriptors go to the helper once, attached to the
+ * (SharedMemory) made here; their file descriptors go to the helper once, attached to the
  * TAKE message on a Unix domain socket, and it maps the same memory. Per frame only
  * a short message travels: "slot 7 holds frame 1234". Streaming 25 MB a frame
  * through a pipe instead fell behind once the phone warmed.
@@ -45,13 +45,14 @@ import java.util.function.IntConsumer;
  * <ol>
  *   <li>{@link #start} runs the helper, which listens on a socket in the app's cache
  *       directory, and connects to it.</li>
- *   <li>{@link #allocate} makes the frame buffers; the caller copies each camera
- *       frame into a free one.</li>
+ *   <li>{@link #allocate} makes the frame buffers. The caller uses none of them yet.</li>
  *   <li>{@link #sendTake} sends the frame size, the DNG header (PackedDngWriter's,
  *       from the camera's own DngCreator file) and the buffers' descriptors.</li>
+ *   <li>The helper maps the buffers, checks the marker in each, and releases every
+ *       slot once: only then does the {@code released} callback hand a buffer to the
+ *       caller, so no frame can overwrite a marker before it is checked.</li>
  *   <li>{@link #sendFrame} says which buffer holds which frame. When the helper has
- *       written that frame's DNG it sends the slot back, and the {@code released}
- *       callback returns the buffer to the caller.</li>
+ *       written that frame's DNG it releases the slot again.</li>
  *   <li>{@link #finish} sends END and waits for every frame to be written.</li>
  * </ol>
  * The helper also prints one line per frame on stdout ({@code OK index bytes
@@ -75,7 +76,8 @@ final class DngHelper {
     private final LocalSocket socket;
     private final OutputStream out;
     private final Thread output;
-    private final List<ParcelFileDescriptor> memfds = new ArrayList<>();
+    private final List<ParcelFileDescriptor> memfds = new ArrayList<>();   // the buffers' descriptors, sent to the helper
+    private final List<SharedMemory> shared = new ArrayList<>();
     private Thread releases;
     private int bufferBytes;
 
@@ -135,21 +137,37 @@ final class DngHelper {
 
     /**
      * Make {@code count} frame buffers of {@code size} bytes as shared memory the helper
-     * will map. Each is a memfd: memory with a file descriptor, never on flash.
+     * will map: memory with a file descriptor, never on flash.
+     *
+     * <p>SharedMemory maps it for Java; its descriptor, which the helper needs, comes out
+     * through its public Parcelable form (writeToParcel writes exactly the descriptor).
+     * Making a memfd directly does not work: mapping it from Java means opening
+     * /proc/self/fd, and the app's SELinux policy refuses that (EACCES).
      */
     List<ByteBuffer> allocate(int count, int size) throws IOException, ErrnoException {
         bufferBytes = size;
         List<ByteBuffer> buffers = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            FileDescriptor fd = Os.memfd_create("kdng" + i, OsConstants.MFD_CLOEXEC);
-            Os.ftruncate(fd, size);
-            ParcelFileDescriptor pfd = ParcelFileDescriptor.dup(fd);
-            Os.close(fd);
-            memfds.add(pfd);
-            // Map it here through /proc/self/fd: FileChannel needs a read-write file.
-            try (RandomAccessFile raf = new RandomAccessFile("/proc/self/fd/" + pfd.getFd(), "rw")) {
-                buffers.add(raf.getChannel().map(FileChannel.MapMode.READ_WRITE, 0, size));
+            SharedMemory shm = SharedMemory.create("kdng" + i, size);
+            shared.add(shm);
+            buffers.add(shm.mapReadWrite());
+            Parcel parcel = Parcel.obtain();
+            ParcelFileDescriptor pfd;
+            try {
+                shm.writeToParcel(parcel, 0);
+                parcel.setDataPosition(0);
+                pfd = parcel.readFileDescriptor();
+            } finally {
+                parcel.recycle();
             }
+            if (pfd == null) throw new IOException("SharedMemory gave no descriptor");
+            memfds.add(pfd);
+            // A marker the helper checks once it has mapped the buffer, proving it sees this
+            // memory (the descriptor is ashmem on the Pixel, whose size fstat reports as 0,
+            // so the check has to be end to end). The first frame overwrites it.
+            ByteBuffer b = buffers.get(i);
+            b.put(0, (byte) 'K').put(1, (byte) 'D').put(2, (byte) 'N').put(3, (byte) 'G')
+             .put(4, (byte) 'B').put(5, (byte) 'U').put(6, (byte) 'F').put(7, (byte) i);
         }
         return buffers;
     }
@@ -212,10 +230,19 @@ final class DngHelper {
         } finally {
             socket.close();
             for (ParcelFileDescriptor pfd : memfds) pfd.close();
+            for (SharedMemory shm : shared) shm.close();   // mappings stay valid until unmapped
         }
         if (releases != null) releases.join(2000);
         output.join(2000);
         return done != null ? done : "exit " + process.exitValue();
+    }
+
+    /** The take failed before it started: stop the helper and free the buffers. */
+    void abort() {
+        process.destroy();
+        try { socket.close(); } catch (IOException ignored) { }
+        for (ParcelFileDescriptor pfd : memfds) { try { pfd.close(); } catch (IOException ignored) { } }
+        for (SharedMemory shm : shared) shm.close();
     }
 
     private void onLine(String line) {

@@ -42,8 +42,14 @@
  *                   stride_bytes apart) are in buffer `slot`.
  *     type 3 END    no more frames; finish what is queued and exit
  *
- *   When a frame's file is written this program sends its slot back (uint32),
- *   so the app can reuse that buffer. Anything malformed, or a size that does
+ *   Each buffer arrives holding a marker, "KDNGBUF" and its slot number, written
+ *   by the app: checking it after mapping proves this program sees the app's
+ *   memory, whatever kind of shared memory Android used (ashmem on a Pixel).
+ *
+ *   A slot travels back (uint32) whenever the app may use that buffer: once for
+ *   every buffer after the markers check out - the app touches none before, so
+ *   no frame can overwrite a marker first - and again each time a frame's file
+ *   is written. Anything malformed, or a size that does
  *   not match the take, ends the take with an error: the input comes from the
  *   app, but is checked all the same.
  *
@@ -327,6 +333,12 @@ int main(int argc, char **argv) {
         close(fds[i]);
         if (m == MAP_FAILED) return fail("cannot map a frame buffer");
         take.buffer[i] = m;
+        if (memcmp(m, "KDNGBUF", 7) != 0 || ((const uint8_t *)m)[7] != (uint8_t)i)
+            return fail("a frame buffer does not hold the app's marker");
+    }
+    for (int i = 0; i < take.nbuffers; i++) {     /* every buffer checked: the app may use them */
+        uint8_t slot[4] = { (uint8_t)i, (uint8_t)(i >> 8), 0, 0 };
+        if (write_full(take.sock, slot, 4)) return fail("cannot release the buffers");
     }
 
     pthread_t tid[MAX_THREADS];
