@@ -124,6 +124,11 @@ final class PackedDngWriter {
         return new PackedDngWriter(order, width, height, entries);
     }
 
+    /** The TIFF header, IFD0 and its values: everything before the image data. */
+    byte[] header() {
+        return header.clone();
+    }
+
     /** Bytes in one file: the header plus the packed image. */
     long fileBytes() {
         return header.length + (long) rowBytes * height;

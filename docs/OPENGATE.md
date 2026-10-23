@@ -857,11 +857,44 @@ files a second with room to spare (93 measured).
 | Lossless JPEG compression, as CinemaDNG cameras use | about −40%, scene-dependent | Our own writer, plus CPU per frame not yet measured |
 | All three | about 15 GB/min | Real work |
 
-Even then, ~180 GB free is about 12 minutes in total. Post-production on Linux is
-CLI-capable but slow: each frame is developed (`darktable-cli` or `rawtherapee-cli`
-to 16-bit TIFF, or ffmpeg directly), then encoded with ffmpeg, 1,800 frames per
-minute of footage. If Part 2 is built, start with the crop and packed 12-bit (about
-half the size), and add compression only if needed.
+Post-production on Linux is CLI-capable but slow: each frame is developed
+(`darktable-cli` or `rawtherapee-cli` to 16-bit TIFF, or ffmpeg directly), then
+encoded with ffmpeg, 1,800 frames per minute of footage.
+
+#### Step 0 results: a song-length take, 2026-10-20 to 10-22
+
+The target is a live studio music video: every camera rolls the whole song (about
+four minutes) at 30 fps, open gate, so one shot gives a 16:9 YouTube crop and a 9:16
+TikTok crop. The 16:9 crop is therefore off the table, and so is 24 fps. Measured on
+the Pixel 10 Pro XL (256 GB, ~172 GB free) with `RawProbeActivity` take mode:
+
+| Question | Result |
+|---|---|
+| Live preview and RAW together at 30 fps | Yes, zero frames missing at the sensor |
+| Frame rate | 29.997 fps with the shutter pinned (1/60, `exposure_ns`/`iso`); 29.74 on auto exposure in a dim room |
+| Packed 12-bit writer (`PackedDngWriter`) | Exact for all 12 bits, 18.8 MB a frame, read by ffmpeg |
+| Storage stalls | Linux writeback stalls a frame for up to 1 s; a 40-frame shared-memory buffer (`--ei buffer 40`) absorbs them: 200 s with no dropped frame |
+| A whole song, uncompressed | **No.** Writing collapsed after ~113 GB (about 205 s): the storage's fast write cache runs out and the drive falls to ~360 MB/s, below the 564 MB/s a 30 fps take needs |
+| Heat | Thermal status 3 by 160 s uncompressed; it caused no drops by itself |
+
+Sync-and-delete is not a valid way to test a long take: forcing every frame to flash
+and deleting it collapsed the filesystem's throughput within two minutes. Keep the
+frames (`--ei keep 99999 --ez sync false`) and delete them after.
+
+#### Lossless JPEG: the fix for the storage cliff
+
+Lossless JPEG (DNG Compression 7, what CinemaDNG cameras write) shrinks the frame
+without changing a sample. On the studio gear under its usual lighting a frame came
+to **44.4% of the packed size, 8.35 MB**: a four-minute take is about 60 GB at
+250 MB/s, under both the cache cliff and the drive's speed after it. Bright flat
+scenes compress further (30–34%).
+
+It is done in C, without JNI: `libkanaha_dng.so` (`app/src/main/cpp/dng/`) is a
+separate executable the app starts with ProcessBuilder, as it starts httpd, and
+feeds through a named pipe (`DngHelper`). After optimisation one Pixel core encodes
+32 frames a second; three threads paced to 30 fps held 30.0 fps for 270 s with the
+camera running, thermal status 1 (2026-10-22). Output is checked bit-exact against
+the source frames by decoding both with ffmpeg.
 
 ---
 

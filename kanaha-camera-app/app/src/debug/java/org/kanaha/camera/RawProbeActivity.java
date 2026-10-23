@@ -96,7 +96,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * costs more than writing; {@code --ei keep 99999 --ez sync false} keeps every frame.
  * {@code --ei buffer 40} (packed only) copies each frame out of the camera's buffer into
  * one of 40 preallocated buffers (25 MB each) and releases the camera's at once, so a
- * storage stall of about a second fills the buffers instead of dropping frames. Results also go to {@code <external files>/raw_probe/result.json}; the
+ * storage stall of about a second fills the buffers instead of dropping frames.
+ * {@code --ez helper true} (with packed and buffer) sends the frames to the native
+ * compressor, libkanaha_dng.so, through a pipe ({@link DngHelper}) instead of writing
+ * them here: lossless JPEG DNGs, about 44% of the packed size, on dng_threads cores. Results also go to {@code <external files>/raw_probe/result.json}; the
  * frames written in the write phase are deleted afterwards.
  */
 public class RawProbeActivity extends Activity {
@@ -152,6 +155,7 @@ public class RawProbeActivity extends Activity {
         take.exposureNs = getIntent().getLongExtra("exposure_ns", 0);
         take.iso = getIntent().getIntExtra("iso", 0);
         take.buffer = getIntent().getIntExtra("buffer", 0);
+        take.helper = getIntent().getBooleanExtra("helper", false);
 
         cameraThread = new HandlerThread("RawProbeCamera");
         cameraThread.start();
@@ -586,7 +590,7 @@ public class RawProbeActivity extends Activity {
     static final class TakeOptions {
         int seconds, threads, keep, iso, buffer;
         long exposureNs;
-        boolean packed, audio, sync;
+        boolean packed, audio, sync, helper;
     }
 
     /**
@@ -599,20 +603,28 @@ public class RawProbeActivity extends Activity {
         final int maxImages = threads + 4;
         ImageReader reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), ImageFormat.RAW_SENSOR, maxImages);
         Map<Long, TotalCaptureResult> results = new ConcurrentHashMap<>();
-        AtomicInteger frames = new AtomicInteger();
-        AtomicInteger written = new AtomicInteger();
-        AtomicInteger drops = new AtomicInteger();
-        AtomicInteger failures = new AtomicInteger();
-        AtomicInteger missing = new AtomicInteger();
-        AtomicLong bytes = new AtomicLong();
-        AtomicLong lastTs = new AtomicLong();
-        AtomicLong firstTs = new AtomicLong();
-        List<Long> frameMs = Collections.synchronizedList(new ArrayList<>());
-        final long frameNs = 1_000_000_000L / TARGET_FPS;
         File dir = new File(probeDir(), "take");
         File[] old = dir.listFiles();
         if (old != null) for (File f : old) if (!f.delete()) Log.w(TAG, "could not delete " + f);
         if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("could not create " + dir);
+
+        // With the helper, frames are compressed and written by libkanaha_dng.so, so what
+        // reached storage is counted from its reports rather than here.
+        final boolean viaHelper = opt.helper && opt.packed && opt.buffer > 0;
+        DngHelper helper = viaHelper ? DngHelper.start(this, dir, threads) : null;
+        AtomicInteger frames = new AtomicInteger();
+        AtomicInteger written = viaHelper ? helper.written : new AtomicInteger();
+        AtomicInteger drops = new AtomicInteger();
+        AtomicInteger failures = viaHelper ? helper.failures : new AtomicInteger();
+        AtomicInteger missing = new AtomicInteger();
+        AtomicLong bytes = viaHelper ? helper.bytes : new AtomicLong();
+        AtomicLong lastTs = new AtomicLong();
+        AtomicLong firstTs = new AtomicLong();
+        List<Long> frameMs = viaHelper ? helper.frameMs : Collections.synchronizedList(new ArrayList<>());
+        final long frameNs = 1_000_000_000L / TARGET_FPS;
+        // Frames waiting for the sender thread to put them into the helper's pipe.
+        java.util.concurrent.LinkedBlockingQueue<Object[]> toSend = new java.util.concurrent.LinkedBlockingQueue<>();
+        final Object[] endOfTake = new Object[0];
 
         // Packed takes arm first: one frame becomes the DngCreator template (about 0.6 s of
         // work), and only then does the take start counting, as a recorder arms before it
@@ -697,6 +709,10 @@ public class RawProbeActivity extends Activity {
                 image.close();   // the camera has its buffer back at once
                 if (pool.isShutdown()) {   // a frame after the take ended
                     frameBuffers.add(copy);
+                    return;
+                }
+                if (viaHelper) {
+                    toSend.add(new Object[]{index, copy});
                     return;
                 }
                 pool.execute(() -> {
@@ -805,6 +821,29 @@ public class RawProbeActivity extends Activity {
             reader.close();
             throw new IllegalStateException("could not build the DNG template");
         }
+        // The sender: one thread writes frames into the helper's pipe in order, and
+        // returns each buffer once the helper has taken it. It blocks while the helper is
+        // behind; the camera side then runs out of buffers and counts drops.
+        Thread sender = null;
+        if (viaHelper) {
+            helper.sendTake(size.getWidth(), size.getHeight(), frameStride[0], packer[0].header());
+            sender = new Thread(() -> {
+                try {
+                    for (Object[] item; (item = toSend.take()) != endOfTake; ) {
+                        ByteBuffer buf = (ByteBuffer) item[1];
+                        try {
+                            helper.sendFrame((Integer) item[0], buf);
+                        } finally {
+                            frameBuffers.add(buf);
+                        }
+                    }
+                } catch (Exception e) {
+                    failures.incrementAndGet();
+                    Log.e(TAG, "sending to the DNG helper failed", e);
+                }
+            }, "DngHelperSender");
+            sender.start();
+        }
         start = System.nanoTime();
         int maxThermal = 0;
         float minHeadroom = Float.NaN;
@@ -836,6 +875,12 @@ public class RawProbeActivity extends Activity {
         if (audio != null) audio.stop();
         pool.shutdown();
         pool.awaitTermination(60, TimeUnit.SECONDS);
+        String helperResult = null;
+        if (viaHelper) {
+            toSend.add(endOfTake);
+            sender.join(60_000);
+            helperResult = helper.finish(120);
+        }
         double wallSeconds = (System.nanoTime() - start) / 1e9;
         reader.close();
 
@@ -846,7 +891,12 @@ public class RawProbeActivity extends Activity {
             r.put("sensor_fps", Math.round((frames.get() - 1) / ((lastTs.get() - firstTs.get()) / 1e9) * 1000) / 1000.0);
         }
         if (opt.exposureNs > 0) r.put("exposure", opt.exposureNs + " ns, ISO " + opt.iso);
-        r.put("format", opt.packed ? "dng_12bit_packed" : "dng_16bit_dngcreator");
+        r.put("format", viaHelper ? "dng_12bit_lossless_jpeg" : opt.packed ? "dng_12bit_packed" : "dng_16bit_dngcreator");
+        if (helperResult != null) {
+            r.put("helper", helperResult);
+            r.put("compress_ms", percentiles(helper.compressMs));
+            r.put("write_ms", percentiles(helper.writeMs));
+        }
         r.put("preview", preview != null);
         r.put("threads", threads);
         if (buffered) {
@@ -874,6 +924,18 @@ public class RawProbeActivity extends Activity {
         r.put("timeline", timeline);
         report("take: " + r);
         return r;
+    }
+
+    /** Median, 95th percentile and maximum of a list of milliseconds. */
+    private static JSONObject percentiles(List<Long> values) throws Exception {
+        List<Long> v = new ArrayList<>(values);
+        Collections.sort(v);
+        JSONObject p = new JSONObject();
+        if (v.isEmpty()) return p;
+        p.put("median", v.get(v.size() / 2));
+        p.put("p95", v.get(v.size() * 95 / 100));
+        p.put("max", v.get(v.size() - 1));
+        return p;
     }
 
     /** The on-screen preview's surface, or null if the view never became available. */

@@ -115,6 +115,15 @@ The sidecar `<basename>.kanaha.json` is derived data about the recording;
 `listFiles`, `deleteFiles` and `sftpTransfer` must treat it like the clip it
 belongs to (carry it, delete it, never expose it on a path the clip is not on).
 
+### 9. `libkanaha_dng.so`: the 12-bit RAW compressor (debug probe for now)
+A native executable (`app/src/main/cpp/dng/`), started by the app with
+ProcessBuilder like httpd, never loaded with JNI. It reads frames from a named pipe
+the app creates `0600` in its cache directory and writes DNG files into the folder
+named on its command line. Check: every size in the TAKE and FRAME messages is
+bounds-checked before use (`kanaha_dng.c` refuses anything else and ends the take);
+sample values are masked to 12 bits before they index the encoder's lookup table
+(`lj92.c`); the output folder comes from the app, never from an HTTP caller.
+
 ## Testing
 - On-device only: needs Camera2, mTLS, and the httpd child.
 - Confirm HTTP/2 is genuinely negotiated (silent fallback is the failure mode):

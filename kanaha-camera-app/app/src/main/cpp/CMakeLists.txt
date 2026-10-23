@@ -1,9 +1,12 @@
-# CMakeLists.txt for Kanaha Camera: the MCP stdio binary
+# CMakeLists.txt for Kanaha Camera: the native executables
 #
-# Gradle builds one native target here, libkanaha_mcp.so: the MCP server that
-# Claude reaches over adb stdio. ApacheService copies it out of nativeLibraryDir
-# to files/kanaha-camera-mcp. It is an executable named lib*.so only so that
-# Android packages and extracts it.
+# Gradle builds two native targets here, both executables named lib*.so only so
+# that Android packages and extracts them; neither is ever loaded with JNI:
+#   libkanaha_mcp.so - the MCP server that Claude reaches over adb stdio.
+#                      ApacheService copies it out of nativeLibraryDir to
+#                      files/kanaha-camera-mcp.
+#   libkanaha_dng.so - compresses a 12-bit RAW take into lossless DNG frames,
+#                      fed through a named pipe (dng/kanaha_dng.c).
 #
 # The HTTP/2 server, libhttpd.so, is not built here. It is real Apache httpd
 # with mod_axis2, linked by build-android.sh at the repository root against the
@@ -71,3 +74,31 @@ target_link_options(kanaha_mcp.so PRIVATE
 )
 
 install(TARGETS kanaha_mcp.so DESTINATION lib/${ANDROID_ABI})
+
+# The 12-bit RAW take compressor: plain C and pthreads, no other libraries.
+add_executable(
+    kanaha_dng.so
+    dng/kanaha_dng.c
+    dng/lj92.c
+)
+
+set_target_properties(kanaha_dng.so PROPERTIES
+    OUTPUT_NAME "kanaha_dng"
+    PREFIX "lib"
+    SUFFIX ".so"
+    POSITION_INDEPENDENT_CODE ON
+)
+
+target_compile_options(kanaha_dng.so PRIVATE
+    -Wall -Wextra -O2 -fPIE
+    -ffunction-sections -fdata-sections
+)
+
+target_link_options(kanaha_dng.so PRIVATE
+    -fPIE -pie
+    -Wl,--gc-sections
+    -Wl,-z,max-page-size=16384
+    -Wl,-z,separate-loadable-segments
+)
+
+install(TARGETS kanaha_dng.so DESTINATION lib/${ANDROID_ABI})
