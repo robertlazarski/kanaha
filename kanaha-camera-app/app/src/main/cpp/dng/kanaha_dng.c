@@ -39,7 +39,9 @@
  *   image. One line per frame on stdout, which the app reads:
  *
  *     READY                        pipe open, waiting for TAKE
- *     OK <index> <bytes> <compress_ms> <write_ms>   frame written
+ *     OK <index> <bytes> <compress_ms> <write_ms> <read_ms> <wait_ms>
+ *                                  frame written; read_ms = reading it from the
+ *                                  pipe, wait_ms = waiting for a free buffer first
  *     ERR <message>                a frame or the take failed
  *     DONE <frames> <bytes>        END received, every frame written
  *
@@ -101,7 +103,7 @@ static take_t take;
 
 /* ---- frame buffers and the job queue ------------------------------------ */
 
-typedef struct { uint8_t *data; size_t len; uint32_t index; } slot_t;
+typedef struct { uint8_t *data; size_t len; uint32_t index; double read_ms, wait_ms; } slot_t;
 
 static slot_t pool[POOL_FRAMES];
 static int free_list[POOL_FRAMES], free_n;            /* slots ready to fill */
@@ -230,7 +232,7 @@ static void *encoder(void *arg) {
 
         size_t bytes = take.header_len + out.len;
         pthread_mutex_lock(&lock); frames_done++; bytes_done += bytes; pthread_mutex_unlock(&lock);
-        say("OK %u %zu %.0f %.0f", slot->index, bytes, t1 - t0, now_ms() - t1);
+        say("OK %u %zu %.0f %.0f %.0f %.0f", slot->index, bytes, t1 - t0, now_ms() - t1, slot->read_ms, slot->wait_ms);
     }
     free(out.buf); free(header);
     return NULL;
@@ -284,9 +286,12 @@ int main(int argc, char **argv) {
         uint32_t type = le32(h + 4), index = le32(h + 8), len = le32(h + 12);
         if (type == MSG_END) break;
         if (type != MSG_FRAME || len < take.frame_bytes_min || len > take.frame_bytes_max) { error = "bad FRAME"; break; }
+        double w0 = now_ms();
         int s = take_slot();
+        double r0 = now_ms();
         if (read_full(fd, pool[s].data, len)) { error = "short FRAME"; break; }
         pool[s].len = len; pool[s].index = index;
+        pool[s].wait_ms = r0 - w0; pool[s].read_ms = now_ms() - r0;
         if (!take.table_ready) {                 /* the first frame builds the take's table */
             lj92_frame_t f = { pool[s].data, take.width, take.height, take.stride };
             lj92_take_init(&take.table, &f);

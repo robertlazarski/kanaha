@@ -848,6 +848,7 @@ public class RawProbeActivity extends Activity {
         int maxThermal = 0;
         float minHeadroom = Float.NaN;
         int[] last = new int[4];
+        int[] seen = new int[3];   // per list: how many values earlier windows used
         for (int t = 10; t <= opt.seconds; t += 10) {
             Thread.sleep(Math.max(0, start / 1_000_000 + t * 1000L - System.nanoTime() / 1_000_000));
             JSONObject row = new JSONObject();
@@ -867,6 +868,13 @@ public class RawProbeActivity extends Activity {
                 if (!Float.isNaN(headroom)) minHeadroom = Float.isNaN(minHeadroom) ? headroom : Math.min(minHeadroom, headroom);
             }
             row.put("free_gb", Math.round(dir.getUsableSpace() / 1e9));
+            if (viaHelper) {
+                // Where frames waited in this window: app-side send, helper-side buffer wait.
+                row.put("send_ms_avg", meanSince(helper.sendMs, seen, 0));
+                row.put("helper_wait_ms_avg", meanSince(helper.waitMs, seen, 1));
+                row.put("compress_ms_avg", meanSince(helper.compressMs, seen, 2));
+                row.put("app_buffers_free", frameBuffers.size());
+            }
             timeline.put(row);
             report("take " + row);
         }
@@ -896,6 +904,9 @@ public class RawProbeActivity extends Activity {
             r.put("helper", helperResult);
             r.put("compress_ms", percentiles(helper.compressMs));
             r.put("write_ms", percentiles(helper.writeMs));
+            r.put("send_ms", percentiles(helper.sendMs));
+            r.put("read_ms", percentiles(helper.readMs));
+            r.put("wait_ms", percentiles(helper.waitMs));
         }
         r.put("preview", preview != null);
         r.put("threads", threads);
@@ -924,6 +935,18 @@ public class RawProbeActivity extends Activity {
         r.put("timeline", timeline);
         report("take: " + r);
         return r;
+    }
+
+    /** The mean of the values added to {@code list} since the last call for slot {@code k}. */
+    private static long meanSince(List<Long> list, int[] seen, int k) {
+        synchronized (list) {
+            int from = seen[k], to = list.size();
+            seen[k] = to;
+            if (to <= from) return 0;
+            long sum = 0;
+            for (int i = from; i < to; i++) sum += list.get(i);
+            return sum / (to - from);
+        }
     }
 
     /** Median, 95th percentile and maximum of a list of milliseconds. */

@@ -57,6 +57,9 @@ final class DngHelper {
     final List<Long> frameMs = Collections.synchronizedList(new ArrayList<>());     // compress + write
     final List<Long> compressMs = Collections.synchronizedList(new ArrayList<>());
     final List<Long> writeMs = Collections.synchronizedList(new ArrayList<>());
+    final List<Long> readMs = Collections.synchronizedList(new ArrayList<>());      // helper: frame out of the pipe
+    final List<Long> waitMs = Collections.synchronizedList(new ArrayList<>());      // helper: waiting for a free buffer
+    final List<Long> sendMs = Collections.synchronizedList(new ArrayList<>());      // app: frame into the pipe
     private volatile String done;
 
     private final Process process;
@@ -135,13 +138,15 @@ final class DngHelper {
     private void onLine(String line) {
         if (line.startsWith("OK ")) {
             String[] p = line.split(" ");
-            if (p.length == 5) {
+            if (p.length == 7) {
                 written.incrementAndGet();
                 bytes.addAndGet(Long.parseLong(p[2]));
                 long compress = Long.parseLong(p[3]), write = Long.parseLong(p[4]);
                 compressMs.add(compress);
                 writeMs.add(write);
                 frameMs.add(compress + write);
+                readMs.add(Long.parseLong(p[5]));
+                waitMs.add(Long.parseLong(p[6]));
             }
         } else if (line.startsWith("DONE")) {
             done = line;
@@ -164,8 +169,10 @@ final class DngHelper {
 
     /** One frame: {@code samples} from position to limit. Blocks while the helper is behind. */
     void sendFrame(int index, ByteBuffer samples) throws IOException {
+        long t0 = System.nanoTime();
         send(FRAME, index, samples.remaining());
         writeAll(samples);
+        sendMs.add((System.nanoTime() - t0) / 1_000_000);
     }
 
     /** No more frames: wait (up to {@code seconds}) for the helper to write the rest. */
