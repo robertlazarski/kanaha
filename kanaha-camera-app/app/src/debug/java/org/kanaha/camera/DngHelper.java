@@ -1,17 +1,23 @@
 package org.kanaha.camera;
 
 import android.content.Context;
+import android.net.LocalSocket;
+import android.net.LocalSocketAddress;
+import android.os.ParcelFileDescriptor;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
 import android.util.Log;
 
 import java.io.BufferedReader;
+import java.io.DataInputStream;
+import java.io.EOFException;
 import java.io.File;
 import java.io.FileDescriptor;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.channels.FileChannel;
@@ -22,30 +28,35 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntConsumer;
 
 /**
  * One take's compressor: the native program libkanaha_dng.so (app/src/main/cpp/dng/
  * kanaha_dng.c), started and fed here. No JNI: like httpd (ApacheService), it is an
  * executable in nativeLibraryDir that ProcessBuilder runs as a child process.
  *
+ * <p>Frames are not streamed to it. The take's frame buffers are shared memory
+ * (memfd) made here; their file descriptors go to the helper once, attached to the
+ * TAKE message on a Unix domain socket, and it maps the same memory. Per frame only
+ * a short message travels: "slot 7 holds frame 1234". Streaming 25 MB a frame
+ * through a pipe instead fell behind once the phone warmed.
+ *
  * <p>How a take flows:
  * <ol>
- *   <li>{@link #start} makes a named pipe (FIFO) in the app's cache directory and runs
- *       the helper with it, the output folder and a thread count.</li>
- *   <li>{@link #sendTake} sends the frame size and the DNG header (PackedDngWriter's,
- *       built from the camera's own DngCreator file).</li>
- *   <li>{@link #sendFrame} writes each camera frame into the pipe: a 16-byte header,
- *       then the 16-bit samples straight from shared memory. The helper compresses it
- *       (lossless JPEG) and writes {@code frame_NNNNNN.dng}.</li>
- *   <li>{@link #finish} sends END and waits for the helper to write every frame.</li>
+ *   <li>{@link #start} runs the helper, which listens on a socket in the app's cache
+ *       directory, and connects to it.</li>
+ *   <li>{@link #allocate} makes the frame buffers; the caller copies each camera
+ *       frame into a free one.</li>
+ *   <li>{@link #sendTake} sends the frame size, the DNG header (PackedDngWriter's,
+ *       from the camera's own DngCreator file) and the buffers' descriptors.</li>
+ *   <li>{@link #sendFrame} says which buffer holds which frame. When the helper has
+ *       written that frame's DNG it sends the slot back, and the {@code released}
+ *       callback returns the buffer to the caller.</li>
+ *   <li>{@link #finish} sends END and waits for every frame to be written.</li>
  * </ol>
- * The helper answers one line per frame on its stdout ({@code OK index bytes compress_ms write_ms},
- * {@code ERR ...}, finally {@code DONE frames bytes}); a reader thread here counts them.
- * When the helper falls behind, the pipe fills and {@link #sendFrame} blocks, so the
- * caller's frame buffers run out and it drops frames - which it counts.
- *
- * <p>Message format, little-endian: "KDNG", uint32 type (1 TAKE, 2 FRAME, 3 END),
- * uint32 index, uint32 payload length, then the payload. See kanaha_dng.c.
+ * The helper also prints one line per frame on stdout ({@code OK index bytes
+ * compress_ms write_ms queued_ms}, {@code ERR ...}, {@code DONE frames bytes});
+ * a reader thread here counts them.
  */
 final class DngHelper {
     private static final String TAG = "KANAHA_DNG";
@@ -57,148 +68,175 @@ final class DngHelper {
     final List<Long> frameMs = Collections.synchronizedList(new ArrayList<>());     // compress + write
     final List<Long> compressMs = Collections.synchronizedList(new ArrayList<>());
     final List<Long> writeMs = Collections.synchronizedList(new ArrayList<>());
-    final List<Long> readMs = Collections.synchronizedList(new ArrayList<>());      // helper: frame out of the pipe
-    final List<Long> waitMs = Collections.synchronizedList(new ArrayList<>());      // helper: waiting for a free buffer
-    final List<Long> sendMs = Collections.synchronizedList(new ArrayList<>());      // app: frame into the pipe
+    final List<Long> queuedMs = Collections.synchronizedList(new ArrayList<>());    // waiting for an encoder thread
     private volatile String done;
 
     private final Process process;
-    private final File fifo;
-    private final FileChannel pipe;
-    private final Thread reader;
-    private final ByteBuffer header = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+    private final LocalSocket socket;
+    private final OutputStream out;
+    private final Thread output;
+    private final List<ParcelFileDescriptor> memfds = new ArrayList<>();
+    private Thread releases;
+    private int bufferBytes;
 
-    private DngHelper(Process process, File fifo, FileChannel pipe, Thread reader) {
+    private DngHelper(Process process, LocalSocket socket, Thread output) throws IOException {
         this.process = process;
-        this.fifo = fifo;
-        this.pipe = pipe;
-        this.reader = reader;
+        this.socket = socket;
+        this.out = socket.getOutputStream();
+        this.output = output;
     }
 
     /** Run the helper for a take written into {@code outDir} by {@code threads} encoders. */
-    static DngHelper start(Context context, File outDir, int threads) throws IOException, ErrnoException, InterruptedException {
-        File fifo = new File(context.getCacheDir(), "kanaha_dng.fifo");
-        if (fifo.exists() && !fifo.delete()) throw new IOException("cannot remove old " + fifo);
-        Os.mkfifo(fifo.getAbsolutePath(), 0600);   // only this app (its UID) can open it
-
+    static DngHelper start(Context context, File outDir, int threads) throws IOException, InterruptedException {
+        // Unix socket paths are limited to 108 bytes; the app's cache directory is short.
+        File socketFile = new File(context.getCacheDir(), "kdng.sock");
         String nativeLibDir = context.getApplicationInfo().nativeLibraryDir;
         ProcessBuilder pb = new ProcessBuilder(nativeLibDir + "/libkanaha_dng.so",
-                fifo.getAbsolutePath(), outDir.getAbsolutePath(), String.valueOf(threads));
+                socketFile.getAbsolutePath(), outDir.getAbsolutePath(), String.valueOf(threads));
         pb.redirectErrorStream(true);
         pb.environment().put("LD_LIBRARY_PATH", nativeLibDir);
         Process process = pb.start();
 
-        // The helper's stdout: one line per frame. Counted here, logged when not OK.
+        // The helper's stdout: READY once it listens, then one line per frame.
         DngHelper[] self = new DngHelper[1];
-        CountDownLatch constructed = new CountDownLatch(1);
-        Thread reader = new Thread(() -> {
+        CountDownLatch ready = new CountDownLatch(1), constructed = new CountDownLatch(1);
+        Thread output = new Thread(() -> {
             try (BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                constructed.await();
-                for (String line; (line = in.readLine()) != null; ) self[0].onLine(line);
+                for (String line; (line = in.readLine()) != null; ) {
+                    if (line.equals("READY")) { ready.countDown(); continue; }
+                    constructed.await();
+                    if (self[0] != null) self[0].onLine(line); else Log.e(TAG, line);
+                }
             } catch (Exception e) {
                 Log.e(TAG, "reading the helper's output failed", e);
+            } finally {
+                ready.countDown();
+                constructed.countDown();
             }
         }, "DngHelperOutput");
-        reader.start();
+        output.start();
 
-        FileChannel pipe;
+        if (!ready.await(5, TimeUnit.SECONDS) || !process.isAlive()) {
+            process.destroy();
+            throw new IOException("the DNG helper did not start");
+        }
+        LocalSocket socket = new LocalSocket();
         try {
-            pipe = openForWriting(fifo, process);
-        } catch (IOException | ErrnoException e) {
+            socket.connect(new LocalSocketAddress(socketFile.getAbsolutePath(), LocalSocketAddress.Namespace.FILESYSTEM));
+            self[0] = new DngHelper(process, socket, output);
+        } catch (IOException e) {
             process.destroy();
             throw e;
+        } finally {
+            constructed.countDown();
         }
-        self[0] = new DngHelper(process, fifo, pipe, reader);
-        constructed.countDown();
         return self[0];
     }
 
     /**
-     * Open the pipe for writing. A plain open blocks until the helper opens its end,
-     * forever if it died first; so open without blocking, retry for up to 5 s while the
-     * helper starts, then switch the pipe back to blocking writes (back-pressure).
+     * Make {@code count} frame buffers of {@code size} bytes as shared memory the helper
+     * will map. Each is a memfd: memory with a file descriptor, never on flash.
      */
-    private static FileChannel openForWriting(File fifo, Process process) throws IOException, ErrnoException, InterruptedException {
-        long deadline = System.currentTimeMillis() + 5000;
-        while (true) {
-            try {
-                FileDescriptor fd = Os.open(fifo.getAbsolutePath(), OsConstants.O_WRONLY | OsConstants.O_NONBLOCK, 0);
-                Os.fcntlInt(fd, OsConstants.F_SETFL, OsConstants.O_WRONLY);   // blocking again
-                return new FileOutputStream(fd).getChannel();
-            } catch (ErrnoException e) {
-                // ENXIO: the helper has not opened its end yet.
-                if (e.errno != OsConstants.ENXIO) throw e;
-                if (!process.isAlive()) throw new IOException("the DNG helper exited with " + process.exitValue());
-                if (System.currentTimeMillis() > deadline) throw new IOException("the DNG helper did not open the pipe");
-                Thread.sleep(20);
+    List<ByteBuffer> allocate(int count, int size) throws IOException, ErrnoException {
+        bufferBytes = size;
+        List<ByteBuffer> buffers = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            FileDescriptor fd = Os.memfd_create("kdng" + i, OsConstants.MFD_CLOEXEC);
+            Os.ftruncate(fd, size);
+            ParcelFileDescriptor pfd = ParcelFileDescriptor.dup(fd);
+            Os.close(fd);
+            memfds.add(pfd);
+            // Map it here through /proc/self/fd: FileChannel needs a read-write file.
+            try (RandomAccessFile raf = new RandomAccessFile("/proc/self/fd/" + pfd.getFd(), "rw")) {
+                buffers.add(raf.getChannel().map(FileChannel.MapMode.READ_WRITE, 0, size));
             }
         }
+        return buffers;
+    }
+
+    /**
+     * The take: frame size, the DNG header every frame file starts with, and the
+     * buffers from {@link #allocate}. {@code released} is called with a buffer's slot
+     * each time the helper has finished with it.
+     */
+    void sendTake(int width, int height, int strideBytes, byte[] dngHeader, IntConsumer released) throws IOException {
+        ByteBuffer m = ByteBuffer.allocate(16 + 20 + dngHeader.length).order(ByteOrder.LITTLE_ENDIAN);
+        m.put((byte) 'K').put((byte) 'D').put((byte) 'N').put((byte) 'G');
+        m.putInt(TAKE).putInt(memfds.size()).putInt(20 + dngHeader.length);
+        m.putInt(width).putInt(height).putInt(strideBytes).putInt(bufferBytes).putInt(dngHeader.length);
+        m.put(dngHeader);
+        FileDescriptor[] fds = new FileDescriptor[memfds.size()];
+        for (int i = 0; i < fds.length; i++) fds[i] = memfds.get(i).getFileDescriptor();
+        socket.setFileDescriptorsForSend(fds);   // attached to the next write: the whole message
+        out.write(m.array());
+        out.flush();
+        socket.setFileDescriptorsForSend(null);
+
+        DataInputStream in = new DataInputStream(socket.getInputStream());
+        releases = new Thread(() -> {
+            byte[] slot = new byte[4];
+            try {
+                while (true) {
+                    in.readFully(slot);
+                    released.accept(ByteBuffer.wrap(slot).order(ByteOrder.LITTLE_ENDIAN).getInt());
+                }
+            } catch (EOFException e) {
+                // the helper closed the connection: the take is over
+            } catch (IOException e) {
+                Log.e(TAG, "reading released buffers failed", e);
+            }
+        }, "DngHelperReleases");
+        releases.start();
+    }
+
+    /** Buffer {@code slot} holds frame {@code index}, {@code length} bytes of samples. */
+    synchronized void sendFrame(int slot, int index, int length) throws IOException {
+        ByteBuffer m = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN);
+        m.put((byte) 'K').put((byte) 'D').put((byte) 'N').put((byte) 'G');
+        m.putInt(FRAME).putInt(index).putInt(8).putInt(slot).putInt(length);
+        out.write(m.array());
+    }
+
+    /** No more frames: wait (up to {@code seconds}) for the helper to write the rest. */
+    String finish(int seconds) throws IOException, InterruptedException {
+        try {
+            synchronized (this) {
+                ByteBuffer m = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
+                m.put((byte) 'K').put((byte) 'D').put((byte) 'N').put((byte) 'G').putInt(END).putInt(0).putInt(0);
+                out.write(m.array());
+            }
+            if (!process.waitFor(seconds, TimeUnit.SECONDS)) {
+                process.destroy();
+                throw new IOException("the DNG helper did not finish in " + seconds + " s");
+            }
+        } finally {
+            socket.close();
+            for (ParcelFileDescriptor pfd : memfds) pfd.close();
+        }
+        if (releases != null) releases.join(2000);
+        output.join(2000);
+        return done != null ? done : "exit " + process.exitValue();
     }
 
     private void onLine(String line) {
         if (line.startsWith("OK ")) {
             String[] p = line.split(" ");
-            if (p.length == 7) {
+            if (p.length == 6) {
                 written.incrementAndGet();
                 bytes.addAndGet(Long.parseLong(p[2]));
                 long compress = Long.parseLong(p[3]), write = Long.parseLong(p[4]);
                 compressMs.add(compress);
                 writeMs.add(write);
+                queuedMs.add(Long.parseLong(p[5]));
                 frameMs.add(compress + write);
-                readMs.add(Long.parseLong(p[5]));
-                waitMs.add(Long.parseLong(p[6]));
             }
         } else if (line.startsWith("DONE")) {
             done = line;
         } else if (line.startsWith("ERR")) {
             failures.incrementAndGet();
             Log.e(TAG, line);
-        } else if (!line.equals("READY")) {
+        } else {
             Log.i(TAG, line);
         }
-    }
-
-    /** The take: frame size and the DNG header every frame file starts with. */
-    void sendTake(int width, int height, int strideBytes, byte[] dngHeader) throws IOException {
-        ByteBuffer take = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
-        take.putInt(width).putInt(height).putInt(strideBytes).putInt(dngHeader.length).flip();
-        send(TAKE, 0, 16 + dngHeader.length);
-        writeAll(take);
-        writeAll(ByteBuffer.wrap(dngHeader));
-    }
-
-    /** One frame: {@code samples} from position to limit. Blocks while the helper is behind. */
-    void sendFrame(int index, ByteBuffer samples) throws IOException {
-        long t0 = System.nanoTime();
-        send(FRAME, index, samples.remaining());
-        writeAll(samples);
-        sendMs.add((System.nanoTime() - t0) / 1_000_000);
-    }
-
-    /** No more frames: wait (up to {@code seconds}) for the helper to write the rest. */
-    String finish(int seconds) throws IOException, InterruptedException {
-        try {
-            send(END, 0, 0);
-        } finally {
-            pipe.close();
-        }
-        if (!process.waitFor(seconds, TimeUnit.SECONDS)) {
-            process.destroy();
-            throw new IOException("the DNG helper did not finish in " + seconds + " s");
-        }
-        reader.join(2000);
-        if (!fifo.delete()) Log.w(TAG, "could not remove " + fifo);
-        return done != null ? done : "exit " + process.exitValue();
-    }
-
-    private void send(int type, int index, int length) throws IOException {
-        header.clear();
-        header.put((byte) 'K').put((byte) 'D').put((byte) 'N').put((byte) 'G');
-        header.putInt(type).putInt(index).putInt(length).flip();
-        writeAll(header);
-    }
-
-    private void writeAll(ByteBuffer b) throws IOException {
-        while (b.hasRemaining()) pipe.write(b);
     }
 }

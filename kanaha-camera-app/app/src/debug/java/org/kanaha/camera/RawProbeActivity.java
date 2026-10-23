@@ -45,6 +45,7 @@ import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
@@ -97,9 +98,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code --ei buffer 40} (packed only) copies each frame out of the camera's buffer into
  * one of 40 preallocated buffers (25 MB each) and releases the camera's at once, so a
  * storage stall of about a second fills the buffers instead of dropping frames.
- * {@code --ez helper true} (with packed and buffer) sends the frames to the native
- * compressor, libkanaha_dng.so, through a pipe ({@link DngHelper}) instead of writing
- * them here: lossless JPEG DNGs, about 44% of the packed size, on dng_threads cores. Results also go to {@code <external files>/raw_probe/result.json}; the
+ * {@code --ez helper true} (with packed and buffer) hands the frames to the native
+ * compressor, libkanaha_dng.so ({@link DngHelper}), which maps the same shared-memory
+ * buffers and writes lossless JPEG DNGs, 44-65% of the packed size, on dng_threads cores. Results also go to {@code <external files>/raw_probe/result.json}; the
  * frames written in the write phase are deleted afterwards.
  */
 public class RawProbeActivity extends Activity {
@@ -622,9 +623,10 @@ public class RawProbeActivity extends Activity {
         AtomicLong firstTs = new AtomicLong();
         List<Long> frameMs = viaHelper ? helper.frameMs : Collections.synchronizedList(new ArrayList<>());
         final long frameNs = 1_000_000_000L / TARGET_FPS;
-        // Frames waiting for the sender thread to put them into the helper's pipe.
-        java.util.concurrent.LinkedBlockingQueue<Object[]> toSend = new java.util.concurrent.LinkedBlockingQueue<>();
-        final Object[] endOfTake = new Object[0];
+        // With the helper, the frame buffers are shared memory it maps; slotOf finds a
+        // buffer's number for the FRAME message, helperBuffers the buffer for a released slot.
+        List<ByteBuffer> helperBuffers = new ArrayList<>();
+        java.util.IdentityHashMap<ByteBuffer, Integer> slotOf = new java.util.IdentityHashMap<>();
 
         // Packed takes arm first: one frame becomes the DngCreator template (about 0.6 s of
         // work), and only then does the take start counting, as a recorder arms before it
@@ -671,10 +673,17 @@ public class RawProbeActivity extends Activity {
                         if (buffered) {
                             frameStride[0] = plane.getRowStride();
                             int frameBytes = plane.getBuffer().remaining();
-                            // Shared memory, not allocateDirect: on Android direct buffers come out
-                            // of the Java heap, capped well below the ~1 GB a second of frames needs.
-                            for (int i = 0; i < opt.buffer; i++) {
-                                frameBuffers.add(android.os.SharedMemory.create("take" + i, frameBytes).mapReadWrite());
+                            if (viaHelper) {
+                                // memfd shared memory the helper maps: frames are never copied to it.
+                                helperBuffers.addAll(helper.allocate(opt.buffer, frameBytes));
+                                for (int i = 0; i < helperBuffers.size(); i++) slotOf.put(helperBuffers.get(i), i);
+                                frameBuffers.addAll(helperBuffers);
+                            } else {
+                                // Shared memory, not allocateDirect: on Android direct buffers come out
+                                // of the Java heap, capped well below the ~1 GB a second of frames needs.
+                                for (int i = 0; i < opt.buffer; i++) {
+                                    frameBuffers.add(android.os.SharedMemory.create("take" + i, frameBytes).mapReadWrite());
+                                }
                             }
                         }
                         packer[0] = w;
@@ -712,7 +721,14 @@ public class RawProbeActivity extends Activity {
                     return;
                 }
                 if (viaHelper) {
-                    toSend.add(new Object[]{index, copy});
+                    // A 24-byte message; the buffer comes back when the helper releases it.
+                    try {
+                        helper.sendFrame(slotOf.get(copy), index, copy.remaining());
+                    } catch (IOException e) {
+                        failures.incrementAndGet();
+                        frameBuffers.add(copy);
+                        Log.e(TAG, "sending to the DNG helper failed", e);
+                    }
                     return;
                 }
                 pool.execute(() -> {
@@ -821,28 +837,11 @@ public class RawProbeActivity extends Activity {
             reader.close();
             throw new IllegalStateException("could not build the DNG template");
         }
-        // The sender: one thread writes frames into the helper's pipe in order, and
-        // returns each buffer once the helper has taken it. It blocks while the helper is
-        // behind; the camera side then runs out of buffers and counts drops.
-        Thread sender = null;
+        // The helper gets the take and the buffers' descriptors; each released slot
+        // returns its buffer to the pool the camera callback copies into.
         if (viaHelper) {
-            helper.sendTake(size.getWidth(), size.getHeight(), frameStride[0], packer[0].header());
-            sender = new Thread(() -> {
-                try {
-                    for (Object[] item; (item = toSend.take()) != endOfTake; ) {
-                        ByteBuffer buf = (ByteBuffer) item[1];
-                        try {
-                            helper.sendFrame((Integer) item[0], buf);
-                        } finally {
-                            frameBuffers.add(buf);
-                        }
-                    }
-                } catch (Exception e) {
-                    failures.incrementAndGet();
-                    Log.e(TAG, "sending to the DNG helper failed", e);
-                }
-            }, "DngHelperSender");
-            sender.start();
+            helper.sendTake(size.getWidth(), size.getHeight(), frameStride[0], packer[0].header(),
+                    slot -> frameBuffers.add(helperBuffers.get(slot)));
         }
         start = System.nanoTime();
         int maxThermal = 0;
@@ -870,9 +869,9 @@ public class RawProbeActivity extends Activity {
             row.put("free_gb", Math.round(dir.getUsableSpace() / 1e9));
             if (viaHelper) {
                 // Where frames waited in this window: app-side send, helper-side buffer wait.
-                row.put("send_ms_avg", meanSince(helper.sendMs, seen, 0));
-                row.put("helper_wait_ms_avg", meanSince(helper.waitMs, seen, 1));
-                row.put("compress_ms_avg", meanSince(helper.compressMs, seen, 2));
+                row.put("queued_ms_avg", meanSince(helper.queuedMs, seen, 0));
+                row.put("compress_ms_avg", meanSince(helper.compressMs, seen, 1));
+                row.put("write_ms_avg", meanSince(helper.writeMs, seen, 2));
                 row.put("app_buffers_free", frameBuffers.size());
             }
             timeline.put(row);
@@ -885,8 +884,6 @@ public class RawProbeActivity extends Activity {
         pool.awaitTermination(60, TimeUnit.SECONDS);
         String helperResult = null;
         if (viaHelper) {
-            toSend.add(endOfTake);
-            sender.join(60_000);
             helperResult = helper.finish(120);
         }
         double wallSeconds = (System.nanoTime() - start) / 1e9;
@@ -904,9 +901,7 @@ public class RawProbeActivity extends Activity {
             r.put("helper", helperResult);
             r.put("compress_ms", percentiles(helper.compressMs));
             r.put("write_ms", percentiles(helper.writeMs));
-            r.put("send_ms", percentiles(helper.sendMs));
-            r.put("read_ms", percentiles(helper.readMs));
-            r.put("wait_ms", percentiles(helper.waitMs));
+            r.put("queued_ms", percentiles(helper.queuedMs));
         }
         r.put("preview", preview != null);
         r.put("threads", threads);
