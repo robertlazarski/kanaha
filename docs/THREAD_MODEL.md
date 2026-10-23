@@ -12,6 +12,8 @@ Kanaha's IPC pipeline crosses three threading contexts: the C Apache/Axis2 worke
 curl (laptop)
   → TCP/TLS → Apache httpd (C, Axis2 worker thread, PID libhttpd.so)
     → am broadcast → Android system
+      (or, where the device refuses `am`: request file in cache/ipc_requests/
+       → CameraIpcPoller ["camera-ipc-poller" thread] → in-app sendBroadcast)
       → CameraControlReceiver.onReceive() [MAIN THREAD, PID == TID]
         → goAsync() + new Thread("KanahaCameraControl") [BACKGROUND THREAD]
           → handleStartRecording() / handlePlayTone() / etc.
@@ -21,6 +23,12 @@ curl (laptop)
 ```
 
 Key transition: `goAsync()` at the `onReceive` boundary is what keeps the main thread free.
+
+Both routes in arrive at the same `onReceive()` on the main thread. The request-file
+route exists because some device builds refuse `am` from apps (a Motorola Android 14
+build exits 255); there the native side writes the request to `cache/ipc_requests/`
+and `CameraIpcPoller` sends it as the same intent. The receiver cannot tell the
+difference, so everything below applies to both.
 
 ---
 
@@ -141,8 +149,10 @@ The scheduled-start feature (`start_at` UTC millisecond) uses a different thread
 ```java
 // In handleStartRecording(), running on background thread:
 new Handler(Looper.getMainLooper()).postDelayed(() -> {
-    writeSyncSidecar(context, clip, fireTime, og);
-    startRecordingInternal(activity, clip);  // called on main thread at scheduled time
+    long fireTime = System.currentTimeMillis();
+    if (startRecordingInternal(activity, clip)) {           // main thread, at the scheduled time
+        writeSyncSidecar(context, clip, fireTime, og, tenBit); // only for a recording that started
+    }
 }, delayMs);
 // Returns immediately — C layer gets "scheduled" response right away
 ```
@@ -150,6 +160,37 @@ new Handler(Looper.getMainLooper()).postDelayed(() -> {
 This is correct: `postDelayed` on the main Looper does not block the background thread. The lambda runs on the main thread at the scheduled time. Note that `startRecordingInternal()` called from this lambda is on the main thread — any waits in that code would block the main thread. For the scheduled path this is acceptable because `startRecordingInternal` does a single `takePicture()` (quick) with no long sleeps.
 
 See `docs/GPS.md` for sync accuracy analysis of the `start_at` mechanism.
+
+---
+
+## The setZoom Pattern: Everything on the Main Looper
+
+`setZoom` also schedules on the main Looper, but unlike `start_at` the whole feature
+lives there: scheduled cues, the ramp, and the state that lets one stop another. Zoom
+can be sent in the middle of a recording and as a list of cues for a whole song, so
+it must never touch the handler thread after the request returns.
+
+```java
+// In handleSetZoom(), running on the background thread: validate, then post and return.
+ZOOM_HANDLER.postAtTime(() -> startZoomRamp(activity, ratio, durationMs, stepMs),
+        ZOOM_CUE_TOKEN, SystemClock.uptimeMillis() + delayMs);   // delayMs = 0: now
+
+// startZoomRamp(), on the main thread: take over from any ramp in progress.
+final int generation = ++zoomGeneration;                 // main thread only
+ZOOM_HANDLER.removeCallbacksAndMessages(ZOOM_RAMP_TOKEN);
+// each step: if (generation != zoomGeneration) return;  then setZoomRatio(...) and
+// repost itself under ZOOM_RAMP_TOKEN every step_ms until the ramp ends
+```
+
+- **Two tokens.** Queued cues are posted under `ZOOM_CUE_TOKEN`, ramp steps under
+  `ZOOM_RAMP_TOKEN`, so starting a ramp cancels the previous ramp's steps without
+  cancelling cues still waiting their turn. `{"clear": true}` removes both.
+- **`zoomGeneration` is only read and written on the main thread**, so it needs no
+  synchronisation; a step that finds the generation changed simply stops.
+- **`zoomCuesPending` is an `AtomicInteger`**, because the background thread reads it
+  for the response while the main thread decrements it as cues fire.
+- `Preview.setZoomRatio()` is called only from these main-thread runnables, as
+  OpenCamera's own zoom is.
 
 ---
 
