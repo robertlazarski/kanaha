@@ -1,10 +1,11 @@
 # C and Java in Kanaha Camera: where Java starts and where it ends
 
 Kanaha Camera is the one Kanaha app where Java does the work. About 70,000
-lines of Java inherited from OpenCamera drive the camera, and about 4,000 lines
-of Kanaha's own Java run the server supervisor and the command receiver. The C
-side is about 2,300 lines: an Axis2/C service that turns HTTP/2 and MCP
-requests into commands for that Java.
+lines of Java inherited from OpenCamera drive the camera, and about 7,000 lines
+of Kanaha's own Java run the server supervisor, the command receiver and 12-bit
+RAW takes. The C side is about 3,200 lines: an Axis2/C service that turns
+HTTP/2 and MCP requests into commands for that Java, and a compressor for 12-bit
+RAW frames, the one place C does media work (see "The exception: 12-bit RAW").
 
 This is the mirror image of Kanaha Audio, where C is the program and Java is a
 thousand-line supervisor (see `CPP_AND_JAVA_DESIGN.md` in the kanaha-audio
@@ -32,6 +33,14 @@ org.kanaha.camera.CameraControlReceiver         ProcessBuilder ──exec──�
                                                                                      libkanaha_mcp.so → files/kanaha-camera-mcp
                                                                                        same service code, JSON-RPC over stdio,
                                                                                        still reaches Java through the same Intent
+
+During a 12-bit RAW take (startRecording "raw12"), a second, separate seam:
+
+org.kanaha.camera.RawTakeActivity / RawTake      ProcessBuilder ──exec──▶   libkanaha_dng.so  (C child of the app process)
+  Camera2 RAW_SENSOR frames, 30 fps                                          lossless-JPEG compressor, 4 threads
+  copy each into a SharedMemory buffer ─────── Unix socket: descriptors ──▶  maps the same buffers
+  "slot 7 holds frame 1234"            ─────── once, then 24 bytes a frame   writes frame_NNNNNN.dng
+                                       ◀────── "slot 7 is free"
 ```
 
 The C side never links against Java and Java never loads C. There is no
@@ -41,7 +50,8 @@ OpenCamera code. The seam is an Android Intent, sent by executing
 read by C. Every request that changes camera state crosses that seam once in
 each direction. On a device that refuses `am` from apps, the request half
 travels as a file instead, and the supervisor sends the same Intent (see "When
-the device refuses `am`" below).
+the device refuses `am`" below). A 12-bit RAW take adds a second seam of the same
+kind, a separate program fed by a Unix socket and shared memory, not by linking.
 
 ## What each side owns
 
@@ -57,30 +67,39 @@ Everything that touches the camera hardware or the media pipeline:
   `MediaRecorder` wiring, scoped-storage saving, HDR and panorama processing,
   the UI, Bluetooth remote control.
 
-Kanaha's changes inside this code are small and marked: about forty lines
-across nine files, nearly all of them the 10-bit HLG session work in
-`CameraController2`, `Preview` and `VideoProfile`. The fork is OpenCamera with
-a setting added, not a rewrite.
+Kanaha's changes inside this code are small and each is marked "Kanaha", now in
+eleven files: the 10-bit HLG session in `CameraController2`, `Preview` and
+`VideoProfile`; the true white-balance lock (`setWhiteBalanceLockedGains`,
+`Camera2Settings`); the exposure settings `setExposure` reads and writes; and the
+exact zoom ratio `setZoom` ramps through (`Preview.setZoomRatio`). The fork is
+OpenCamera with settings added, not a rewrite.
 
-### Java, Kanaha's own (~4,000 lines, `org.kanaha.camera`)
+### Java, Kanaha's own (~7,000 lines, `org.kanaha.camera`)
 
 | File | Lines | Role | Required by Android? |
 |---|---|---|---|
-| `CameraControlReceiver.java` | 1,906 | Receives the C side's Intent, validates every parameter (`SecurityValidator`: length limits, path-traversal and injection patterns, character whitelist), calls the matching `MainActivity` method, writes the JSON response file. Includes the SFTP transfer and file operations that run in Java. | **Yes.** Only Java can call OpenCamera, and a `BroadcastReceiver` is the mechanism Android provides for a process to be told to do something. |
+| `CameraControlReceiver.java` | 3,387 | Receives the C side's Intent, validates every parameter (`SecurityValidator`: length limits, path-traversal and injection patterns, character whitelist), calls the matching `MainActivity` method, writes the JSON response file. Includes the SFTP transfer and file operations that run in Java. | **Yes.** Only Java can call OpenCamera, and a `BroadcastReceiver` is the mechanism Android provides for a process to be told to do something. |
 | `ApacheService.java` | 936 | Foreground service in its own `:apache_httpd` process. Deploys the Apache config set and certificates, launches `libhttpd.so` with `ProcessBuilder`, kills orphans, registers mDNS, runs `CameraIpcPoller`. | The foreground service and the launch: **yes**. Deployment and mDNS: **no**, convenience. |
 | `CameraIpcPoller.java` | 163 | The request-file fallback for devices that refuse `am`: turns each request file into the Intent `am` would have sent. | **Yes, on those devices.** Sending an Intent from app code is a Java API; it is the only way left once `am` is refused. |
 | `PerformanceTestService.java` | 536 | HTTP/2 benchmarking and monitoring. | **No.** Tooling. |
 | `NetworkDiscoveryService.java` | 333 | `NsdManager` registration so clients find the camera by hostname. | **No.** Movable to C. |
 | `DeviceIdentifier.java` | 208 | One hostname used for both the certificate SAN and the mDNS name, so TLS verification by discovered name works. | **No.** Movable to C. |
 | `CertProvisioning.java` | 136 | Mints the device keypair and CSR on first run (BouncyCastle); the key never leaves the device. | **No.** OpenSSL is already in the httpd. |
+| `RawTake.java` | 491 | A 12-bit RAW take: opens the camera, captures full-size `RAW_SENSOR` at 30 fps, copies each frame into a shared buffer for the compressor, records the timecode WAV, writes the take's sidecar. | **Yes.** Camera2 is a Java API. |
+| `RawTakeActivity.java` | 126 | The take's screen: preview, status line, the duration and storage limits. Owns the camera for the take. | **Yes.** Android gives the camera to a foreground activity. |
+| `DngHelper.java` | 269 | Starts `libkanaha_dng.so`, hands it the SharedMemory buffers' descriptors over a Unix socket, sends slot numbers, reads its reports. | **Yes**, the SharedMemory and socket APIs used to share Java's buffers without JNI. |
+| `PackedDngWriter.java` | 186 | Turns Android's own DNG (from `DngCreator`, once per take) into the DNG header every frame carries. | **Yes**, `DngCreator` is the camera's own metadata. |
+| `TimecodeAudio.java` | 99 | The take's WAV from the audio input (with the iRig, SMPTE timecode), stamped on the camera's clock. | **Yes.** `AudioRecord`. |
+| `FrameSampler.java`, `OnDeviceModel.java`, `ClipDescriber.java` (per flavor) | 135, 62 | `describeClip`: frames from a recording and the on-device model. | **Yes.** `MediaMetadataRetriever` and ML Kit are Java. |
 
-### C (~2,300 lines, `app/src/main/cpp`)
+### C (~3,200 lines, `app/src/main/cpp`)
 
 | File | Lines | Role |
 |---|---|---|
-| `axis2c/camera_control_service.c` | 1,424 | The Axis2/C service. Parses the JSON request, dispatches on `action` (`startRecording`, `stopRecording`, `getStatus`, `listFiles`, `deleteFiles`, `cleanupFiles`, `playTone`, `sftpTransfer`, `describeClip`, `setExposure`, `getExposure`), and for each builds an Intent with `fork()`/`execvp()` (or, where `am` is refused, a request file) and waits for the response file. |
-| `axis2c/kanaha_mcp.c`, `kanaha_mcp_main.c` | 633 | The MCP server: ten tools with schemas, JSON-RPC 2.0 over stdio, dispatching to the same service function. |
-| `axis2c/axis2_static_service_adapter.c` | 166 | The strong symbol `camera_control_service_invoke_json` that overrides the weak stub in Axis2/C core, converting json-c objects to and from the service's string interface. |
+| `axis2c/camera_control_service.c` | 1,653 | The Axis2/C service. Parses the JSON request, dispatches on `action` (`startRecording`, `stopRecording`, `getStatus`, `listFiles`, `deleteFiles`, `cleanupFiles`, `playTone`, `sftpTransfer`, `describeClip`, `setExposure`, `getExposure`, `setZoom`), and for each builds an Intent with `fork()`/`execvp()` (or, where `am` is refused, a request file) and waits for the response file. |
+| `axis2c/kanaha_mcp.c`, `kanaha_mcp_main.c` | 716 | The MCP server: twelve tools with schemas, JSON-RPC 2.0 over stdio, dispatching to the same service function. |
+| `axis2c/axis2_static_service_adapter.c` | 176 | The strong symbol `camera_control_service_invoke_json` that overrides the weak stub in Axis2/C core, converting json-c objects to and from the service's string interface. |
+| `dng/kanaha_dng.c`, `dng/lj92.c`, `lj92.h` | 640 | The 12-bit RAW compressor, a program of its own: maps the take's shared buffers, compresses each frame as lossless JPEG (DNG Compression 7) on four threads, writes the DNG files. No Android APIs; also built and checked on a desktop. |
 
 The C is C11 with no C++ anywhere, and it is built twice, by two tools that do
 not share a link line:
@@ -88,7 +107,7 @@ not share a link line:
 | Build | Produces | Ships as |
 |---|---|---|
 | `build-android.sh` (repo root; lived outside the repo until September 2026) | Apache httpd 2.4 with mod_ssl, mod_http2, mod_axis2 and the camera service statically linked | `jniLibs/arm64-v8a/libhttpd.so`, the deployed server |
-| CMake through Gradle's `externalNativeBuild` (`app/src/main/cpp/CMakeLists.txt`) | `kanaha_mcp.so`, the MCP binary | `libkanaha_mcp.so`, copied to `files/kanaha-camera-mcp` on service start |
+| CMake through Gradle's `externalNativeBuild` (`app/src/main/cpp/CMakeLists.txt`) | `kanaha_mcp.so`, the MCP binary; `kanaha_dng.so`, the RAW compressor | `libkanaha_mcp.so`, copied to `files/kanaha-camera-mcp` on service start; `libkanaha_dng.so`, run from `nativeLibraryDir` for each RAW take |
 
 Both compile `camera_control_service.c`. The server links it with the
 cross-compiled Axis2/C, APR, OpenSSL and nghttp2 archives; the MCP binary
@@ -120,6 +139,23 @@ no such shape:
 So Java is not where the Kanaha code *chose* to be; it is where the camera is.
 What Kanaha chose was to keep the C side a control plane rather than a
 reimplementation.
+
+### The exception: 12-bit RAW
+
+One job reverses the rule, because Java could not do it in time. A 12-bit RAW
+take is 30 frames a second of 12.5 million samples. The capture stays in Java
+(`RawTake`, Camera2), but compressing the frames, which keeps a four-minute song
+inside the phone's storage, is C: one Pixel 10 Pro XL core compresses about 32
+frames a second, where Java could not keep up even packing them uncompressed.
+
+It is still not JNI. `libkanaha_dng.so` is a separate program, started like
+httpd. Java and C share the frames without copying through a pipe: the app makes
+the frame buffers as `SharedMemory`, passes their descriptors once over a Unix
+socket, and the helper maps the same memory. Per frame only a slot number
+travels each way. The first version piped each 25 MB frame to the helper and
+dropped frames once the phone warmed; with shared memory, whole-song takes drop
+none (`docs/OPENGATE.md`, `docs/THREAD_MODEL.md`). And it is the licence line
+again: the compressor is a separate work from OpenCamera, joined by a socket.
 
 One more thing runs from Java for the same reason: `describeClip`, the
 on-device clip description through Gemini Nano (`docs/GOOGLE_NANO_INTEGRATION.md`).
@@ -281,9 +317,12 @@ way and is copied to `files/kanaha-camera-mcp` on service start.
 | Request parsing, action dispatch, Intent IPC, response assembly | C | The Axis2/C service |
 | Sending the Intent where `am` is refused | Java (`CameraIpcPoller`) | `Context.sendBroadcast()` is a Java API, and the only route left on such a device |
 | MCP server | C | Same service code, stdio transport |
+| 12-bit RAW capture, timecode WAV, take screen | Java (`RawTake`, `RawTakeActivity`) | Camera2, `AudioRecord` and the foreground activity are Java |
+| 12-bit RAW compression and DNG writing | C (`libkanaha_dng.so`, its own process) | Fast enough at 30 fps where Java was not; shared memory, not JNI |
 
 In the audio app, Java starts at the manifest and ends at
 `ProcessBuilder.start()`. In the camera app, Java starts at the manifest, ends
 at `ProcessBuilder.start()` for the server, and then starts again at
 `CameraControlReceiver.onReceive()` for every command, because that is where
-the camera is.
+the camera is. A 12-bit RAW take hands the frames back to C, through shared
+memory, for the one job Java was too slow for.
