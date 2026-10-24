@@ -960,11 +960,14 @@ is filled with the one before it, so every camera stays in sync. Developed frame
 deleted as soon as they are encoded, so the scratch space never holds more than a few
 GB.
 
-On a 22-core machine it runs about 3 frames a second with either codec, so a
-4.5 minute take takes about 45 minutes. ProRes 4444 at 4080×3072 is about 320 MB/s,
-about 85 GB a take. Checked on a synthetic take: LTC starting at 01:00:00:00 and the
-first frame 129.3 ms in gave timecode 01:00:00:04 on the file, and a missing frame
-was filled. Needs `ffmpeg`, `libraw-bin` (or `darktable`), and `ltc-tools` for
+On a 22-core machine a real take develops at 2 to 2.5 frames a second with either
+codec, so a 4.5 minute take takes about an hour. ProRes 4444 at 4080×3072 is about
+320 MB/s, about 85 GB a take. Checked on a synthetic take: LTC starting at
+01:00:00:00 and the first frame 129.3 ms in gave timecode 01:00:00:04 on the file,
+and a missing frame was filled. On a real 30 s Pixel take (921 frames, 10.5 GB): 921
+frames out, correct colour, audio aligned, 6 to 8 minutes. Copying that take off the
+phone with `adb pull` over a USB 2 link ran at 31 MB/s; a whole take needs a USB 3
+link. Needs `ffmpeg`, `libraw-bin` (or `darktable`), and `ltc-tools` for
 timecode.
 
 To edit the DNGs directly instead (DaVinci Resolve reads a DNG folder as one

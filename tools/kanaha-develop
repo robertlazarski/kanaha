@@ -21,8 +21,8 @@ it, the way an edit expects a camera clip:
      timecode of the first frame from the sidecar's first_frame_after_first_sample_ms,
      and write it into the file, so the edit lines every camera up by timecode.
 
-With LibRaw on a 22-core machine both codecs run about 3 frames a second: a
-4.5 minute take takes about 45 minutes. Frames are developed in parallel a little ahead of ffmpeg and deleted once encoded,
+With LibRaw on a 22-core machine a real take develops at 2 to 2.5 frames a second:
+a 4.5 minute take takes about an hour. Frames are developed in parallel a little ahead of ffmpeg and deleted once encoded,
 so the working space is a window of frames, not the 600 GB a whole take of 16-bit
 frames would need. A frame missing from the folder (a dropped frame) is filled with
 the frame before it, so the movie keeps the take's timing.
@@ -50,9 +50,32 @@ FRAME = re.compile(r"^frame_(\d{6})\.dng$")
 LTC_LINE = re.compile(r"^\s*[0-9a-fA-F]{8}\s+(\d\d):(\d\d):(\d\d)[:;.](\d\d)\s+\|\s+(-?\d+)\s+(-?\d+)")
 
 
-# Developed frames are 16-bit PPM: ffmpeg reads a stream of them (ppm_pipe), where a
-# stream of LibRaw's TIFFs fails to probe. Each is about 75 MB, so only a window of
-# them exists at once.
+# Developed frames are 16-bit PPM, about 75 MB each, so only a window of them exists
+# at once. ffmpeg gets their pixels as raw RGB48 with the size given up front, not
+# the PPM files: its PPM stream parser hunts for frame boundaries in the data and
+# logged bad headers on a real take (and a stream of LibRaw TIFFs fails to probe).
+
+
+def read_ppm(path):
+    """(width, height, pixels) of a 16-bit binary PPM."""
+    with open(path, "rb") as f:
+        data = f.read()
+    fields, pos = [], 0
+    while len(fields) < 4:                          # P6, width, height, maxval
+        while data[pos:pos + 1].isspace():
+            pos += 1
+        end = pos
+        while not data[end:end + 1].isspace():
+            end += 1
+        fields.append(data[pos:end])
+        pos = end
+    if fields[0] != b"P6" or fields[3] != b"65535":
+        raise ValueError("%s: not a 16-bit PPM" % path)
+    w, h = int(fields[1]), int(fields[2])
+    pixels = memoryview(data)[pos + 1:]          # no copy of a 75 MB frame
+    if len(pixels) != w * h * 6:
+        raise ValueError("%s: %d bytes of pixels for %dx%d" % (path, len(pixels), w, h))
+    return w, h, pixels
 
 def develop_libraw(dng, out_dir):
     """One DNG to a 16-bit PPM with the camera's white balance and colour (AHD demosaic)."""
@@ -202,7 +225,8 @@ def main():
         return
 
     cmd = ["ffmpeg", "-v", "warning", "-stats", "-y",
-           "-f", "ppm_pipe", "-framerate", str(FPS), "-i", "-"]
+           "-f", "rawvideo", "-pixel_format", "rgb48be", "-video_size", "{size}",
+           "-framerate", str(FPS), "-i", "-"]
     if have_wav:
         # Start the audio at the first frame: it began offset_ms earlier (or later, if negative).
         if offset_ms and offset_ms > 0:
@@ -222,7 +246,8 @@ def main():
 
     develop = develop_libraw if a.developer == "libraw" else develop_darktable
     work = tempfile.mkdtemp(prefix="kanaha-develop-", dir=a.tmp or os.path.dirname(out))
-    encoder = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    encoder = None                                 # started on the first frame, which gives the size
+    size = None
     window = max(2, a.jobs * 2)                    # frames developed ahead of ffmpeg
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as pool:
@@ -237,9 +262,14 @@ def main():
                     nxt += 1
                 if n in pending:
                     developed = pending.pop(n).result()
-                    with open(developed, "rb") as f:
-                        data = f.read()
+                    w, h, data = read_ppm(developed)
                     os.remove(developed)
+                    if encoder is None:
+                        size = (w, h)
+                        encoder = subprocess.Popen([x.replace("{size}", "%dx%d" % size) for x in cmd],
+                                                   stdin=subprocess.PIPE)
+                    elif (w, h) != size:
+                        sys.exit("frame %d is %dx%d, not %dx%d" % ((n, w, h) + size))
                     previous = data
                 # A dropped frame: repeat the one before, so the movie keeps real time.
                 encoder.stdin.write(previous)
