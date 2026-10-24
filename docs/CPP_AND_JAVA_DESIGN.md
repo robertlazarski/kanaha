@@ -146,7 +146,8 @@ One job reverses the rule, because Java could not do it in time. A 12-bit RAW
 take is 30 frames a second of 12.5 million samples. The capture stays in Java
 (`RawTake`, Camera2), but compressing the frames, which keeps a four-minute song
 inside the phone's storage, is C: one Pixel 10 Pro XL core compresses about 32
-frames a second, where Java could not keep up even packing them uncompressed.
+frames a second. Java only packing the samples, uncompressed, already took about
+60 ms a frame per thread, and compression is several times that work.
 
 It is still not JNI. `libkanaha_dng.so` is a separate program, started like
 httpd. Java and C share the frames without copying through a pipe: the app makes
@@ -318,7 +319,7 @@ way and is copied to `files/kanaha-camera-mcp` on service start.
 | Sending the Intent where `am` is refused | Java (`CameraIpcPoller`) | `Context.sendBroadcast()` is a Java API, and the only route left on such a device |
 | MCP server | C | Same service code, stdio transport |
 | 12-bit RAW capture, timecode WAV, take screen | Java (`RawTake`, `RawTakeActivity`) | Camera2, `AudioRecord` and the foreground activity are Java |
-| 12-bit RAW compression and DNG writing | C (`libkanaha_dng.so`, its own process) | Fast enough at 30 fps where Java was not; shared memory, not JNI |
+| 12-bit RAW compression and DNG writing | C (`libkanaha_dng.so`, its own process) | About one core at 30 fps; shared memory, not JNI |
 
 In the audio app, Java starts at the manifest and ends at
 `ProcessBuilder.start()`. In the camera app, Java starts at the manifest, ends
