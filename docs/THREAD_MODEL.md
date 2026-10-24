@@ -194,6 +194,43 @@ ZOOM_HANDLER.removeCallbacksAndMessages(ZOOM_RAMP_TOKEN);
 
 ---
 
+## 12-bit RAW Takes: The App, the Helper, and Who Owns a Buffer
+
+So far only the RAW probe (`RawProbeActivity`, debug builds) records 12-bit takes;
+this section is to be revised when `startRecording` gains them. A take crosses two
+processes. The compressor, `libkanaha_dng.so`, is a separate program the app starts
+with ProcessBuilder, as it starts httpd; no JNI.
+
+```
+Camera2 ImageReader callback ["RawProbeCamera" handler thread]
+  → copy the frame into a free shared buffer, close the Image (the camera has its buffer back)
+  → send FRAME "slot 7 holds frame 1234" over the Unix socket   (24 bytes)
+                    ↓
+libkanaha_dng.so  [separate process]
+  main thread:      read messages, queue frames
+  encoder threads:  compress (lossless JPEG), write frame_NNNNNN.dng, send slot 7 back
+                    ↓
+"DngHelperReleases" thread [app]   → slot 7 back into the pool of free buffers
+"DngHelperOutput" thread   [app]   → counts the helper's OK / ERR / DONE lines
+"RawProbeTemplate" thread  [app]   → once, at arming: the DNG template and the buffers
+```
+
+- **A buffer belongs to one side at a time.** It is the helper's from the moment
+  FRAME names it until the helper sends its slot back; the app must not write it in
+  between. At the start of a take every buffer is the helper's until it has mapped
+  it and checked the marker the app wrote there; it then releases them all. Writing
+  into a buffer before that release overwrote the marker in early testing.
+- **Back-pressure is the buffer pool.** When the helper falls behind, no buffer is
+  free when a frame arrives, and the app drops that frame and counts it. Nothing
+  waits in the camera callback, and neither process grows.
+- **The camera callback never blocks** for longer than one copy into shared memory
+  and one small socket write. Streaming each 25 MB frame through a pipe instead did
+  block it, and dropped frames once the phone warmed.
+- Details: `app/src/main/cpp/dng/kanaha_dng.c` (the helper and its message format)
+  and `app/src/debug/java/org/kanaha/camera/DngHelper.java` (the app side).
+
+---
+
 ## Threading Rules for New Handlers
 
 When adding a new action handler to `CameraControlReceiver`:

@@ -906,6 +906,12 @@ encoder threads: 8,100 of 8,100 frames written, 97 GB at 361 MB/s, never fewer t
 a frame warm and reached 82 ms in the last 20 s; for takes much past 4.5 minutes,
 use four threads.
 
+**Repeatability, 2026-10-23:** two more 270 s takes on the same scene, one on three
+encoder threads and one on four, were both clean: 8,100 of 8,100 frames, at most 7
+of 40 buffers in use, thermal status 2. Three clean whole-song takes in a row. Four
+threads does not compress a frame faster (they share memory bandwidth) but leaves
+more spare capacity late in a long take; it is the default to use.
+
 What a take delivers: a folder of `frame_NNNNNN.dng` (lossless 12-bit, 4080×3072)
 and `take.wav` (the iRig's timecode), not one file. Developing the DNGs properly
 (the camera's colour matrix, white balance, lens shading) is `darktable-cli` or
