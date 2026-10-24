@@ -115,6 +115,15 @@ public class RawTakeActivity extends Activity {
     }
 
     @Override
+    protected void onStop() {
+        // Hidden (home, another app, the screen turned off): Android takes the camera
+        // from a screen that is not visible, so end the take cleanly now.
+        RawTake t = take;
+        if (t != null && t.isRunning() && t.state != RawTake.State.STOPPING) stopInBackground("take screen left");
+        super.onStop();
+    }
+
+    @Override
     protected void onDestroy() {
         ui.removeCallbacks(tick);
         // Closing this screen mid-take (home, back) ends the take cleanly rather than

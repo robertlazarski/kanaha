@@ -367,6 +367,16 @@ final class RawTake {
         }
     }
 
+    /**
+     * Android took the camera mid-take (another app, or this screen hidden): end the take
+     * with what it has, rather than leave it "recording" with no frames arriving.
+     */
+    private void lost(String reason) {
+        if (armed && isRunning() && state != State.STOPPING) {
+            new Thread(() -> stop(reason), "KanahaRawTakeLost").start();
+        }
+    }
+
     private void fail(String message, Throwable e) {
         Log.e(TAG, message, e);
         synchronized (this) {
@@ -461,8 +471,8 @@ final class RawTake {
             int[] err = {0};
             manager.openCamera(id, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice c) { opened[0] = c; latch.countDown(); }
-                @Override public void onDisconnected(CameraDevice c) { c.close(); err[0] = -1; latch.countDown(); }
-                @Override public void onError(CameraDevice c, int e) { c.close(); err[0] = e; latch.countDown(); }
+                @Override public void onDisconnected(CameraDevice c) { c.close(); err[0] = -1; lost("camera disconnected"); latch.countDown(); }
+                @Override public void onError(CameraDevice c, int e) { c.close(); err[0] = e; lost("camera error " + e); latch.countDown(); }
             }, cameraHandler);
             if (!latch.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("the camera did not open");
             if (opened[0] != null) return opened[0];
