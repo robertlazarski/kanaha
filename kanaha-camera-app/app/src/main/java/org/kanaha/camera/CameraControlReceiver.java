@@ -35,6 +35,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.List;
@@ -50,6 +53,7 @@ import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import net.sourceforge.opencamera.MainActivity;
 import net.sourceforge.opencamera.PreferenceKeys;
+import net.sourceforge.opencamera.MyApplicationInterface;
 import net.sourceforge.opencamera.cameracontroller.CameraController;
 import net.sourceforge.opencamera.preview.Preview;
 
@@ -422,6 +426,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String format = intent.getStringExtra("format");
         boolean openGate = "1".equals(intent.getStringExtra("open_gate"));
         boolean hlg10 = "1".equals(intent.getStringExtra("hlg10"));
+        boolean raw12 = "1".equals(intent.getStringExtra("raw12"));
 
         // Optional scheduled start: start_at is a Unix epoch ms timestamp on this device's clock
         String startAtStr = intent.getStringExtra("start_at");
@@ -444,6 +449,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
             // poll and fail without saying why.
             if (mainActivity.isAppPaused()) {
                 return createErrorResponse(operationId, CAMERA_NOT_IN_FOREGROUND);
+            }
+            if (raw12) {
+                return startRawTake(context, mainActivity, operationId, clipName, duration, startAt, hlg10);
             }
 
             // Open gate overrides any explicit quality: find best native-ratio resolution and reopen camera.
@@ -537,6 +545,79 @@ public class CameraControlReceiver extends BroadcastReceiver {
         }
     }
 
+    /** Fastest shutter that keeps a RAW take at 30 fps: 33 ms ran the sensor at 29.74 fps. */
+    static final long RAW12_MAX_EXPOSURE_NS = 25_000_000L;   // 1/40 s
+
+    /**
+     * startRecording with "raw12": a 12-bit RAW take on {@link RawTakeActivity}, which
+     * takes the camera from OpenCamera for the take. Refused, with the reason, where the
+     * phone has no 12-bit RAW, with hlg10, while a recording runs, without a pinned
+     * shutter, or without room for 30 s. start_at, as for any recording, is honoured to
+     * the frame: the take arms (about 1-2 s), then keeps frames from that instant on.
+     */
+    private JSONObject startRawTake(Context context, MainActivity mainActivity, String operationId,
+                                    String clipName, int duration, long startAt, boolean hlg10) throws Exception {
+        if (hlg10) {
+            return createErrorResponse(operationId, "raw12 and hlg10 cannot be combined: raw12 records the sensor's 12-bit data, hlg10 is 10-bit video");
+        }
+        String unsupported = RawTake.unsupportedReason(context);
+        if (unsupported != null) return createErrorResponse(operationId, unsupported + "; record without raw12");
+        if (isRecordingActive(mainActivity)) {
+            return createErrorResponse(operationId, "A recording is already running; stop it first");
+        }
+        MyApplicationInterface app = mainActivity.getApplicationInterface();
+        if (CameraController.ISO_DEFAULT.equals(app.getISOPref()) || app.getExposureTimePref() > RAW12_MAX_EXPOSURE_NS) {
+            return createErrorResponse(operationId, "raw12 needs a pinned shutter of 1/40 s or faster and a fixed ISO, "
+                    + "or the sensor drifts below 30 fps: setExposure {\"iso\": 400, \"exposure_time_ns\": 16666667} first");
+        }
+        RawTake.Settings settings = new RawTake.Settings();
+        settings.iso = Integer.parseInt(app.getISOPref());
+        settings.exposureNs = app.getExposureTimePref();
+        float[][] lock = Preview.parseWhiteBalanceLock(app.getWhiteBalanceLockPref());
+        if ("manual".equals(app.getWhiteBalancePref()) && lock != null) {
+            settings.wbGains = lock[0];
+            settings.wbTransform = lock[1];
+        }
+        if ("focus_mode_manual2".equals(app.getFocusPref(true))) settings.focusDistance = app.getFocusDistancePref(false);
+
+        File parent = new File(context.getExternalFilesDir(null), "takes");
+        if (!parent.exists() && !parent.mkdirs()) return createErrorResponse(operationId, "Cannot create " + parent);
+        long roomSeconds = (parent.getUsableSpace() - RawTake.STOP_BELOW_FREE_BYTES) / RawTake.PLANNED_BYTES_PER_SECOND;
+        if (roomSeconds < 30) {
+            return createErrorResponse(operationId, String.format(Locale.US,
+                    "Only about %d s of 12-bit RAW fit in the free space (%d GB); offload takes first",
+                    Math.max(0, roomSeconds), parent.getUsableSpace() / 1_000_000_000L));
+        }
+        long maxSeconds = Math.min(duration > 0 ? duration : 1800, roomSeconds);
+        long now = System.currentTimeMillis();
+        long delayMs = startAt > 0 ? startAt - now : 0;
+        boolean scheduled = delayMs >= 50 && delayMs <= 30000;   // as for any recording
+
+        String clip = clipName == null || clipName.isEmpty() ? "default_clip" : clipName;
+        String safeClip = clip.replaceAll("[^A-Za-z0-9_-]", "_");
+        if (safeClip.length() > 64) safeClip = safeClip.substring(0, 64);
+        String dirName = "RAW_" + safeClip + "_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date(now));
+        RawTake take = new RawTake(context, clip, new File(parent, dirName), scheduled ? startAt : 0, maxSeconds, settings);
+        RawTake.active = take;
+        mainActivity.runOnUiThread(() -> mainActivity.startActivity(new Intent(mainActivity, RawTakeActivity.class)));
+        if (!take.awaitArmed(15000) || take.state == RawTake.State.FAILED) {
+            take.stop("did not arm");
+            return createErrorResponse(operationId, take.error != null ? take.error : "The 12-bit RAW take did not arm within 15 s");
+        }
+
+        JSONObject response = take.status();
+        response.put("success", true);
+        response.put("operation_id", operationId);
+        response.put("raw12", true);
+        response.put("resolution", "4080x3072");
+        response.put("max_seconds", maxSeconds);
+        response.put("scheduled", scheduled);
+        if (scheduled) response.put("start_at", startAt);
+        if (startAt > 0 && !scheduled) response.put("start_at_ignored", "start_at must be 50 ms to 30 s ahead; started now");
+        response.put("message", scheduled ? "12-bit RAW take armed; starts at start_at" : "12-bit RAW take started");
+        return response;
+    }
+
     /**
      * Handle stop recording request from native layer
      */
@@ -544,6 +625,19 @@ public class CameraControlReceiver extends BroadcastReceiver {
         String operationId = intent.getStringExtra("operation_id");
 
         Log.i(TAG, "Stop recording: operation=" + operationId);
+
+        RawTake take = RawTake.active;
+        if (take != null && take.isRunning()) {
+            // A 12-bit RAW take: stop it and wait for the helper to write every frame.
+            take.stop("stopRecording");
+            JSONObject response = take.status();
+            boolean ok = take.state == RawTake.State.DONE;
+            response.put("success", ok);
+            response.put("operation_id", operationId);
+            response.put("raw12", true);
+            response.put("message", ok ? "12-bit RAW take stopped" : "12-bit RAW take ended with an error");
+            return response;
+        }
 
         try {
             MainActivity mainActivity = MainActivity.getInstance();
@@ -610,6 +704,10 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
                 // Add additional status information
                 addCameraStatusDetails(response, mainActivity);
+                // A 12-bit RAW take, running or the last one: OpenCamera's camera is closed
+                // while its screen is in front, so camera_available reads false meanwhile.
+                RawTake take = RawTake.active;
+                if (take != null) response.put("raw12_take", take.status());
             }
 
             return response;
@@ -1376,7 +1474,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
         // Find video files to transfer
         File videoDir = getVideoDirectory(context);
-        final File[] videosToTransfer = findFilesToTransfer(videoDir, videoFilename);
+        final File[] videosToTransfer = concat(findFilesToTransfer(videoDir, videoFilename),
+                findTakes(context, videoFilename));
 
         if (videosToTransfer == null || videosToTransfer.length == 0) {
             return createErrorResponse(operationId,
@@ -1456,7 +1555,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
         try {
             File videoDir = getVideoDirectory(context);
-            return deleteRecordings(context, operationId, findFilesToDelete(videoDir, pattern),
+            return deleteRecordings(context, operationId,
+                    concat(findFilesToDelete(videoDir, pattern), findTakes(context, pattern)),
                     "matching pattern: " + pattern);
         } catch (Exception e) {
             Log.e(TAG, "Error deleting files", e);
@@ -1479,14 +1579,16 @@ public class CameraControlReceiver extends BroadcastReceiver {
             File videoDir = getVideoDirectory(context);
             switch (policy == null ? "" : policy) {
                 case "all_videos":
-                    return deleteRecordings(context, operationId, findFilesToDelete(videoDir, "*"), "(all recordings)");
+                    return deleteRecordings(context, operationId,
+                            concat(findFilesToDelete(videoDir, "*"), findTakes(context, "*")), "(all recordings)");
                 case "by_pattern": {
                     String pattern = intent.getStringExtra("file_pattern");
                     String validationError = SecurityValidator.validateFilenameOrPattern(pattern, "file_pattern");
                     if (validationError != null) {
                         return createErrorResponse(operationId, validationError);
                     }
-                    return deleteRecordings(context, operationId, findFilesToDelete(videoDir, pattern),
+                    return deleteRecordings(context, operationId,
+                            concat(findFilesToDelete(videoDir, pattern), findTakes(context, pattern)),
                             "matching pattern: " + pattern);
                 }
                 case "older_than_days": {
@@ -1496,7 +1598,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     }
                     final long cutoff = System.currentTimeMillis() - days * 86_400_000L;
                     java.util.List<File> old = new java.util.ArrayList<>();
-                    File[] all = findFilesToDelete(videoDir, "*");
+                    File[] all = concat(findFilesToDelete(videoDir, "*"), findTakes(context, "*"));
                     for (File f : all == null ? new File[0] : all) {
                         if (f.lastModified() < cutoff) old.add(f);
                     }
@@ -1535,6 +1637,15 @@ public class CameraControlReceiver extends BroadcastReceiver {
         java.util.List<String> failedFiles = new java.util.ArrayList<>();
 
         for (File video : videos) {
+            if (video.isDirectory()) {
+                // A 12-bit RAW take: the folder and everything in it.
+                long[] tree = deleteTree(video);
+                deleted += (int) tree[0];
+                bytesFreed += tree[1];
+                if (tree[2] == 0) deletedFiles.add(video.getName() + "/");
+                else failedFiles.add(video.getName() + "/ (" + tree[2] + " files left)");
+                continue;
+            }
             long videoSize = video.length();
             if (!video.delete()) {
                 Log.w(TAG, "Failed to delete: " + video.getName());
@@ -1617,6 +1728,13 @@ public class CameraControlReceiver extends BroadcastReceiver {
                     fileList.put(fileInfo);
                     totalSize += file.length();
                 }
+            }
+
+            // 12-bit RAW takes: one entry per take folder.
+            for (File take : findTakes(context, pattern == null || pattern.isEmpty() ? "*" : pattern)) {
+                JSONObject takeInfo = takeEntry(take);
+                fileList.put(takeInfo);
+                totalSize += takeInfo.getLong("size");
             }
 
             JSONObject response = new JSONObject();
@@ -1942,6 +2060,107 @@ public class CameraControlReceiver extends BroadcastReceiver {
         }
     }
 
+    /** Where 12-bit RAW takes are written: app-specific storage, one RAW_* folder per take. */
+    static File takesDirectory(Context context) {
+        return new File(context.getExternalFilesDir(null), "takes");
+    }
+
+    /**
+     * 12-bit RAW take folders matching {@code pattern}, by the rules findFilesToDelete
+     * uses: "*", "today", a date (YYYY-MM-DD), prefix*suffix, or a folder's name. A take
+     * still recording is never returned, so it cannot be deleted or sent half-written.
+     */
+    static File[] findTakes(Context context, String pattern) {
+        if (pattern == null || pattern.contains("..") || pattern.contains("/") || pattern.contains("\\")) return new File[0];
+        RawTake running = RawTake.active;
+        File current = running != null && running.isRunning() ? running.dir : null;
+        File[] takes = takesDirectory(context).listFiles(f -> f.isDirectory() && f.getName().startsWith("RAW_") && !f.equals(current));
+        if (takes == null) return new File[0];
+        java.util.List<File> out = new java.util.ArrayList<>();
+        java.util.Calendar day = java.util.Calendar.getInstance();
+        long dayStart = -1, dayEnd = -1;
+        if (pattern.equalsIgnoreCase("today") || pattern.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            try {
+                if (!pattern.equalsIgnoreCase("today")) {
+                    day.setTime(new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(pattern));
+                }
+                day.set(java.util.Calendar.HOUR_OF_DAY, 0); day.set(java.util.Calendar.MINUTE, 0);
+                day.set(java.util.Calendar.SECOND, 0); day.set(java.util.Calendar.MILLISECOND, 0);
+                dayStart = day.getTimeInMillis();
+                day.add(java.util.Calendar.DAY_OF_MONTH, 1);
+                dayEnd = day.getTimeInMillis();
+            } catch (java.text.ParseException e) {
+                return new File[0];
+            }
+        }
+        for (File t : takes) {
+            String n = t.getName();
+            boolean match;
+            if (pattern.equals("*")) match = true;
+            else if (dayStart >= 0) match = t.lastModified() >= dayStart && t.lastModified() < dayEnd;
+            else if (pattern.contains("*")) {
+                String prefix = pattern.substring(0, pattern.indexOf('*')), suffix = pattern.substring(pattern.indexOf('*') + 1);
+                match = n.startsWith(prefix) && n.endsWith(suffix);
+            } else match = n.equals(pattern);
+            if (match) out.add(t);
+        }
+        return out.toArray(new File[0]);
+    }
+
+    /** listFiles' entry for a take: its folder name, frame count, size and start. */
+    private static JSONObject takeEntry(File take) throws JSONException {
+        JSONObject info = new JSONObject();
+        info.put("name", take.getName());
+        info.put("type", "raw12_take");
+        long size = 0;
+        int frames = 0;
+        File[] files = take.listFiles(File::isFile);
+        if (files != null) {
+            for (File f : files) {
+                size += f.length();
+                if (f.getName().startsWith("frame_") && f.getName().endsWith(".dng")) frames++;
+            }
+        }
+        info.put("size", size);
+        info.put("frames", frames);
+        info.put("modified_timestamp", take.lastModified());
+        info.put("modified", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date(take.lastModified())));
+        File sidecar = new File(take, RawTake.SIDECAR);
+        if (sidecar.exists()) {
+            try {
+                JSONObject j = new JSONObject(new String(java.nio.file.Files.readAllBytes(sidecar.toPath()), java.nio.charset.StandardCharsets.UTF_8));
+                if (j.has("recording_start_ms")) info.put("recording_start_ms", j.getLong("recording_start_ms"));
+                if (j.has("seconds")) info.put("seconds", j.getDouble("seconds"));
+                if (j.has("dropped")) info.put("dropped", j.getInt("dropped"));
+            } catch (Exception e) {
+                Log.w(TAG, "unreadable take sidecar " + sidecar, e);
+            }
+        }
+        return info;
+    }
+
+    /** Delete a take folder and everything in it: {files deleted, bytes freed, files left}. */
+    private static long[] deleteTree(File dir) {
+        long[] r = new long[3];
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                long len = f.length();
+                if (f.delete()) { r[0]++; r[1] += len; } else r[2]++;
+            }
+        }
+        if (!dir.delete()) r[2]++;
+        return r;
+    }
+
+    private static File[] concat(File[] a, File[] b) {
+        if (a == null || a.length == 0) return b == null ? new File[0] : b;
+        if (b == null || b.length == 0) return a;
+        File[] r = java.util.Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, r, a.length, b.length);
+        return r;
+    }
+
     /**
      * Perform SFTP transfer using JSch with SSH key authentication
      *
@@ -2016,6 +2235,23 @@ public class CameraControlReceiver extends BroadcastReceiver {
 
             // Transfer each file
             for (File file : files) {
+                if (file.isDirectory()) {
+                    // A 12-bit RAW take: a folder of the same name, with every file in it.
+                    String remote = file.getName();
+                    try { channelSftp.cd(remote); } catch (com.jcraft.jsch.SftpException e) { channelSftp.mkdir(remote); channelSftp.cd(remote); }
+                    File[] children = file.listFiles(File::isFile);
+                    if (children != null) {
+                        java.util.Arrays.sort(children);
+                        for (File child : children) {
+                            channelSftp.put(child.getAbsolutePath(), child.getName());
+                            filesTransferred++;
+                            bytesTransferred += child.length();
+                        }
+                    }
+                    channelSftp.cd("..");
+                    Log.i(TAG, "Transferred take: " + remote);
+                    continue;
+                }
                 Log.i(TAG, "Transferring: " + file.getName() + " (" + file.length() + " bytes)");
                 channelSftp.put(file.getAbsolutePath(), file.getName());
                 filesTransferred++;
@@ -2232,6 +2468,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
      * Check if camera is currently recording
      */
     private static boolean isRecordingActive(MainActivity mainActivity) {
+        RawTake take = RawTake.active;
+        if (take != null && take.isRunning()) return true;
         try {
             return mainActivity.getPreview().isVideoRecording();
         } catch (Exception e) {

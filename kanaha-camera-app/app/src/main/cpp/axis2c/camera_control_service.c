@@ -635,7 +635,9 @@ int camera_device_set_exposure_impl(const exposure_request_t* req, char* json_re
 int camera_device_get_exposure_impl(char* json_response, size_t response_size);
 int camera_device_set_zoom_impl(const char* ratio, const char* duration_ms, const char* start_at,
                                 const char* step_ms, int clear, char* json_response, size_t response_size);
-int camera_device_stop_recording_impl(void);
+int camera_device_stop_recording_impl(char* json_response, size_t response_size);
+int camera_device_start_raw_take_impl(const char* clip_name, int duration, long long start_at, int hlg10,
+                                      char* json_response, size_t response_size);
 int camera_device_get_status_impl(char* status_json, size_t buffer_size);
 int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
 int camera_device_init_impl(void);
@@ -711,6 +713,17 @@ int camera_control_service_invoke_json_impl(
         long long start_at = extract_json_long(json_request, "start_at", 0);
         int open_gate = extract_json_bool(json_request, "open_gate", 0);
         int hlg10 = extract_json_bool(json_request, "hlg10", 0);
+        int raw12 = extract_json_bool(json_request, "raw12", 0);
+
+        if (raw12) {
+            /* A 12-bit RAW take: the Java side's response goes back as it is - the take
+             * folder, schedule and limits, or its reason for refusing. */
+            if (camera_device_start_raw_take_impl(clip_name, duration, start_at, hlg10,
+                                                  json_response, response_size) != 0) {
+                create_error_response(json_response, response_size, "Failed to start the 12-bit RAW take");
+            }
+            return 0;
+        }
 
         char reason[384] = "";
         char resolution[32] = "";
@@ -740,11 +753,9 @@ int camera_control_service_invoke_json_impl(
         }
     }
     else if (strcmp(action, "stop_recording") == 0 || strcmp(action, "stopRecording") == 0) {
-        int result = camera_device_stop_recording_impl();
-
-        if (result == 0) {
-            create_success_response(json_response, response_size, "Recording stopped");
-        } else {
+        /* The Java response as it is: for a 12-bit RAW take it carries the frame,
+         * drop and byte counts. */
+        if (camera_device_stop_recording_impl(json_response, response_size) != 0) {
             create_error_response(json_response, response_size, "Failed to stop recording");
         }
     }
@@ -1105,29 +1116,46 @@ int camera_device_start_recording_impl(
  *
  * SECURITY: Uses secure fork/exec IPC - no shell injection possible
  */
-int camera_device_stop_recording_impl(void) {
+int camera_device_stop_recording_impl(char* json_response, size_t response_size) {
     LOGI("camera_device_stop_recording_impl called");
 
     char operation_id[64];
     generate_operation_id(operation_id, sizeof(operation_id));
 
-    LOGD("Generated operation ID: %s", operation_id);
-
     intent_extra_t extras[] = {
         {"--es", "action", "stop_recording"},
         {"--es", "operation_id", operation_id}
     };
+    return send_and_pass_through("stop_recording", operation_id, extras, 2, json_response, response_size);
+}
 
-    LOGI("Sending secure intent broadcast to stop recording");
+/**
+ * Start a 12-bit RAW take (startRecording with "raw12"). The Java side refuses what
+ * the phone cannot do and replies once the take is armed (about 1-2 s): the take
+ * folder, max_seconds, and when it starts.
+ */
+int camera_device_start_raw_take_impl(const char* clip_name, int duration, long long start_at, int hlg10,
+                                      char* json_response, size_t response_size) {
+    LOGI("camera_device_start_raw_take_impl called: clip=%s duration=%d start_at=%lld", clip_name, duration, start_at);
+    if (!clip_name || !json_response || response_size == 0) return -1;
 
-    int result = send_intent_and_discard_response(operation_id, extras, 2);
-    if (result == 0) {
-        LOGI("Recording stopped successfully via secure IPC");
-    } else {
-        LOGE("Failed to stop recording via secure IPC");
-    }
+    char operation_id[64];
+    generate_operation_id(operation_id, sizeof(operation_id));
+    char duration_str[16], start_at_str[24];
+    snprintf(duration_str, sizeof(duration_str), "%d", duration);
+    snprintf(start_at_str, sizeof(start_at_str), "%lld", start_at);
 
-    return result;
+    intent_extra_t extras[] = {
+        {"--es", "action", "start_recording"},
+        {"--es", "operation_id", operation_id},
+        {"--es", "clip_name", clip_name},
+        {"--ei", "duration", duration_str},
+        {"--es", "start_at", start_at_str},
+        {"--es", "hlg10", hlg10 ? "1" : "0"},
+        {"--es", "raw12", "1"}
+    };
+    return send_and_pass_through("start_raw_take", operation_id, extras,
+                                 (int)(sizeof(extras) / sizeof(extras[0])), json_response, response_size);
 }
 
 /**

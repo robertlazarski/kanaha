@@ -104,7 +104,9 @@ static const char SCHEMA_START_RECORDING[] =
         "\"hlg10\":{\"type\":\"boolean\","
             "\"description\":\"Record 10-bit HLG video (HEVC Main 10, BT.2020). "
                 "Refused with an error on cameras without 10-bit support; check "
-                "supports_hlg10 in getStatus. Default: false\"}"
+                "supports_hlg10 in getStatus. Default: false\"},"
+        "\"raw12\":{\"type\":\"boolean\","
+            "\"description\":\"12-bit RAW take: every frame of the full 4080x3072 sensor as a lossless DNG, plus a timecode WAV, in one folder (Pixel; refused elsewhere, with hlg10, or unless setExposure has pinned the ISO and a shutter of 1/40 s or faster). The camera app shows its own take screen until stopRecording. Default: false\"}"
     "},"
     "\"required\":[]"
     "}";
@@ -271,7 +273,8 @@ static const kanaha_mcp_tool_t kanaha_mcp_tools[] = {
         "Start video recording. Supports scheduled start via start_at parameter "
         "for frame-accurate multi-camera synchronization — each camera counts down "
         "to the same UTC wall-clock millisecond regardless of WiFi delivery timing. "
-        "Supports open gate recording (full 4:3 sensor) on compatible devices.",
+        "Supports open gate recording (full 4:3 sensor) on compatible devices, "
+        "and 12-bit RAW takes (raw12) on the Pixel.",
         SCHEMA_START_RECORDING
     },
     {

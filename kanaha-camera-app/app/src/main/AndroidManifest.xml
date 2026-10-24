@@ -194,6 +194,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- The screen of a 12-bit RAW take (startRecording "raw12"); see RawTake.
+             Not exported: only CameraControlReceiver starts it. configChanges: a phone
+             locking mid-take would otherwise recreate it and end the take. -->
+        <activity
+            android:name="org.kanaha.camera.RawTakeActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density" />
+
         <!-- Performance Testing Service for HTTP/2+mTLS optimization -->
         <service
             android:name="org.kanaha.camera.PerformanceTestService"
