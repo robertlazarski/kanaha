@@ -46,7 +46,7 @@ language. No curl, no certificates, no URL construction.
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `getStatus` | Battery, storage, GPS, recording state | — |
-| `startRecording` | Begin video recording | `clip_name`, `quality`, `start_at`, `open_gate`, `hlg10` |
+| `startRecording` | Begin video recording, or a 12-bit RAW take (`raw12`, Pixel) | `clip_name`, `quality`, `start_at`, `open_gate`, `hlg10`, `raw12` |
 | `stopRecording` | Stop recording | — |
 | `playTone` | Software sync slate tone | `frequency`, `duration_ms`, `start_at` |
 | `listFiles` | List recorded video files | `pattern` |

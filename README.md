@@ -192,6 +192,7 @@ Request parameters:
 - `format` *(optional)* — container format. Default: `"MP4"`.
 - `open_gate` *(optional)* — `true` to record the full 4:3 sensor field of view (2560×1920 on the Pixel 10 Pro XL, smaller than 4K in both directions; see OPENGATE.md). The call blocks 3–5 s while the camera session reopens. The Moto G Play 2024 records 1600×1200 under the Camera2 API; a phone with no 4:3 video size ignores the flag and records normally. Default: `false`. See [Open Gate Recording](docs/OPENGATE.md).
 - `hlg10` *(optional)* — `true` to record 10-bit HLG video (HEVC Main 10, BT.2020), whatever the `format`. Applies to this recording only; omitting it records 8-bit even if the Settings toggle is on. Refused with an error on cameras that lack 10-bit support (`supports_hlg10: false` in `getStatus`) rather than silently recording 8-bit. Combines with `open_gate`. Default: `false`.
+- `raw12` *(optional)* — `true` for a **12-bit RAW take**: every 30 fps frame of the full 4080×3072 sensor written as a lossless DNG (Pixel 10 Pro XL). The camera app switches to its take screen (live preview and a status line) until `stopRecording`, then OpenCamera returns. Refused, with the reason, on a phone without 12-bit RAW, with `hlg10`, while a recording runs, unless `setExposure` has fixed the ISO and pinned a shutter of 1/40 s or faster (1/60 at 30 fps; auto exposure let the sensor drift to 29.74 fps), or with room for less than 30 s. `duration` caps the take, and so does free space (`max_seconds` in the reply: about 22 GB a minute). `start_at` is honoured to the frame. Default: `false`. See [12-bit RAW takes](#12-bit-raw-takes).
 - `start_at` *(optional)* — UTC epoch milliseconds at which recording should begin. When provided, the camera schedules the start via `Handler.postDelayed()` and returns immediately with `"scheduled": true`. The camera fires at the specified wall-clock time regardless of when the request arrived. Valid range: 50 ms to 30 000 ms in the future. If zero or omitted, recording starts immediately.
 
 Scheduled start response (when `start_at` is provided and valid):
@@ -414,7 +415,7 @@ no URL, so for them `"action"` is what selects the tool.
 | Endpoint | Method | Key Parameters | Description |
 |----------|--------|----------------|-------------|
 | `/getStatus` | GET/POST | — | Camera state, battery, storage, `timestamp`, `gps_time`, `gps_age_ms` |
-| `/startRecording` | POST | `clip_name`, `start_at`, `quality`, `duration`, `format`, `open_gate`, `hlg10` | Begin recording; `open_gate: true` records the full 4:3 sensor (Pixel 10 Pro XL); supports scheduled start via `start_at` (UTC epoch ms) |
+| `/startRecording` | POST | `clip_name`, `start_at`, `quality`, `duration`, `format`, `open_gate`, `hlg10`, `raw12` | Begin recording; `open_gate: true` records the full 4:3 sensor (Pixel 10 Pro XL); `raw12: true` a 12-bit RAW take; supports scheduled start via `start_at` (UTC epoch ms) |
 | `/stopRecording` | POST | — | Stop active recording |
 | `/listFiles` | GET/POST | — | List recorded video files with sizes and timestamps |
 | `/deleteFiles` | POST | `pattern` | Delete files matching glob pattern |
@@ -426,6 +427,16 @@ no URL, so for them `"action"` is what selects the tool.
 | `/playTone` | POST | `frequency`, `duration_ms`, `start_at` | Play synthesized sine wave for software sync slate |
 
 **`start_at` parameter** (on `startRecording` and `playTone`): Pass a future UTC epoch millisecond timestamp. The camera schedules the action internally and returns immediately. Send to multiple cameras simultaneously — each fires at the same wall-clock time regardless of network delivery timing. See [Quick Start](#5-control-via-api) for curl examples.
+
+### 12-bit RAW takes
+
+`startRecording` with `"raw12": true` writes one folder per take, `RAW_<clip>_<date>_<time>/`, in the app's `takes/` directory:
+
+- `frame_000000.dng`, … — every frame, 12-bit, lossless JPEG compressed (DNG Compression 7), 8–12 MB each depending on the scene. Compressed by `libkanaha_dng.so`, a separate native program, so the camera never waits on it.
+- `take.wav` — the audio input for the whole take: with the iRig, the Tentacle's SMPTE timecode.
+- `take.kanaha_start.json` — `recording_start_ms` (when the first frame was exposed), `first_frame_after_first_sample_ms` (where that frame falls in `take.wav`, which ties every frame to timecode), the exposure, and when the take ends its `frames`, `dropped` and `seconds`.
+
+`stopRecording` waits for every frame to be written and replies with the counts; `getStatus` carries `raw12_take` while it runs. `listFiles` lists each take as one entry (`"type": "raw12_take"`, `frames`, `size`), and `deleteFiles`, `cleanupFiles` and `sftpTransfer` treat a take folder as one recording: matched by its folder name or by `*`, `today` or a date, deleted whole, sent as a folder. A take still recording is never deleted or sent. Developing the DNGs (`darktable-cli`, `rawtherapee-cli`, LibRaw) and why: [OPENGATE.md](docs/OPENGATE.md).
 
 **Recording-start sidecar**: each recording gets `<recording basename>.kanaha_start.json` (for `VID_20261019_142007.mp4`, `VID_20261019_142007.kanaha_start.json`) in the app's external files directory, written once the recording has started. Contains `file`, `recording_start_ms` (when the start fired, to the millisecond; not the first frame), `clip_name`, `open_gate`, `hlg10` and the GPS fix time if available. `sftpTransfer` and `deleteFiles` carry it with its recording. Clips are aligned on SMPTE timecode; the sidecar locates takes.
 

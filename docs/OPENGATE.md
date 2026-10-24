@@ -918,6 +918,24 @@ and `take.wav` (the iRig's timecode), not one file. Developing the DNGs properly
 `rawtherapee-cli`; ffmpeg reads them but demosaics without the colour data. ffmpeg
 then encodes the developed frames and the WAV into one file per take for the edit.
 
+#### Recording a take: `startRecording` with `raw12`, 2026-10-23
+
+```bash
+$CURL -d '{"action":"setExposure","iso":400,"exposure_time_ns":16666667,"fps":30}' \
+  "https://$CAMERA:8443/services/CameraControlService/setExposure"
+$CURL -d "{\"action\":\"startRecording\",\"clip_name\":\"verse1\",\"raw12\":true,\"start_at\":$AT}" \
+  "https://$CAMERA:8443/services/CameraControlService/startRecording"
+# ... the take ...
+$CURL -d '{"action":"stopRecording"}' "https://$CAMERA:8443/services/CameraControlService/stopRecording"
+```
+
+The camera app shows its take screen (preview, frames, drops, free space, heat) for
+the take and returns to OpenCamera after. First runs on the Pixel: a 20 s take, 621
+of 621 frames, the first frame 129 ms into `take.wav`; a take with `start_at` 5 s
+ahead whose first frame was exposed 29 ms after `start_at`, within one frame. The
+reply's `max_seconds` is the take's cap from `duration` and free space. Folder
+layout, sidecar fields and the file operations: README, "12-bit RAW takes".
+
 ---
 
 ### Suggested order, and why

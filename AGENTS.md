@@ -115,14 +115,19 @@ The sidecar `<basename>.kanaha.json` is derived data about the recording;
 `listFiles`, `deleteFiles` and `sftpTransfer` must treat it like the clip it
 belongs to (carry it, delete it, never expose it on a path the clip is not on).
 
-### 9. `libkanaha_dng.so`: the 12-bit RAW compressor (debug probe for now)
-A native executable (`app/src/main/cpp/dng/`), started by the app with
-ProcessBuilder like httpd, never loaded with JNI. It reads frames from a named pipe
-the app creates `0600` in its cache directory and writes DNG files into the folder
-named on its command line. Check: every size in the TAKE and FRAME messages is
-bounds-checked before use (`kanaha_dng.c` refuses anything else and ends the take);
-sample values are masked to 12 bits before they index the encoder's lookup table
-(`lj92.c`); the output folder comes from the app, never from an HTTP caller.
+### 9. 12-bit RAW takes and `libkanaha_dng.so`
+`startRecording` with `"raw12"` starts `RawTakeActivity` (not exported), which owns
+the camera for the take. Frames go to `libkanaha_dng.so` (`app/src/main/cpp/dng/`),
+a native executable started with ProcessBuilder like httpd, never loaded with JNI.
+The app passes it SharedMemory frame buffers once, as descriptors over a Unix
+socket in its cache directory; per frame only a slot number travels. Check: the
+helper bounds-checks every size and slot in the TAKE and FRAME messages and ends
+the take on anything else (`kanaha_dng.c`); it verifies a marker in each mapped
+buffer before using it; sample values are masked to 12 bits before they index the
+encoder's lookup table (`lj92.c`); the take folder name is built from the clip name
+with everything but `[A-Za-z0-9_-]` replaced, and file operations reach take folders
+only through `findTakes`, which rejects `/`, `\` and `..` and never returns a take
+still recording.
 
 ## Testing
 - On-device only: needs Camera2, mTLS, and the httpd child.

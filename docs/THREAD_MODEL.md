@@ -196,13 +196,15 @@ ZOOM_HANDLER.removeCallbacksAndMessages(ZOOM_RAMP_TOKEN);
 
 ## 12-bit RAW Takes: The App, the Helper, and Who Owns a Buffer
 
-So far only the RAW probe (`RawProbeActivity`, debug builds) records 12-bit takes;
-this section is to be revised when `startRecording` gains them. A take crosses two
-processes. The compressor, `libkanaha_dng.so`, is a separate program the app starts
-with ProcessBuilder, as it starts httpd; no JNI.
+`startRecording` with `"raw12"` records a 12-bit take: `CameraControlReceiver` (on the
+`KanahaCameraControl` thread) creates a `RawTake` and starts `RawTakeActivity`, which
+owns the camera for the take, and waits up to 15 s for it to arm. The RAW probe
+(`RawProbeActivity`, debug builds) uses the same helper. A take crosses two processes.
+The compressor, `libkanaha_dng.so`, is a separate program the app starts with
+ProcessBuilder, as it starts httpd; no JNI.
 
 ```
-Camera2 ImageReader callback ["RawProbeCamera" handler thread]
+Camera2 ImageReader callback ["KanahaRawTakeCamera" handler thread]
   → copy the frame into a free shared buffer, close the Image (the camera has its buffer back)
   → send FRAME "slot 7 holds frame 1234" over the Unix socket   (24 bytes)
                     ↓
@@ -212,7 +214,7 @@ libkanaha_dng.so  [separate process]
                     ↓
 "DngHelperReleases" thread [app]   → slot 7 back into the pool of free buffers
 "DngHelperOutput" thread   [app]   → counts the helper's OK / ERR / DONE lines
-"RawProbeTemplate" thread  [app]   → once, at arming: the DNG template and the buffers
+"KanahaRawTakeTemplate" thread [app] → once, at arming: the DNG template and the buffers
 ```
 
 - **A buffer belongs to one side at a time.** It is the helper's from the moment
