@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2025-2026 Robert Lazarski
+"""kanaha-develop: turn a 12-bit RAW take folder into one movie file for the edit.
+
+A take from startRecording "raw12" is a folder: frame_NNNNNN.dng (lossless 12-bit,
+4080x3072, one per 30 fps frame), take.wav (the phone's audio input - with the iRig,
+the Tentacle's SMPTE timecode) and take.kanaha_start.json. This makes one file from
+it, the way an edit expects a camera clip:
+
+    kanaha-develop RAW_verse1_20261023_144657/            -> RAW_verse1_20261023_144657.mov
+
+  1. Develop each DNG into a picture. ffmpeg reads DNGs but demosaics without the
+     camera's colour matrix and white balance, so a raw developer does it: LibRaw's
+     dcraw_emu by default, or darktable-cli (--developer darktable: several times
+     slower, best highlight handling).
+  2. Encode the developed frames with ffmpeg: ProRes 4444 by default (about 320 MB/s,
+     so about 85 GB for a 4.5 minute take) or 10-bit HEVC (--codec hevc10, small),
+     with take.wav as the audio track, trimmed to start exactly at the first frame.
+  3. Read the timecode in take.wav (ltcdump, from x42 ltc-tools), work out the
+     timecode of the first frame from the sidecar's first_frame_after_first_sample_ms,
+     and write it into the file, so the edit lines every camera up by timecode.
+
+With LibRaw on a 22-core machine both codecs run about 3 frames a second: a
+4.5 minute take takes about 45 minutes. Frames are developed in parallel a little ahead of ffmpeg and deleted once encoded,
+so the working space is a window of frames, not the 600 GB a whole take of 16-bit
+frames would need. A frame missing from the folder (a dropped frame) is filled with
+the frame before it, so the movie keeps the take's timing.
+
+Needs: python3, ffmpeg, dcraw_emu (libraw-bin) or darktable-cli, and ltcdump for
+timecode (optional; without it the file has no timecode track).
+"""
+import argparse
+import concurrent.futures
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+FPS = 30
+FRAME = re.compile(r"^frame_(\d{6})\.dng$")
+LTC_LINE = re.compile(r"^\s*[0-9a-fA-F]{8}\s+(\d\d):(\d\d):(\d\d)[:;.](\d\d)\s+\|\s+(-?\d+)\s+(-?\d+)")
+
+
+# Developed frames are 16-bit PPM: ffmpeg reads a stream of them (ppm_pipe), where a
+# stream of LibRaw's TIFFs fails to probe. Each is about 75 MB, so only a window of
+# them exists at once.
+
+def develop_libraw(dng, out_dir):
+    """One DNG to a 16-bit PPM with the camera's white balance and colour (AHD demosaic)."""
+    out = os.path.join(out_dir, os.path.basename(dng)[:-4] + ".ppm")
+    subprocess.run(["dcraw_emu", "-6", "-w", "-o", "1", "-q", "3", "-Z", out, dng],
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return out
+
+
+def develop_darktable(dng, out_dir):
+    """One DNG through darktable's default (scene-referred) processing, 16-bit PPM.
+    darktable trims a few edge pixels (4064x3056), the same for every frame."""
+    out = os.path.join(out_dir, os.path.basename(dng)[:-4] + ".ppm")
+    work = tempfile.mkdtemp(dir=out_dir)          # each call needs its own config dir
+    try:
+        subprocess.run(["darktable-cli", dng, out, "--apply-custom-presets", "false",
+                        "--core", "--configdir", work, "--library", ":memory:"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return out
+
+
+def frames_to_tc(n, fps=FPS):
+    return "%02d:%02d:%02d:%02d" % (n // (3600 * fps), n // (60 * fps) % 60, n // fps % 60, n % fps)
+
+
+def first_frame_timecode(wav, offset_ms, fps=FPS):
+    """The timecode of the take's first frame, from the LTC in take.wav, or None.
+
+    ltcdump lists each timecode frame with the sample it starts at. The first frame
+    was exposed offset_ms after the WAV's first sample (the sidecar's
+    first_frame_after_first_sample_ms), so its timecode is the first decoded one
+    plus that distance, rounded to the nearest frame."""
+    if not shutil.which("ltcdump"):
+        return None, "ltcdump not found; no timecode track"
+    for channel in ("1", "2"):                     # the iRig may carry LTC on either side
+        r = subprocess.run(["ltcdump", "-F", "-c", channel, wav], capture_output=True, text=True)
+        for line in r.stdout.splitlines():
+            m = LTC_LINE.match(line)
+            if not m:
+                continue
+            h, mi, s, f, start = (int(x) for x in m.groups()[:5])
+            tc0 = ((h * 60 + mi) * 60 + s) * fps + f
+            rate = 48000
+            frame0_sample = offset_ms / 1000.0 * rate
+            frames = tc0 + round((frame0_sample - start) / rate * fps)
+            return frames_to_tc(frames, fps), "LTC on channel %s" % channel
+    return None, "no LTC found in %s (was the iRig connected?); no timecode track" % os.path.basename(wav)
+
+
+def main():
+    p = argparse.ArgumentParser(description="Develop a 12-bit RAW take folder into one movie file.")
+    p.add_argument("take", help="the take folder (RAW_<clip>_<date>_<time>)")
+    p.add_argument("-o", "--output", help="output file (default: <take>.mov next to the folder)")
+    p.add_argument("--developer", choices=["libraw", "darktable"], default="libraw")
+    p.add_argument("--codec", choices=["prores4444", "hevc10"], default="prores4444",
+                   help="prores4444 (12-bit 4:4:4, large, edits smoothly) or hevc10 (small)")
+    p.add_argument("--jobs", type=int, default=os.cpu_count(), help="frames developed at once")
+    p.add_argument("--tmp", help="working folder for developed frames (default: next to the output)")
+    a = p.parse_args()
+
+    take = os.path.abspath(a.take.rstrip("/"))
+    out = os.path.abspath(a.output or take + ".mov")
+    numbers = sorted(int(m.group(1)) for m in (FRAME.match(n) for n in os.listdir(take)) if m)
+    if not numbers:
+        sys.exit("no frame_NNNNNN.dng in " + take)
+    sidecar = {}
+    sidecar_path = os.path.join(take, "take.kanaha_start.json")
+    if os.path.exists(sidecar_path):
+        with open(sidecar_path) as f:
+            sidecar = json.load(f)
+    wav = os.path.join(take, "take.wav")
+    have_wav = os.path.exists(wav)
+
+    first, last = numbers[0], numbers[-1]
+    present = set(numbers)
+    missing = [n for n in range(first, last + 1) if n not in present]
+    print("%s: %d frames (%s to %s), %d missing%s" % (os.path.basename(take), last - first + 1,
+          frames_to_tc(0), frames_to_tc(last - first), len(missing),
+          " - filled with the frame before each" if missing else ""), file=sys.stderr)
+
+    offset_ms = sidecar.get("first_frame_after_first_sample_ms")
+    timecode, why = (None, "no take.wav") if not have_wav else \
+        first_frame_timecode(wav, offset_ms or 0.0) if offset_ms is not None else (None, "sidecar has no audio offset")
+    print("timecode: %s (%s)" % (timecode or "none", why), file=sys.stderr)
+
+    cmd = ["ffmpeg", "-v", "warning", "-stats", "-y",
+           "-f", "ppm_pipe", "-framerate", str(FPS), "-i", "-"]
+    if have_wav:
+        # Start the audio at the first frame: it began offset_ms earlier (or later, if negative).
+        if offset_ms and offset_ms > 0:
+            cmd += ["-ss", "%.4f" % (offset_ms / 1000.0)]
+        cmd += ["-i", wav]
+    if a.codec == "prores4444":
+        cmd += ["-c:v", "prores_aw", "-profile:v", "4", "-pix_fmt", "yuv444p10le", "-vendor", "apl0"]
+    else:
+        cmd += ["-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-crf", "16", "-tag:v", "hvc1"]
+    if have_wav:
+        if offset_ms and offset_ms < 0:
+            cmd += ["-af", "adelay=%d:all=1" % round(-offset_ms)]
+        cmd += ["-c:a", "pcm_s16le", "-shortest"]
+    if timecode:
+        cmd += ["-metadata", "timecode=" + timecode]   # the MOV timecode track
+    cmd += ["-metadata", "comment=Kanaha 12-bit RAW take %s" % os.path.basename(take), out]
+
+    develop = develop_libraw if a.developer == "libraw" else develop_darktable
+    work = tempfile.mkdtemp(prefix="kanaha-develop-", dir=a.tmp or os.path.dirname(out))
+    encoder = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    window = max(2, a.jobs * 2)                    # frames developed ahead of ffmpeg
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as pool:
+            pending = {}
+            order = numbers
+            nxt = 0
+            previous = None
+            for n in range(first, last + 1):
+                while nxt < len(order) and len(pending) < window:
+                    k = order[nxt]
+                    pending[k] = pool.submit(develop, os.path.join(take, "frame_%06d.dng" % k), work)
+                    nxt += 1
+                if n in pending:
+                    developed = pending.pop(n).result()
+                    with open(developed, "rb") as f:
+                        data = f.read()
+                    os.remove(developed)
+                    previous = data
+                # A dropped frame: repeat the one before, so the movie keeps real time.
+                encoder.stdin.write(previous)
+        encoder.stdin.close()
+        if encoder.wait() != 0:
+            sys.exit("ffmpeg failed")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print("wrote %s" % out, file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

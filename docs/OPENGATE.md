@@ -916,7 +916,8 @@ What a take delivers: a folder of `frame_NNNNNN.dng` (lossless 12-bit, 4080×307
 and `take.wav` (the iRig's timecode), not one file. Developing the DNGs properly
 (the camera's colour matrix, white balance, lens shading) is `darktable-cli` or
 `rawtherapee-cli`; ffmpeg reads them but demosaics without the colour data. ffmpeg
-then encodes the developed frames and the WAV into one file per take for the edit.
+then encodes the developed frames and the WAV into one file per take for the edit:
+`tools/kanaha-develop`, below.
 
 #### Recording a take: `startRecording` with `raw12`, 2026-10-23
 
@@ -940,6 +941,31 @@ A whole song through the API, same day: `startRecording` with `raw12` and
 `"duration": 270`, no stop sent. The take ended itself on its duration: 8,112 of
 8,112 frames, none dropped or missing at the sensor, 97 GB, 270.6 s of `take.wav`
 with the first frame 164 ms into it; OpenCamera back with its camera afterwards.
+
+#### Developing a take: `tools/kanaha-develop`
+
+One command turns a take folder copied off the phone into one movie for the edit:
+
+```bash
+tools/kanaha-develop RAW_verse1_20261023_144657/      # -> RAW_verse1_20261023_144657.mov
+```
+
+It develops each DNG with LibRaw's `dcraw_emu` (camera white balance and colour
+matrix; `--developer darktable` for darktable's processing), pipes the frames to
+ffmpeg and writes ProRes 4444 (`--codec hevc10` for a small 10-bit HEVC file). The
+audio track is `take.wav`, trimmed so it starts at the first frame. The timecode
+track is read from the LTC in `take.wav` (`ltcdump`, x42 ltc-tools), moved to the
+first frame using the sidecar's `first_frame_after_first_sample_ms`. A dropped frame
+is filled with the one before it, so every camera stays in sync. Developed frames are
+deleted as soon as they are encoded, so the scratch space never holds more than a few
+GB.
+
+On a 22-core machine it runs about 3 frames a second with either codec, so a
+4.5 minute take takes about 45 minutes. ProRes 4444 at 4080×3072 is about 320 MB/s,
+about 85 GB a take. Checked on a synthetic take: LTC starting at 01:00:00:00 and the
+first frame 129.3 ms in gave timecode 01:00:00:04 on the file, and a missing frame
+was filled. Needs `ffmpeg`, `libraw-bin` (or `darktable`), and `ltc-tools` for
+timecode.
 
 ---
 
