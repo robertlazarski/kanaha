@@ -936,6 +936,11 @@ ahead whose first frame was exposed 29 ms after `start_at`, within one frame. Th
 reply's `max_seconds` is the take's cap from `duration` and free space. Folder
 layout, sidecar fields and the file operations: README, "12-bit RAW takes".
 
+A whole song through the API, same day: `startRecording` with `raw12` and
+`"duration": 270`, no stop sent. The take ended itself on its duration: 8,112 of
+8,112 frames, none dropped or missing at the sensor, 97 GB, 270.6 s of `take.wav`
+with the first frame 164 ms into it; OpenCamera back with its camera afterwards.
+
 ---
 
 ### Suggested order, and why
