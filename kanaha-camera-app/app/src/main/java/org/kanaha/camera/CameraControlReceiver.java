@@ -600,9 +600,12 @@ public class CameraControlReceiver extends BroadcastReceiver {
         RawTake take = new RawTake(context, clip, new File(parent, dirName), scheduled ? startAt : 0, maxSeconds, settings);
         RawTake.active = take;
         mainActivity.runOnUiThread(() -> mainActivity.startActivity(new Intent(mainActivity, RawTakeActivity.class)));
-        if (!take.awaitArmed(15000) || take.state == RawTake.State.FAILED) {
+        // Arming fails by itself within about 30 s: opening the camera (retried for 5 s,
+        // then up to 5 s more), the session (10 s) and the first frame (10 s) each have a
+        // limit in RawTake. Wait longer than their sum, or a slow but working arm is cut off.
+        if (!take.awaitArmed(35000) || take.state == RawTake.State.FAILED) {
             take.stop("did not arm");
-            return createErrorResponse(operationId, take.error != null ? take.error : "The 12-bit RAW take did not arm within 15 s");
+            return createErrorResponse(operationId, take.error != null ? take.error : "The 12-bit RAW take did not arm within 35 s");
         }
 
         JSONObject response = take.status();
