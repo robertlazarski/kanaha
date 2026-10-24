@@ -636,6 +636,9 @@ public class RawProbeActivity extends Activity {
         CountDownLatch armed = new CountDownLatch(opt.packed ? 1 : 0);
         final boolean buffered = opt.packed && opt.buffer > 0;
         BlockingQueue<ByteBuffer> frameBuffers = new ArrayBlockingQueue<>(Math.max(1, opt.buffer));
+        // The buffers this take creates itself (buffered, no helper): unmapped and closed at its end.
+        List<android.os.SharedMemory> ownMemory = new ArrayList<>();
+        List<ByteBuffer> ownMaps = new ArrayList<>();
         int[] frameStride = new int[1];
         AtomicInteger buffersLow = new AtomicInteger(Integer.MAX_VALUE);
         java.util.concurrent.ThreadPoolExecutor pool = new java.util.concurrent.ThreadPoolExecutor(
@@ -683,7 +686,13 @@ public class RawProbeActivity extends Activity {
                                 // Shared memory, not allocateDirect: on Android direct buffers come out
                                 // of the Java heap, capped well below the ~1 GB a second of frames needs.
                                 for (int i = 0; i < opt.buffer; i++) {
-                                    frameBuffers.add(android.os.SharedMemory.create("take" + i, frameBytes).mapReadWrite());
+                                    android.os.SharedMemory mem = android.os.SharedMemory.create("take" + i, frameBytes);
+                                    ByteBuffer map = mem.mapReadWrite();
+                                    synchronized (ownMemory) {
+                                        ownMemory.add(mem);
+                                        ownMaps.add(map);
+                                    }
+                                    frameBuffers.add(map);
                                 }
                             }
                         }
@@ -884,13 +893,17 @@ public class RawProbeActivity extends Activity {
         session.close();
         if (audio != null) audio.stop();
         pool.shutdown();
-        pool.awaitTermination(60, TimeUnit.SECONDS);
+        boolean poolDone = pool.awaitTermination(60, TimeUnit.SECONDS);
         String helperResult = null;
         if (viaHelper) {
             helperResult = helper.finish(120);
         }
         double wallSeconds = (System.nanoTime() - start) / 1e9;
         reader.close();
+        // Unmapping a buffer a writer still reads would crash the app, so only once the
+        // pool has finished; otherwise (or after a failed arm) the buffers' cleaners free
+        // them when they are collected.
+        if (poolDone) releaseOwn(ownMaps, ownMemory);
 
         JSONObject r = new JSONObject();
         r.put("seconds", opt.seconds);
@@ -933,6 +946,15 @@ public class RawProbeActivity extends Activity {
         r.put("timeline", timeline);
         report("take: " + r);
         return r;
+    }
+
+    private static void releaseOwn(List<ByteBuffer> maps, List<android.os.SharedMemory> memory) {
+        synchronized (memory) {
+            for (ByteBuffer b : maps) android.os.SharedMemory.unmap(b);
+            for (android.os.SharedMemory m : memory) m.close();
+            maps.clear();
+            memory.clear();
+        }
     }
 
     /** The mean of the values added to {@code list} since the last call for slot {@code k}. */

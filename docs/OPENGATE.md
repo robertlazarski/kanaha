@@ -891,7 +891,7 @@ scenes compress further (30–34%).
 
 It is done in C, without JNI: `libkanaha_dng.so` (`app/src/main/cpp/dng/`) is a
 separate executable the app starts with ProcessBuilder, as it starts httpd, and
-feeds through a named pipe (`DngHelper`). After optimisation one Pixel core encodes
+feeds over a Unix socket (`DngHelper`). After optimisation one Pixel core encodes
 32 frames a second; three threads paced to 30 fps held 30.0 fps for 270 s with the
 camera running, thermal status 1 (2026-10-22). Output is checked bit-exact against
 the source frames by decoding both with ffmpeg.
