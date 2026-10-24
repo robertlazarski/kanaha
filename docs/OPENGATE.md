@@ -967,6 +967,15 @@ first frame 129.3 ms in gave timecode 01:00:00:04 on the file, and a missing fra
 was filled. Needs `ffmpeg`, `libraw-bin` (or `darktable`), and `ltc-tools` for
 timecode.
 
+To edit the DNGs directly instead (DaVinci Resolve reads a DNG folder as one
+CinemaDNG clip), `--stamp-dngs` makes no movie: it writes each frame's timecode
+into its DNG as the CinemaDNG `TimeCodes` and `FrameRate` tags, so the edit lines
+the take up by timecode without developing it. The phone cannot write these while
+recording: it only has the LTC as audio until `take.wav` is decoded after the take.
+Stamping appends a new IFD to each file, leaving the picture data alone (LibRaw
+decodes a stamped frame bit-identically), and takes seconds for a whole
+take.
+
 ---
 
 ### Suggested order, and why

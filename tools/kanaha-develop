@@ -27,6 +27,10 @@ so the working space is a window of frames, not the 600 GB a whole take of 16-bi
 frames would need. A frame missing from the folder (a dropped frame) is filled with
 the frame before it, so the movie keeps the take's timing.
 
+With --stamp-dngs it makes no movie: it writes each frame's timecode into the DNGs
+themselves (the CinemaDNG TimeCodes and FrameRate tags), so an editor that reads
+DNG sequences, such as DaVinci Resolve, lines the take up without developing it.
+
 Needs: python3, ffmpeg, dcraw_emu (libraw-bin) or darktable-cli, and ltcdump for
 timecode (optional; without it the file has no timecode track).
 """
@@ -35,6 +39,7 @@ import concurrent.futures
 import json
 import os
 import re
+import struct
 import shutil
 import subprocess
 import sys
@@ -76,7 +81,8 @@ def frames_to_tc(n, fps=FPS):
 
 
 def first_frame_timecode(wav, offset_ms, fps=FPS):
-    """The timecode of the take's first frame, from the LTC in take.wav, or None.
+    """The timecode of the take's first frame as a frame count, from the LTC in
+    take.wav, or None.
 
     ltcdump lists each timecode frame with the sample it starts at. The first frame
     was exposed offset_ms after the WAV's first sample (the sidecar's
@@ -95,8 +101,59 @@ def first_frame_timecode(wav, offset_ms, fps=FPS):
             rate = 48000
             frame0_sample = offset_ms / 1000.0 * rate
             frames = tc0 + round((frame0_sample - start) / rate * fps)
-            return frames_to_tc(frames, fps), "LTC on channel %s" % channel
+            return frames, "LTC on channel %s" % channel
     return None, "no LTC found in %s (was the iRig connected?); no timecode track" % os.path.basename(wav)
+
+
+def smpte_bytes(n, fps=FPS):
+    """The 8-byte SMPTE 12M timecode of DNG's TimeCodes tag: frames, seconds, minutes,
+    hours in BCD (no drop-frame or colour-frame flags at 30 fps), then 4 user bytes."""
+    bcd = lambda v: (v // 10) << 4 | v % 10
+    return bytes([bcd(n % fps), bcd(n // fps % 60), bcd(n // (60 * fps) % 60),
+                  bcd(n // (3600 * fps) % 24), 0, 0, 0, 0])
+
+
+TAG_TIMECODES, TAG_FRAMERATE = 51043, 51044
+
+
+def stamp_dng(path, frames, fps=FPS):
+    """Write TimeCodes and FrameRate into a DNG's first IFD.
+
+    The DNG is not rewritten: a copy of IFD0 with the two tags added (or replaced) is
+    appended to the file, with their values after it, and the header is pointed at
+    it. Every other offset in the file stays valid; the old IFD0 is left unused.
+    Stamping again replaces the tags the same way."""
+    with open(path, "r+b") as f:
+        head = f.read(8)
+        e = {b"II": "<", b"MM": ">"}.get(head[:2])
+        if e is None or struct.unpack(e + "H", head[2:4])[0] != 42:
+            raise ValueError("%s: not a TIFF/DNG" % path)
+        ifd = struct.unpack(e + "I", head[4:8])[0]
+        f.seek(ifd)
+        count = struct.unpack(e + "H", f.read(2))[0]
+        entries = [f.read(12) for _ in range(count)]
+        next_ifd = f.read(4)
+        entries = [x for x in entries if struct.unpack(e + "H", x[:2])[0] not in (TAG_TIMECODES, TAG_FRAMERATE)]
+        f.seek(0, os.SEEK_END)
+        start = f.tell()
+        start += start & 1                              # TIFF offsets are word aligned
+        values = start + 2 + 12 * (len(entries) + 2) + 4
+        entries.append(struct.pack(e + "HHII", TAG_TIMECODES, 1, 8, values))           # BYTE[8]
+        entries.append(struct.pack(e + "HHII", TAG_FRAMERATE, 10, 1, values + 8))      # SRATIONAL
+        entries.sort(key=lambda x: struct.unpack(e + "H", x[:2])[0])
+        f.seek(start)
+        f.write(struct.pack(e + "H", len(entries)) + b"".join(entries) + next_ifd)
+        f.write(smpte_bytes(frames, fps) + struct.pack(e + "ii", fps, 1))
+        f.seek(4)
+        f.write(struct.pack(e + "I", start))
+
+
+def stamp_take(take, numbers, first, timecode):
+    for i, n in enumerate(numbers):
+        stamp_dng(os.path.join(take, "frame_%06d.dng" % n), timecode + n - first)
+        if i % 300 == 0 or i == len(numbers) - 1:
+            print("\rstamped %d of %d" % (i + 1, len(numbers)), end="", file=sys.stderr)
+    print(file=sys.stderr)
 
 
 def main():
@@ -108,6 +165,8 @@ def main():
                    help="prores4444 (12-bit 4:4:4, large, edits smoothly) or hevc10 (small)")
     p.add_argument("--jobs", type=int, default=os.cpu_count(), help="frames developed at once")
     p.add_argument("--tmp", help="working folder for developed frames (default: next to the output)")
+    p.add_argument("--stamp-dngs", action="store_true",
+                   help="write each frame's timecode into its DNG instead of making a movie")
     a = p.parse_args()
 
     take = os.path.abspath(a.take.rstrip("/"))
@@ -133,7 +192,14 @@ def main():
     offset_ms = sidecar.get("first_frame_after_first_sample_ms")
     timecode, why = (None, "no take.wav") if not have_wav else \
         first_frame_timecode(wav, offset_ms or 0.0) if offset_ms is not None else (None, "sidecar has no audio offset")
-    print("timecode: %s (%s)" % (timecode or "none", why), file=sys.stderr)
+    print("timecode: %s (%s)" % (frames_to_tc(timecode) if timecode is not None else "none", why),
+          file=sys.stderr)
+    if a.stamp_dngs:
+        if timecode is None:
+            sys.exit("no timecode to stamp")
+        stamp_take(take, numbers, first, timecode)
+        print("stamped %s, first frame %s" % (os.path.basename(take), frames_to_tc(timecode)), file=sys.stderr)
+        return
 
     cmd = ["ffmpeg", "-v", "warning", "-stats", "-y",
            "-f", "ppm_pipe", "-framerate", str(FPS), "-i", "-"]
@@ -150,8 +216,8 @@ def main():
         if offset_ms and offset_ms < 0:
             cmd += ["-af", "adelay=%d:all=1" % round(-offset_ms)]
         cmd += ["-c:a", "pcm_s16le", "-shortest"]
-    if timecode:
-        cmd += ["-metadata", "timecode=" + timecode]   # the MOV timecode track
+    if timecode is not None:
+        cmd += ["-metadata", "timecode=" + frames_to_tc(timecode)]   # the MOV timecode track
     cmd += ["-metadata", "comment=Kanaha 12-bit RAW take %s" % os.path.basename(take), out]
 
     develop = develop_libraw if a.developer == "libraw" else develop_darktable
