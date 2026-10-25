@@ -264,7 +264,7 @@ def read_ppm(path):
 # Encoding.
 # ---------------------------------------------------------------------------------
 
-def ffmpeg_command(out, codec, wav, offset_ms, timecode, take_name, frame_count):
+def ffmpeg_command(out, codec, prores_encoder, wav, offset_ms, timecode, take_name, frame_count):
     """The ffmpeg command line. The picture size is left as "{size}": it is known only
     once the first frame is developed (darktable crops, LibRaw does not)."""
     # Input 0: the frames, piped to ffmpeg's stdin as raw 16-bit RGB at 30 fps.
@@ -284,8 +284,13 @@ def ffmpeg_command(out, codec, wav, offset_ms, timecode, take_name, frame_count)
         cmd += ["-i", wav]
 
     if codec == "prores4444":
-        # prores_aw, not prores_ks: about four times faster at this size, same profile.
-        cmd += ["-c:v", "prores_aw", "-profile:v", "4", "-pix_fmt", "yuv444p10le", "-vendor", "apl0"]
+        # Two ffmpeg encoders write the same ProRes 4444 profile. prores_aw (default) is
+        # about twice as fast end to end, but has no size target: a lit scene is ~11 MB
+        # a frame, dark noisy footage ~36 MB (a whole song came to 292 GB). prores_ks
+        # keeps ~9 MB a frame whatever the scene, at half the speed. Both are visually
+        # lossless on real footage (50-54 dB PSNR against the developed frame).
+        cmd += ["-c:v", "prores_" + prores_encoder, "-profile:v", "4", "-pix_fmt", "yuv444p10le",
+                "-vendor", "apl0"]
     else:
         cmd += ["-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-crf", "16", "-tag:v", "hvc1"]
 
@@ -367,6 +372,9 @@ def main():
     p.add_argument("--developer", choices=["libraw", "darktable"], default="libraw")
     p.add_argument("--codec", choices=["prores4444", "hevc10"], default="prores4444",
                    help="prores4444 (12-bit 4:4:4, large, edits smoothly) or hevc10 (small)")
+    p.add_argument("--prores-encoder", choices=["aw", "ks"], default="aw",
+                   help="aw: fast, size grows with noise (dark scenes); ks: half the speed, "
+                        "about 9 MB a frame whatever the scene")
     p.add_argument("--jobs", type=int, default=os.cpu_count(), help="frames developed at once")
     p.add_argument("--tmp", help="working folder for developed frames (default: next to the output)")
     p.add_argument("--stamp-dngs", action="store_true",
@@ -438,7 +446,8 @@ def main():
         print("stamped %s, first frame %s" % (os.path.basename(take), frames_to_tc(timecode)), file=sys.stderr)
         return
 
-    cmd = ffmpeg_command(out, a.codec, wav, offset_ms, timecode, os.path.basename(take), last - first + 1)
+    cmd = ffmpeg_command(out, a.codec, a.prores_encoder, wav, offset_ms, timecode,
+                         os.path.basename(take), last - first + 1)
     develop = develop_libraw if a.developer == "libraw" else develop_darktable
     work = tempfile.mkdtemp(prefix="kanaha-develop-", dir=a.tmp or os.path.dirname(out))
     try:

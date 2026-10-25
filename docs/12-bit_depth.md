@@ -259,7 +259,15 @@ wrote, since a copy that broke off loses the end of a take without leaving a gap
 ```bash
 tools/kanaha-develop RAW_verse1_20261025_025807/                  # ProRes 4444 MOV
 tools/kanaha-develop RAW_verse1_20261025_025807/ --codec hevc10   # small 10-bit HEVC
+tools/kanaha-develop RAW_verse1_20261025_025807/ --prores-encoder ks   # ProRes, size capped
 ```
+
+ffmpeg has two ProRes 4444 encoders. The default, `prores_aw`, is about twice as fast
+(about 40 minutes a song) but has no size target, so dark or noisy footage balloons:
+about 11 MB a frame on a lit scene, 36 MB on a dark one, 292 GB for a whole dark song.
+`--prores-encoder ks` keeps about 9 MB a frame whatever the scene at half the speed
+(about 85 minutes a song). Use it for dim or high-ISO songs, or when disk space matters
+more than turnaround.
 
 1. **Develops each DNG** with LibRaw's `dcraw_emu`: the camera's white balance and
    colour matrix, AHD demosaic, and the exposure as recorded. LibRaw's default
