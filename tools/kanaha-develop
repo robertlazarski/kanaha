@@ -22,10 +22,11 @@ it, the way an edit expects a camera clip:
      and write it into the file, so the edit lines every camera up by timecode.
 
 With LibRaw on a 22-core machine a real take develops at 2 to 2.5 frames a second:
-a 4.5 minute take takes about an hour. Frames are developed in parallel a little ahead of ffmpeg and deleted once encoded,
-so the working space is a window of frames, not the 600 GB a whole take of 16-bit
-frames would need. A frame missing from the folder (a dropped frame) is filled with
-the frame before it, so the movie keeps the take's timing.
+a 4.5 minute take takes about an hour. Frames are developed in parallel a little
+ahead of ffmpeg and deleted once encoded, so the working space is a window of frames,
+not the 600 GB a whole take of 16-bit frames would need. A frame missing from the
+folder (a dropped frame) is filled with the frame before it, so the movie keeps the
+take's timing.
 
 With --stamp-dngs it makes no movie: it writes each frame's timecode into the DNGs
 themselves (the CinemaDNG TimeCodes and FrameRate tags), so an editor that reads
@@ -45,43 +46,152 @@ import subprocess
 import sys
 import tempfile
 
-FPS = 30
+FPS = 30                 # every Kanaha take is 30 fps
+AUDIO_RATE = 48000       # take.wav is 48 kHz stereo (TimecodeAudio on the phone)
+
+# A frame file in a take folder: frame_000000.dng, frame_000001.dng, ...
 FRAME = re.compile(r"^frame_(\d{6})\.dng$")
+
+# One line of `ltcdump -F` output, for example
+#     09100000   02:26:06:06 |      511     2099
+# user bits, then the timecode, then the first and last WAV sample of that LTC frame.
+# Groups: hours, minutes, seconds, frames, first sample, last sample.
+# Time limits for the external tools, far above what they need, so a tool that hangs
+# (on a damaged file, say) fails the run with a message instead of stalling it
+# silently. A frame takes LibRaw a few seconds and darktable well under a minute;
+# ltcdump reads a whole take's WAV in seconds.
+DEVELOP_TIMEOUT_S = {"libraw": 120, "darktable": 600}
+LTCDUMP_TIMEOUT_S = 300
+
 LTC_LINE = re.compile(r"^\s*[0-9a-fA-F]{8}\s+(\d\d):(\d\d):(\d\d)[:;.](\d\d)\s+\|\s+(-?\d+)\s+(-?\d+)")
 
 
-# Developed frames are 16-bit PPM, about 75 MB each, so only a window of them exists
-# at once. ffmpeg gets their pixels as raw RGB48 with the size given up front, not
-# the PPM files: its PPM stream parser hunts for frame boundaries in the data and
-# logged bad headers on a real take (and a stream of LibRaw TIFFs fails to probe).
+# ---------------------------------------------------------------------------------
+# Timecode arithmetic. Timecode is handled as a plain frame count from midnight
+# (01:00:00:00 at 30 fps is 108000) and only formatted as HH:MM:SS:FF for output.
+# ---------------------------------------------------------------------------------
+
+def frames_to_tc(n, fps=FPS):
+    """Frame count -> "HH:MM:SS:FF"."""
+    return "%02d:%02d:%02d:%02d" % (n // (3600 * fps), n // (60 * fps) % 60, n // fps % 60, n % fps)
 
 
-def read_ppm(path):
-    """(width, height, pixels) of a 16-bit binary PPM."""
-    with open(path, "rb") as f:
-        data = f.read()
-    fields, pos = [], 0
-    while len(fields) < 4:                          # P6, width, height, maxval
-        while data[pos:pos + 1].isspace():
-            pos += 1
-        end = pos
-        while not data[end:end + 1].isspace():
-            end += 1
-        fields.append(data[pos:end])
-        pos = end
-    if fields[0] != b"P6" or fields[3] != b"65535":
-        raise ValueError("%s: not a 16-bit PPM" % path)
-    w, h = int(fields[1]), int(fields[2])
-    pixels = memoryview(data)[pos + 1:]          # no copy of a 75 MB frame
-    if len(pixels) != w * h * 6:
-        raise ValueError("%s: %d bytes of pixels for %dx%d" % (path, len(pixels), w, h))
-    return w, h, pixels
+def first_frame_timecode(wav, offset_ms, fps=FPS):
+    """The timecode of the take's first video frame, as a frame count, from the LTC
+    in take.wav. Returns (frames, how it was found), or (None, why not).
+
+    ltcdump lists each timecode frame it decodes with the WAV sample it starts at.
+    The first video frame was exposed offset_ms after the WAV's first sample (the
+    sidecar's first_frame_after_first_sample_ms), so its timecode is the first
+    decoded one plus that distance, rounded to the nearest frame.
+
+    Worked example (the first real take): the first LTC frame is 02:26:06:06 and
+    starts at sample 511; the first video frame is 162.8 ms in, sample 7814. That is
+    7303 samples later = 0.152 s = 4.56 frames -> 5, so 02:26:06:11."""
+    if not shutil.which("ltcdump"):
+        return None, "ltcdump not found; no timecode track"
+    for channel in ("1", "2"):                     # the iRig may carry LTC on either side
+        r = subprocess.run(["ltcdump", "-F", "-c", channel, wav], capture_output=True, text=True,
+                           timeout=LTCDUMP_TIMEOUT_S)
+        for line in r.stdout.splitlines():
+            m = LTC_LINE.match(line)
+            if not m:
+                continue                           # headers and undecodable stretches
+            h, mi, s, f, start = (int(x) for x in m.groups()[:5])
+            ltc_frames = ((h * 60 + mi) * 60 + s) * fps + f
+            first_video_sample = offset_ms / 1000.0 * AUDIO_RATE
+            frames_later = round((first_video_sample - start) / AUDIO_RATE * fps)
+            return ltc_frames + frames_later, "LTC on channel %s" % channel
+    return None, "no LTC found in %s (was the iRig connected?); no timecode track" % os.path.basename(wav)
+
+
+# ---------------------------------------------------------------------------------
+# --stamp-dngs: write each frame's timecode into the DNG file itself.
+# ---------------------------------------------------------------------------------
+
+TAG_TIMECODES, TAG_FRAMERATE = 51043, 51044    # the CinemaDNG tags editors read
+
+
+def smpte_bytes(n, fps=FPS):
+    """The 8-byte SMPTE 12M timecode of DNG's TimeCodes tag: frames, seconds, minutes,
+    hours, each as two decimal digits packed in a byte (BCD: 26 -> 0x26), then 4
+    user-bit bytes left at zero. No drop-frame or colour-frame flags at 30 fps."""
+    bcd = lambda v: (v // 10) << 4 | v % 10
+    return bytes([bcd(n % fps), bcd(n // fps % 60), bcd(n // (60 * fps) % 60),
+                  bcd(n // (3600 * fps) % 24), 0, 0, 0, 0])
+
+
+def stamp_dng(path, frames, fps=FPS):
+    """Write TimeCodes and FrameRate into a DNG's first IFD (its tag directory).
+
+    A DNG is a TIFF: an 8-byte header that points at a directory of 12-byte tag
+    entries (tag, type, count, value-or-offset), which point at the image data.
+    Inserting tags into that directory in place would shift everything after it and
+    break every offset in the file. So the file is not rewritten: a copy of the
+    directory with the two tags added (or replaced) is appended at the end, with the
+    tags' values after it, and the header is pointed at the copy. Every other offset
+    stays valid; the old directory is left unused. Stamping again does the same, so
+    re-stamping is safe (the file grows by a few hundred bytes each time)."""
+    with open(path, "r+b") as f:
+        # Header: byte order ("II" little-endian, "MM" big-endian), 42, offset of IFD0.
+        head = f.read(8)
+        e = {b"II": "<", b"MM": ">"}.get(head[:2])
+        if e is None or struct.unpack(e + "H", head[2:4])[0] != 42:
+            raise ValueError("%s: not a TIFF/DNG" % path)
+        ifd = struct.unpack(e + "I", head[4:8])[0]
+
+        # Read IFD0: entry count, the entries, then the offset of the next IFD.
+        f.seek(ifd)
+        count = struct.unpack(e + "H", f.read(2))[0]
+        entries = [f.read(12) for _ in range(count)]
+        next_ifd = f.read(4)
+        # Drop any earlier stamp, so these two tags appear once.
+        entries = [x for x in entries if struct.unpack(e + "H", x[:2])[0] not in (TAG_TIMECODES, TAG_FRAMERATE)]
+
+        # The new IFD goes at the end of the file, on an even offset as TIFF requires.
+        f.seek(0, os.SEEK_END)
+        start = f.tell()
+        start += start & 1
+        # Both values are 8 bytes, too big to sit inside an entry, so they go straight
+        # after the new IFD (2-byte count + 12 bytes per entry + 4-byte next offset).
+        values = start + 2 + 12 * (len(entries) + 2) + 4
+        entries.append(struct.pack(e + "HHII", TAG_TIMECODES, 1, 8, values))           # BYTE[8]
+        entries.append(struct.pack(e + "HHII", TAG_FRAMERATE, 10, 1, values + 8))      # SRATIONAL
+        entries.sort(key=lambda x: struct.unpack(e + "H", x[:2])[0])                    # TIFF wants tag order
+
+        f.seek(start)
+        f.write(struct.pack(e + "H", len(entries)) + b"".join(entries) + next_ifd)
+        f.write(smpte_bytes(frames, fps) + struct.pack(e + "ii", fps, 1))
+        # Last, point the header at the new IFD: until this write the file is unchanged
+        # as far as any reader is concerned.
+        f.seek(4)
+        f.write(struct.pack(e + "I", start))
+
+
+def stamp_take(take, numbers, first, timecode):
+    """Stamp every frame. Frame n gets the first frame's timecode plus its distance
+    from the first frame, so a dropped frame leaves a gap in timecode as in time."""
+    for i, n in enumerate(numbers):
+        stamp_dng(os.path.join(take, "frame_%06d.dng" % n), timecode + n - first)
+        if i % 300 == 0 or i == len(numbers) - 1:
+            print("\rstamped %d of %d" % (i + 1, len(numbers)), end="", file=sys.stderr)
+    print(file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------------
+# Developing frames. Each developer turns one DNG into a 16-bit PPM file in out_dir
+# and returns its path. PPM because it is the simplest 16-bit RGB format both
+# developers write: a short text header, then raw big-endian RGB samples.
+# ---------------------------------------------------------------------------------
 
 def develop_libraw(dng, out_dir):
-    """One DNG to a 16-bit PPM with the camera's white balance and colour (AHD demosaic)."""
+    """One DNG to a 16-bit PPM with the camera's white balance and colour (AHD demosaic).
+    dcraw_emu flags: -6 16-bit, -w camera white balance, -o 1 sRGB primaries,
+    -q 3 AHD demosaic, -Z the output file."""
     out = os.path.join(out_dir, os.path.basename(dng)[:-4] + ".ppm")
     subprocess.run(["dcraw_emu", "-6", "-w", "-o", "1", "-q", "3", "-Z", out, dng],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=DEVELOP_TIMEOUT_S["libraw"])
     return out
 
 
@@ -93,91 +203,136 @@ def develop_darktable(dng, out_dir):
     try:
         subprocess.run(["darktable-cli", dng, out, "--apply-custom-presets", "false",
                         "--core", "--configdir", work, "--library", ":memory:"],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=DEVELOP_TIMEOUT_S["darktable"])
     finally:
         shutil.rmtree(work, ignore_errors=True)
     return out
 
 
-def frames_to_tc(n, fps=FPS):
-    return "%02d:%02d:%02d:%02d" % (n // (3600 * fps), n // (60 * fps) % 60, n // fps % 60, n % fps)
+def read_ppm(path):
+    """(width, height, pixels) of a 16-bit binary PPM.
+
+    The header is four whitespace-separated fields - "P6", width, height, maxval
+    (65535 for 16-bit) - and one whitespace byte, then the pixels: width x height x
+    3 samples x 2 bytes. ffmpeg is sent just the pixels (see encode_take), so the
+    header is parsed here."""
+    with open(path, "rb") as f:
+        data = f.read()
+    fields, pos = [], 0
+    while len(fields) < 4:
+        while data[pos:pos + 1].isspace():         # skip to the next field
+            pos += 1
+        end = pos
+        while not data[end:end + 1].isspace():     # read to its end
+            end += 1
+        fields.append(data[pos:end])
+        pos = end
+    if fields[0] != b"P6" or fields[3] != b"65535":
+        raise ValueError("%s: not a 16-bit PPM" % path)
+    w, h = int(fields[1]), int(fields[2])
+    pixels = memoryview(data)[pos + 1:]          # no copy of a 75 MB frame
+    if len(pixels) != w * h * 6:
+        raise ValueError("%s: %d bytes of pixels for %dx%d" % (path, len(pixels), w, h))
+    return w, h, pixels
 
 
-def first_frame_timecode(wav, offset_ms, fps=FPS):
-    """The timecode of the take's first frame as a frame count, from the LTC in
-    take.wav, or None.
+# ---------------------------------------------------------------------------------
+# Encoding.
+# ---------------------------------------------------------------------------------
 
-    ltcdump lists each timecode frame with the sample it starts at. The first frame
-    was exposed offset_ms after the WAV's first sample (the sidecar's
-    first_frame_after_first_sample_ms), so its timecode is the first decoded one
-    plus that distance, rounded to the nearest frame."""
-    if not shutil.which("ltcdump"):
-        return None, "ltcdump not found; no timecode track"
-    for channel in ("1", "2"):                     # the iRig may carry LTC on either side
-        r = subprocess.run(["ltcdump", "-F", "-c", channel, wav], capture_output=True, text=True)
-        for line in r.stdout.splitlines():
-            m = LTC_LINE.match(line)
-            if not m:
-                continue
-            h, mi, s, f, start = (int(x) for x in m.groups()[:5])
-            tc0 = ((h * 60 + mi) * 60 + s) * fps + f
-            rate = 48000
-            frame0_sample = offset_ms / 1000.0 * rate
-            frames = tc0 + round((frame0_sample - start) / rate * fps)
-            return frames, "LTC on channel %s" % channel
-    return None, "no LTC found in %s (was the iRig connected?); no timecode track" % os.path.basename(wav)
+def ffmpeg_command(out, codec, wav, offset_ms, timecode, take_name):
+    """The ffmpeg command line. The picture size is left as "{size}": it is known only
+    once the first frame is developed (darktable crops, LibRaw does not)."""
+    # Input 0: the frames, piped to ffmpeg's stdin as raw 16-bit RGB at 30 fps.
+    # Raw pixels with the size given up front, not PPM files: ffmpeg's PPM stream
+    # parser hunts for frame boundaries in the data and logged bad headers on a real
+    # take (and a stream of LibRaw TIFFs fails to probe at all).
+    cmd = ["ffmpeg", "-v", "warning", "-stats", "-y",
+           "-f", "rawvideo", "-pixel_format", "rgb48be", "-video_size", "{size}",
+           "-framerate", str(FPS), "-i", "-"]
 
+    # Input 1: take.wav. The WAV starts before the first frame (offset_ms is positive)
+    # or, rarely, after it (negative). Either way the audio is lined up so it starts
+    # exactly at the first frame: skip the extra audio, or delay it with silence.
+    if wav:
+        if offset_ms and offset_ms > 0:
+            cmd += ["-ss", "%.4f" % (offset_ms / 1000.0)]   # -ss before -i: skip into the WAV
+        cmd += ["-i", wav]
 
-def smpte_bytes(n, fps=FPS):
-    """The 8-byte SMPTE 12M timecode of DNG's TimeCodes tag: frames, seconds, minutes,
-    hours in BCD (no drop-frame or colour-frame flags at 30 fps), then 4 user bytes."""
-    bcd = lambda v: (v // 10) << 4 | v % 10
-    return bytes([bcd(n % fps), bcd(n // fps % 60), bcd(n // (60 * fps) % 60),
-                  bcd(n // (3600 * fps) % 24), 0, 0, 0, 0])
+    if codec == "prores4444":
+        # prores_aw, not prores_ks: about four times faster at this size, same profile.
+        cmd += ["-c:v", "prores_aw", "-profile:v", "4", "-pix_fmt", "yuv444p10le", "-vendor", "apl0"]
+    else:
+        cmd += ["-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-crf", "16", "-tag:v", "hvc1"]
 
+    if wav:
+        # The trimmed audio can end a few ms before the last frame. apad extends it with
+        # silence forever, and -shortest then ends the file with the video, so every
+        # frame is kept; -shortest alone cut the last frame of a real take.
+        audio_filter = "apad"
+        if offset_ms and offset_ms < 0:
+            audio_filter = "adelay=%d:all=1,apad" % round(-offset_ms)
+        cmd += ["-af", audio_filter, "-c:a", "pcm_s16le", "-shortest"]
 
-TAG_TIMECODES, TAG_FRAMERATE = 51043, 51044
-
-
-def stamp_dng(path, frames, fps=FPS):
-    """Write TimeCodes and FrameRate into a DNG's first IFD.
-
-    The DNG is not rewritten: a copy of IFD0 with the two tags added (or replaced) is
-    appended to the file, with their values after it, and the header is pointed at
-    it. Every other offset in the file stays valid; the old IFD0 is left unused.
-    Stamping again replaces the tags the same way."""
-    with open(path, "r+b") as f:
-        head = f.read(8)
-        e = {b"II": "<", b"MM": ">"}.get(head[:2])
-        if e is None or struct.unpack(e + "H", head[2:4])[0] != 42:
-            raise ValueError("%s: not a TIFF/DNG" % path)
-        ifd = struct.unpack(e + "I", head[4:8])[0]
-        f.seek(ifd)
-        count = struct.unpack(e + "H", f.read(2))[0]
-        entries = [f.read(12) for _ in range(count)]
-        next_ifd = f.read(4)
-        entries = [x for x in entries if struct.unpack(e + "H", x[:2])[0] not in (TAG_TIMECODES, TAG_FRAMERATE)]
-        f.seek(0, os.SEEK_END)
-        start = f.tell()
-        start += start & 1                              # TIFF offsets are word aligned
-        values = start + 2 + 12 * (len(entries) + 2) + 4
-        entries.append(struct.pack(e + "HHII", TAG_TIMECODES, 1, 8, values))           # BYTE[8]
-        entries.append(struct.pack(e + "HHII", TAG_FRAMERATE, 10, 1, values + 8))      # SRATIONAL
-        entries.sort(key=lambda x: struct.unpack(e + "H", x[:2])[0])
-        f.seek(start)
-        f.write(struct.pack(e + "H", len(entries)) + b"".join(entries) + next_ifd)
-        f.write(smpte_bytes(frames, fps) + struct.pack(e + "ii", fps, 1))
-        f.seek(4)
-        f.write(struct.pack(e + "I", start))
+    if timecode is not None:
+        cmd += ["-metadata", "timecode=" + frames_to_tc(timecode)]   # becomes the MOV timecode track
+    cmd += ["-metadata", "comment=Kanaha 12-bit RAW take %s" % take_name, out]
+    return cmd
 
 
-def stamp_take(take, numbers, first, timecode):
-    for i, n in enumerate(numbers):
-        stamp_dng(os.path.join(take, "frame_%06d.dng" % n), timecode + n - first)
-        if i % 300 == 0 or i == len(numbers) - 1:
-            print("\rstamped %d of %d" % (i + 1, len(numbers)), end="", file=sys.stderr)
-    print(file=sys.stderr)
+def encode_take(take, numbers, cmd, develop, jobs, work):
+    """Develop every frame and pipe it to ffmpeg, in order.
 
+    Developing is the slow part, so `jobs` frames are developed at once on a thread
+    pool, each one a separate dcraw_emu or darktable-cli process. Up to `window`
+    frames are in flight ahead of the one ffmpeg needs next; each developed frame is
+    read, deleted, and written to ffmpeg's stdin as soon as its turn comes, so the
+    working folder never holds more than `window` frames (a few GB).
+
+    A dropped frame (a number missing from the folder) is filled by sending the
+    previous frame again, so the movie has one frame per 1/30 s of the take."""
+    first, last = numbers[0], numbers[-1]
+    window = max(2, jobs * 2)
+    encoder = None          # ffmpeg, started on the first frame, which gives the size
+    size = None
+    previous = None         # the last frame's pixels, resent for a dropped frame
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            pending = {}    # frame number -> future of its developed PPM path
+            nxt = 0         # index in `numbers` of the next frame to start developing
+            for n in range(first, last + 1):
+                # Keep the pool fed: start frames in order until `window` are in flight.
+                while nxt < len(numbers) and len(pending) < window:
+                    k = numbers[nxt]
+                    pending[k] = pool.submit(develop, os.path.join(take, "frame_%06d.dng" % k), work)
+                    nxt += 1
+                if n in pending:                           # n is in the folder (not dropped)
+                    developed = pending.pop(n).result()    # waits for it if still developing
+                    w, h, data = read_ppm(developed)
+                    os.remove(developed)
+                    if encoder is None:
+                        size = (w, h)
+                        encoder = subprocess.Popen([x.replace("{size}", "%dx%d" % size) for x in cmd],
+                                                   stdin=subprocess.PIPE)
+                    elif (w, h) != size:
+                        sys.exit("frame %d is %dx%d, not %dx%d" % ((n, w, h) + size))
+                    previous = data
+                # Sends frame n, or, if n was dropped, the frame before it again.
+                encoder.stdin.write(previous)
+    except BaseException:
+        # A frame failed, or Ctrl-C: stop ffmpeg rather than leave it waiting on a pipe
+        # that will never finish. The partial movie is not usable.
+        if encoder is not None:
+            encoder.kill()
+            encoder.wait()
+        raise
+    encoder.stdin.close()
+    if encoder.wait() != 0:
+        sys.exit("ffmpeg failed")
+
+
+# ---------------------------------------------------------------------------------
 
 def main():
     p = argparse.ArgumentParser(description="Develop a 12-bit RAW take folder into one movie file.")
@@ -193,9 +348,19 @@ def main():
     p.add_argument("--partial", action="store_true",
                    help="go ahead although the folder has fewer frames than the take wrote")
     a = p.parse_args()
+    if not a.stamp_dngs:
+        # Fail now, not an hour in or on the first frame with a traceback.
+        tools = ["ffmpeg", "dcraw_emu" if a.developer == "libraw" else "darktable-cli"]
+        absent = [t for t in tools if not shutil.which(t)]
+        if absent:
+            sys.exit("not installed: %s (ffmpeg; libraw-bin for dcraw_emu; darktable for darktable-cli)"
+                     % ", ".join(absent))
 
+    # The take: its frame numbers, its sidecar and its WAV.
     take = os.path.abspath(a.take.rstrip("/"))
     out = os.path.abspath(a.output or take + ".mov")
+    if not os.path.isdir(take):
+        sys.exit("not a take folder: " + take)
     numbers = sorted(int(m.group(1)) for m in (FRAME.match(n) for n in os.listdir(take)) if m)
     if not numbers:
         sys.exit("no frame_NNNNNN.dng in " + take)
@@ -205,7 +370,8 @@ def main():
         with open(sidecar_path) as f:
             sidecar = json.load(f)
     wav = os.path.join(take, "take.wav")
-    have_wav = os.path.exists(wav)
+    if not os.path.exists(wav):
+        wav = None
 
     # A copy that broke off (adb over Wi-Fi drops) loses the end of the take, which no
     # gap in the numbering shows; the sidecar says how many frames the phone wrote.
@@ -221,11 +387,17 @@ def main():
           frames_to_tc(0), frames_to_tc(last - first), len(missing),
           " - filled with the frame before each" if missing else ""), file=sys.stderr)
 
+    # Where the first frame sits in the WAV, and so its timecode.
     offset_ms = sidecar.get("first_frame_after_first_sample_ms")
-    timecode, why = (None, "no take.wav") if not have_wav else \
-        first_frame_timecode(wav, offset_ms or 0.0) if offset_ms is not None else (None, "sidecar has no audio offset")
+    if wav is None:
+        timecode, why = None, "no take.wav"
+    elif offset_ms is None:
+        timecode, why = None, "sidecar has no audio offset"
+    else:
+        timecode, why = first_frame_timecode(wav, offset_ms)
     print("timecode: %s (%s)" % (frames_to_tc(timecode) if timecode is not None else "none", why),
           file=sys.stderr)
+
     if a.stamp_dngs:
         if timecode is None:
             sys.exit("no timecode to stamp")
@@ -233,60 +405,13 @@ def main():
         print("stamped %s, first frame %s" % (os.path.basename(take), frames_to_tc(timecode)), file=sys.stderr)
         return
 
-    cmd = ["ffmpeg", "-v", "warning", "-stats", "-y",
-           "-f", "rawvideo", "-pixel_format", "rgb48be", "-video_size", "{size}",
-           "-framerate", str(FPS), "-i", "-"]
-    if have_wav:
-        # Start the audio at the first frame: it began offset_ms earlier (or later, if negative).
-        if offset_ms and offset_ms > 0:
-            cmd += ["-ss", "%.4f" % (offset_ms / 1000.0)]
-        cmd += ["-i", wav]
-    if a.codec == "prores4444":
-        cmd += ["-c:v", "prores_aw", "-profile:v", "4", "-pix_fmt", "yuv444p10le", "-vendor", "apl0"]
-    else:
-        cmd += ["-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-crf", "16", "-tag:v", "hvc1"]
-    if have_wav:
-        if offset_ms and offset_ms < 0:
-            cmd += ["-af", "adelay=%d:all=1" % round(-offset_ms)]
-        cmd += ["-c:a", "pcm_s16le", "-shortest"]
-    if timecode is not None:
-        cmd += ["-metadata", "timecode=" + frames_to_tc(timecode)]   # the MOV timecode track
-    cmd += ["-metadata", "comment=Kanaha 12-bit RAW take %s" % os.path.basename(take), out]
-
+    cmd = ffmpeg_command(out, a.codec, wav, offset_ms, timecode, os.path.basename(take))
     develop = develop_libraw if a.developer == "libraw" else develop_darktable
     work = tempfile.mkdtemp(prefix="kanaha-develop-", dir=a.tmp or os.path.dirname(out))
-    encoder = None                                 # started on the first frame, which gives the size
-    size = None
-    window = max(2, a.jobs * 2)                    # frames developed ahead of ffmpeg
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as pool:
-            pending = {}
-            order = numbers
-            nxt = 0
-            previous = None
-            for n in range(first, last + 1):
-                while nxt < len(order) and len(pending) < window:
-                    k = order[nxt]
-                    pending[k] = pool.submit(develop, os.path.join(take, "frame_%06d.dng" % k), work)
-                    nxt += 1
-                if n in pending:
-                    developed = pending.pop(n).result()
-                    w, h, data = read_ppm(developed)
-                    os.remove(developed)
-                    if encoder is None:
-                        size = (w, h)
-                        encoder = subprocess.Popen([x.replace("{size}", "%dx%d" % size) for x in cmd],
-                                                   stdin=subprocess.PIPE)
-                    elif (w, h) != size:
-                        sys.exit("frame %d is %dx%d, not %dx%d" % ((n, w, h) + size))
-                    previous = data
-                # A dropped frame: repeat the one before, so the movie keeps real time.
-                encoder.stdin.write(previous)
-        encoder.stdin.close()
-        if encoder.wait() != 0:
-            sys.exit("ffmpeg failed")
+        encode_take(take, numbers, cmd, develop, a.jobs, work)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)   # developed frames, even after a failure
     print("wrote %s" % out, file=sys.stderr)
 
 
