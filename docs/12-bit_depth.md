@@ -19,10 +19,13 @@ tools/kanaha-develop RAW_verse1_20261025_025807/    # -> RAW_verse1_20261025_025
 - **Phones:** the Pixel 10 Pro XL so far. The Moto G Play's RAW is 10-bit and Kanaha
   refuses `raw12` on it with that reason. Most phones give less; see
   [Which phones](#which-phones-the-encoder-and-the-sensor-are-two-routes).
-- **A take is a folder, not a file:** one DNG per frame, a WAV and a sidecar. About
-  48 GB for a 4.5 minute song; about three songs fit on a 256 GB Pixel.
+- **Always open gate, at the full sensor:** 4080×3072, 4:3. See
+  [Frame size](#frame-size-always-the-full-sensor).
+- **A take is a folder, not a file:** one DNG per frame, a WAV and a sidecar. A 4.5
+  minute song is 50–100 GB depending on the scene, so one to three songs fit in a
+  256 GB Pixel's free space.
 - **It must be developed before anything plays it:** about an hour per song on a
-  22-core machine, to a ProRes 4444 MOV of about 85 GB.
+  22-core machine, to a ProRes 4444 MOV of about the same size as the DNGs.
 - **Timecode must run at 30 fps.** The F8 and every Tentacle set to 30, not 29.97; the
   post script warns when they are not.
 
@@ -68,6 +71,29 @@ video rates, and Apple's own video route is ProRes and ProRes RAW.
 
 ---
 
+## Frame size: always the full sensor
+
+A 12-bit take is always open gate: the sensor's whole 4:3 readout, 4080×3072 (binned
+from its 8160×6144 pixels). There is no other size, and `startRecording` ignores
+`open_gate` alongside `raw12`, since there is nothing to switch.
+
+It is a larger open gate than video's. Open gate video stops at 2560×1920 because
+that is the largest 4:3 frame the phone's encoder takes
+([OPENGATE.md](OPENGATE.md#the-encoder-limit-measured-2026-10-19)); RAW frames never go
+through the encoder, so a take has 2.5 times the pixels:
+
+| Crop from 4080×3072 | Size | Covers |
+|---|---|---|
+| 16:9 | 4080×2295 | 4K (3840×2160) without upscaling |
+| 9:16 vertical | 1728×3072 | TikTok's 1080×1920 with room to reframe |
+| 1:1 | 3072×3072 | |
+| 2.39:1 | 4080×1707 | |
+
+`kanaha-develop` delivers the full 4:3 frame; crop it in the edit as for open gate
+video ([Reframing in post](OPENGATE.md#reframing-in-post)).
+
+---
+
 ## What a take is
 
 CinemaDNG is not a single file like MOV or MP4. A take is a folder:
@@ -83,8 +109,9 @@ RAW_verse1_20261025_025807/
   levels, both colour and forward matrices, a noise profile and the lens-distortion
   correction (no lens-shading map). The
   colour data comes from Android's `DngCreator`; the frames are Kanaha's own writer,
-  compressed with lossless JPEG (DNG compression 7, as cinema cameras use), 8–12 MB a
-  frame depending on the scene.
+  compressed with lossless JPEG (DNG compression 7, as cinema cameras use), 6–13 MB a
+  frame depending on the scene: lossless compression shrinks a plain, dim frame far
+  more than a detailed or noisy one.
 - **There is no sound or timecode inside the frames.** The sound and the timecode are
   in `take.wav`, and the sidecar's `first_frame_after_first_sample_ms` places the first
   frame in it to well under a millisecond.
@@ -99,16 +126,19 @@ RAW_verse1_20261025_025807/
 | | 12-bit DNG take | ProRes 4444 MOV |
 |---|---|---|
 | What it holds | Untouched sensor readings: white balance, exposure and colour decided in post | A finished picture |
-| Size, 4.5 min song | **About 48 GB** | About 85 GB |
+| Size | 6–13 MB a frame, varying with the scene | 11–12 MB a frame; ProRes 422 HQ about 8 MB |
 | Plays in a player or editor | No: every frame must be developed first | Yes |
 | Open-source support | ffmpeg reads DNG but develops it without the camera's colour data (wrong colour); LibRaw, darktable and RawTherapee develop it correctly, one frame at a time | Everywhere |
 | Files | Thousands per take | One |
 | Sound and timecode | Beside the frames | Inside the file |
 
-The size runs the other way from what one might expect: the compressed DNG is smaller
-than the ProRes made from it. What DNG costs is the developing, the tooling and the
-file count. `tools/kanaha-develop` makes the ProRes, so the edit gets one ordinary file
-per take and the DNGs stay as the camera original.
+Measured on the same footage, the compressed DNG is about the size of the ProRes 4444
+made from it (equal on one take, 15% larger on another) and 40–55% larger than ProRes
+422 HQ. So size is not DNG's advantage, and it is not much of a cost either: what DNG
+costs is the developing, the tooling and the file count. Compression during the take is
+what makes a whole song possible at all; without it the phone's storage cannot keep up
+([Measured results](#measured-results)). `tools/kanaha-develop` makes the ProRes, so
+the edit gets one ordinary file per take and the DNGs stay as the camera original.
 
 **Why DNG at all:** BRAW and ProRes RAW are the efficient RAW video formats, but their
 encoders exist only inside Blackmagic's and Apple-licensed cameras and recorders;
@@ -174,9 +204,9 @@ jump.
 
 ## Getting takes off the phone
 
-| Route | Measured | A 48 GB song |
+| Route | Measured | A 48 GB song (the 2026-10-25 test) |
 |---|---|---|
-| `adb pull` over USB, USB 2 link | 31 MB/s | about 26 minutes |
+| `adb pull` over USB, USB 2 link | 31–33 MB/s | 23 minutes |
 | `adb pull` or `sftpTransfer` over Wi-Fi, computer on 2.4 GHz | 2–5 MB/s | hours |
 
 - **USB is the route on a shoot day.** The iRig occupies the USB-C port during a take,
@@ -268,7 +298,8 @@ everything else Java: [CPP_AND_JAVA_DESIGN.md](CPP_AND_JAVA_DESIGN.md).
 
 - **One phone so far.** Only the Pixel 10 Pro XL has recorded 12-bit takes; a second
   Pixel of the same model is expected to behave the same, untested.
-- **Capacity.** About 48 GB a song; the phone stops a take below 6 GB free.
+- **Capacity.** 50–100 GB a song depending on the scene; the phone stops a take below
+  6 GB free.
 - **Heat.** Thermal status 2 over a whole song, starting warm; back-to-back songs
   without a pause are untested.
 - **The USB-C port** carries the iRig during a take, so no external storage and no
