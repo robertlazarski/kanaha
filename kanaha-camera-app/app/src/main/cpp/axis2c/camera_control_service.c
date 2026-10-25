@@ -642,7 +642,8 @@ int camera_device_get_status_impl(char* status_json, size_t buffer_size);
 int camera_device_play_tone_impl(int frequency, int duration_ms, long long start_at);
 int camera_device_init_impl(void);
 void camera_device_cleanup_impl(void);
-int camera_device_sftp_transfer_impl(const char* storage_server_id, const char* video_filename, const char* destination_folder);
+int camera_device_sftp_transfer_impl(const char* storage_server_id, const char* video_filename, const char* destination_folder,
+                                     char* json_response, size_t response_size);
 int camera_device_cleanup_files_impl(const char* cleanup_policy, int days_threshold, const char* file_pattern,
                                      char* json_response, size_t response_size);
 int camera_device_delete_files_impl(const char* pattern, char* json_response, size_t response_size);
@@ -805,11 +806,17 @@ int camera_control_service_invoke_json_impl(
         extract_json_string(json_request, "video_filename", video_filename, sizeof(video_filename));
         extract_json_string(json_request, "destination_folder", destination_folder, sizeof(destination_folder));
 
-        int result = camera_device_sftp_transfer_impl(storage_server_id, video_filename, destination_folder);
-
-        if (result == 0) {
-            create_success_response(json_response, response_size, "File transferred successfully");
-        } else {
+        /* The Java side validates all three again and reports what it sent, or why not. */
+        if (storage_server_id[0] == '\0' || video_filename[0] == '\0' || destination_folder[0] == '\0') {
+            create_error_response(json_response, response_size,
+                                  "Missing required field: storage_server_id, video_filename and destination_folder");
+        } else if (strstr(video_filename, "..") || strchr(video_filename, '/') || strchr(video_filename, '\\')) {
+            create_error_response(json_response, response_size, "video_filename must be a file name or pattern, not a path");
+        } else if (strstr(destination_folder, "..")) {
+            /* Java also requires it to be absolute, and says so in its response. */
+            create_error_response(json_response, response_size, "destination_folder must not contain ..");
+        } else if (camera_device_sftp_transfer_impl(storage_server_id, video_filename, destination_folder,
+                                                    json_response, response_size) != 0) {
             create_error_response(json_response, response_size, "Failed to transfer file");
         }
     }
@@ -1235,58 +1242,33 @@ void camera_device_cleanup_impl(void) {
  * SFTP file transfer implementation for Android (Security-Hardened)
  * Uses Internal Intent IPC (NO JNI) to communicate with CameraControlReceiver
  */
+/**
+ * SFTP transfer for Android: sends a recording (with its sidecars) or a 12-bit RAW
+ * take folder to a configured storage server. The dispatcher has rejected paths;
+ * the Java side validates the server id, name or pattern and destination again,
+ * matches clips and take folders (findTakes), and its response (files and bytes
+ * sent, or the reason) is passed through. The wait for it is up to 20 minutes.
+ */
 int camera_device_sftp_transfer_impl(
     const char* storage_server_id,
     const char* video_filename,
-    const char* destination_folder
+    const char* destination_folder,
+    char* json_response,
+    size_t response_size
 ) {
-    LOGI("camera_device_sftp_transfer_impl called (security-hardened version)");
-    LOGI("  storage_server_id: %s", storage_server_id ? storage_server_id : "NULL");
-    LOGI("  video_filename: %s", video_filename ? video_filename : "NULL");
-    LOGI("  destination_folder: %s", destination_folder ? destination_folder : "NULL");
+    LOGI("camera_device_sftp_transfer_impl: server=%s file=%s dest=%s",
+         storage_server_id ? storage_server_id : "NULL",
+         video_filename ? video_filename : "NULL",
+         destination_folder ? destination_folder : "NULL");
 
-    if (!storage_server_id || strlen(storage_server_id) == 0) {
-        LOGE("Invalid parameter: storage_server_id is NULL or empty");
+    if (!storage_server_id || !video_filename || !destination_folder || !json_response || response_size == 0) {
         return -1;
-    }
-
-    if (!video_filename || strlen(video_filename) == 0) {
-        LOGE("Invalid parameter: video_filename is NULL or empty");
-        return -1;
-    }
-
-    if (!destination_folder || strlen(destination_folder) == 0) {
-        LOGE("Invalid parameter: destination_folder is NULL or empty");
-        return -1;
-    }
-
-    if (strstr(video_filename, "..") || strstr(destination_folder, "..")) {
-        LOGE("Security violation: path traversal detected in parameters");
-        return -1;
-    }
-
-    if (strcmp(video_filename, "*") != 0) {
-        const char* ext = strrchr(video_filename, '.');
-        if (!ext || (strcmp(ext, ".mp4") != 0 && strcmp(ext, ".mov") != 0 && strcmp(ext, ".mkv") != 0)) {
-            if (strstr(video_filename, "*.mp4") == NULL &&
-                strstr(video_filename, "*.mov") == NULL &&
-                strstr(video_filename, "*.mkv") == NULL &&
-                strchr(video_filename, '*') != NULL) {
-                LOGE("Security violation: invalid wildcard pattern. Must be *.mp4, *.mov, or *.mkv");
-                return -1;
-            } else if (strchr(video_filename, '*') == NULL) {
-                LOGE("Security violation: invalid file extension. Only .mp4, .mov, .mkv allowed");
-                return -1;
-            }
-        }
     }
 
     char operation_id[64];
     generate_operation_id(operation_id, sizeof(operation_id));
 
-    LOGD("Generated operation ID: %s", operation_id);
-
-    /* Build intent extras array - secure, no shell parsing */
+    /* Intent extras - secure, no shell parsing */
     intent_extra_t extras[] = {
         {"--es", "action", "sftp_transfer"},
         {"--es", "operation_id", operation_id},
@@ -1295,16 +1277,7 @@ int camera_device_sftp_transfer_impl(
         {"--es", "destination_folder", destination_folder}
     };
 
-    LOGI("Sending secure intent broadcast for SFTP transfer");
-
-    int result = send_intent_and_discard_response(operation_id, extras, 5);
-    if (result == 0) {
-        LOGI("File transferred successfully via secure IPC");
-    } else {
-        LOGE("Failed to transfer file via secure IPC");
-    }
-
-    return result;
+    return send_and_pass_through("sftp_transfer", operation_id, extras, 5, json_response, response_size);
 }
 
 /**
