@@ -121,24 +121,51 @@ RAW_verse1_20261025_025807/
   way. The phone cannot write the tags while recording, since it only has the LTC as
   audio; `tools/kanaha-develop --stamp-dngs` writes them afterwards.
 
-### DNG against ProRes
+### DNG against ProRes: more data, and more work
 
-| | 12-bit DNG take | ProRes 4444 MOV |
+**Is a DNG take higher quality than ProRes? Not by being less compressed; by leaving
+decisions open.** Measured on one frame of a lit studio scene, against the frame
+LibRaw developed from the DNG (PSNR; above about 45 dB the difference is generally
+invisible):
+
+| Per frame, 4080×3072 | Size | Difference from the developed frame |
 |---|---|---|
-| What it holds | Untouched sensor readings: white balance, exposure and colour decided in post | A finished picture |
-| Size | 6–13 MB a frame, varying with the scene | 11–12 MB a frame; ProRes 422 HQ about 8 MB |
-| Plays in a player or editor | No: every frame must be developed first | Yes |
-| Open-source support | ffmpeg reads DNG but develops it without the camera's colour data (wrong colour); LibRaw, darktable and RawTherapee develop it correctly, one frame at a time | Everywhere |
-| Files | Thousands per take | One |
-| Sound and timecode | Beside the frames | Inside the file |
+| Compressed DNG | 11.5 MB | None: lossless |
+| ProRes 4444 (ffmpeg `prores_ks`) | 8.8 MB | 50.6 dB |
+| ProRes 4444 (ffmpeg `prores_aw`) | 11.1 MB | 53.6 dB |
+| ProRes 422 HQ (`prores_ks`) | 5.9 MB | 47.2 dB |
 
-Measured on the same footage, the compressed DNG is about the size of the ProRes 4444
-made from it (equal on one take, 15% larger on another) and 40–55% larger than ProRes
-422 HQ. So size is not DNG's advantage, and it is not much of a cost either: what DNG
-costs is the developing, the tooling and the file count. Compression during the take is
-what makes a whole song possible at all; without it the phone's storage cannot keep up
-([Measured results](#measured-results)). `tools/kanaha-develop` makes the ProRes, so
-the edit gets one ordinary file per take and the DNGs stay as the camera original.
+Every ProRes here is visually lossless, so a ProRes made from a DNG looks the same as
+that development of it. What the DNG keeps, and a ProRes cannot, is everything that
+development decided:
+
+- **White balance, exposure and colour** can be changed later with no loss, because
+  they are applied when the frame is developed, not recorded into it.
+- **Highlights.** The DNG holds the sensor's linear 12-bit values up to its clipping
+  point; a developed frame is tone-mapped to a display range and highlights beyond
+  white are cut. Pulling back a bright window or a stage light needs the DNG.
+- **Demosaic and noise reduction** can be redone with better methods or settings as
+  tools improve.
+
+On a shot that was exposed and balanced correctly and is graded lightly, none of this
+shows. It shows when a shot needs rescuing or a strong grade.
+
+Against the phone's own video, which is the real alternative on a shoot, the
+difference is larger and shows in every shot: the take has 2.5 times the pixels of
+open gate video (4080×3072 against 2560×1920), 12 bits against 10, and none of the
+phone's sharpening, noise reduction and tone mapping baked in.
+
+**The cost is the post work and the storage:** about an hour of developing per song,
+the tooling to do it, thousands of files per take, and the largest files of all: the
+DNG is bigger than ProRes 4444 on a real scene, and its size varies with the scene
+(6–13 MB a frame measured; a frame of nothing but dark sensor noise compresses least
+well of all). Compression during the take is what makes a whole song possible: without
+it the phone's storage cannot keep up ([Measured results](#measured-results)).
+
+`tools/kanaha-develop` makes one development of each take (the camera's white balance,
+LibRaw's standard processing) into ProRes, so the edit gets one ordinary file per take.
+The DNGs stay as the camera original; to use their latitude, develop a take again with
+different settings.
 
 **Why DNG at all:** BRAW and ProRes RAW are the efficient RAW video formats, but their
 encoders exist only inside Blackmagic's and Apple-licensed cameras and recorders;
@@ -190,7 +217,8 @@ fragile 7-pin cable, and checking a recording's LTC:
 - **Everything at 30 fps.** The cameras shoot 30; LTC at 29.97 (a common default)
   runs 0.1% slow against them, and the camera's timecode drifts from the recorder's by
   about 8 frames over a 4.5 minute song. The first whole-song take with the Tentacle
-  (2026-10-25) measured exactly that. `kanaha-develop` measures the LTC's rate from the
+  (2026-10-25) measured exactly that: by the last frame, its developed MOV's timecode
+  track and the LTC in its own audio were 8 frames apart. `kanaha-develop` measures the LTC's rate from the
   spacing of its frames and warns when it is not 30.
 - **Re-jam after the F8 restarts.** A Tentacle runs freely from its last jam; if the F8
   comes back up at 00:00:00, its files no longer match the Tentacles.
@@ -234,7 +262,9 @@ tools/kanaha-develop RAW_verse1_20261025_025807/ --codec hevc10   # small 10-bit
 ```
 
 1. **Develops each DNG** with LibRaw's `dcraw_emu`: the camera's white balance and
-   colour matrix, AHD demosaic. `--developer darktable` uses darktable's processing
+   colour matrix, AHD demosaic, and the exposure as recorded. LibRaw's default
+   auto-brighten is off: it scales each frame by its own histogram, which made frames
+   of one dim take differ by 4% and would flicker. `--developer darktable` uses darktable's processing
    instead (slower, best highlight handling).
 2. **Encodes** the frames with ffmpeg, with `take.wav` as the audio trimmed to start at
    the first frame. A dropped frame is filled with the one before it, so the movie
@@ -244,8 +274,15 @@ tools/kanaha-develop RAW_verse1_20261025_025807/ --codec hevc10   # small 10-bit
 
 Frames are developed in parallel a little ahead of ffmpeg and deleted once encoded,
 so the scratch space stays at a few GB. On a 22-core machine a real take develops at
-2 to 2.5 frames a second: about an hour for a 4.5 minute song. It needs `ffmpeg`,
-`libraw-bin` (or `darktable`) and `ltc-tools`.
+2 to 2.5 frames a second: a whole song (8,114 frames) took 69 minutes, with about 9 GB
+of memory at its peak. It needs `ffmpeg`, `libraw-bin` (or `darktable`) and `ltc-tools`.
+
+**It uses the whole machine.** By default it develops one frame per core (`--jobs`
+defaults to the core count) while ffmpeg encodes on threads of its own, so the load
+average sits above the core count for the whole run (about 27 on 22 cores) and the
+desktop is sluggish. To keep the machine usable, run it with `nice -n 10
+tools/kanaha-develop …`, which keeps full speed when nothing else wants the CPU, or
+with fewer jobs (`--jobs 16`), which leaves cores free at the cost of speed.
 
 `--stamp-dngs` makes no movie: it writes each frame's timecode into its DNG as the
 CinemaDNG tags, for an editor that reads DNG folders directly. No open-source tool in
@@ -269,6 +306,7 @@ All on the Pixel 10 Pro XL (256 GB, Android 17).
 | 2026-10-23 | Stops | Home pressed: 319 of 319 frames saved; storage low: 170 of 170 |
 | 2026-10-25 | Whole song with LTC through the iRig | 8,114 of 8,114 frames, none missing at the sensor; 8,111 continuous LTC frames |
 | 2026-10-25 | `sftpTransfer` of a take | 111 files, byte-identical |
+| 2026-10-25 | Whole song copied and developed | 8,116 files over USB in 23 min, checksums matching the phone; developed in 69 min to ProRes, 8,114 frames, audio exactly the video's length; timecode track and audio LTC 8 frames apart by the last frame, the 29.97 drift |
 
 Compression is what makes a whole song possible: it keeps the write rate under both the
 storage's cache cliff and its speed after it. The probe that produced the early rows,
