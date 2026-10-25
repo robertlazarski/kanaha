@@ -956,7 +956,9 @@ ffmpeg and writes ProRes 4444 (`--codec hevc10` for a small 10-bit HEVC file). T
 audio track is `take.wav`, trimmed so it starts at the first frame. The timecode
 track is read from the LTC in `take.wav` (`ltcdump`, x42 ltc-tools), moved to the
 first frame using the sidecar's `first_frame_after_first_sample_ms`. A dropped frame
-is filled with the one before it, so every camera stays in sync. Developed frames are
+is filled with the one before it, so every camera stays in sync. A folder with fewer frames than
+the sidecar says the take wrote is refused (an `adb pull` over Wi-Fi that broke off
+loses the end of a take without leaving a gap); `--partial` goes ahead anyway. Developed frames are
 deleted as soon as they are encoded, so the scratch space never holds more than a few
 GB.
 

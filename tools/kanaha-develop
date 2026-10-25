@@ -190,6 +190,8 @@ def main():
     p.add_argument("--tmp", help="working folder for developed frames (default: next to the output)")
     p.add_argument("--stamp-dngs", action="store_true",
                    help="write each frame's timecode into its DNG instead of making a movie")
+    p.add_argument("--partial", action="store_true",
+                   help="go ahead although the folder has fewer frames than the take wrote")
     a = p.parse_args()
 
     take = os.path.abspath(a.take.rstrip("/"))
@@ -204,6 +206,13 @@ def main():
             sidecar = json.load(f)
     wav = os.path.join(take, "take.wav")
     have_wav = os.path.exists(wav)
+
+    # A copy that broke off (adb over Wi-Fi drops) loses the end of the take, which no
+    # gap in the numbering shows; the sidecar says how many frames the phone wrote.
+    written = sidecar.get("written")
+    if isinstance(written, int) and len(numbers) < written and not a.partial:
+        sys.exit("%s has %d of the %d frames the take wrote: the copy looks incomplete. "
+                 "Copy it again, or pass --partial." % (os.path.basename(take), len(numbers), written))
 
     first, last = numbers[0], numbers[-1]
     present = set(numbers)
