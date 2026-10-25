@@ -33,7 +33,8 @@ themselves (the CinemaDNG TimeCodes and FrameRate tags), so an editor that reads
 DNG sequences, such as DaVinci Resolve, lines the take up without developing it.
 
 Needs: python3, ffmpeg, dcraw_emu (libraw-bin) or darktable-cli, and ltcdump for
-timecode (optional; without it the file has no timecode track).
+timecode (optional; without it the file has no timecode track). ffmpeg's ProRes encoder
+uses about 6 GB of memory at this frame size, plus a few GB of developed frames.
 """
 import argparse
 import concurrent.futures
@@ -203,10 +204,15 @@ def stamp_take(take, numbers, first, timecode):
 
 def develop_libraw(dng, out_dir):
     """One DNG to a 16-bit PPM with the camera's white balance and colour (AHD demosaic).
-    dcraw_emu flags: -6 16-bit, -w camera white balance, -o 1 sRGB primaries,
-    -q 3 AHD demosaic, -Z the output file."""
+    dcraw_emu flags: -6 16-bit, -w camera white balance, -W no auto-brighten,
+    -o 1 sRGB primaries, -q 3 AHD demosaic, -Z the output file.
+
+    -W matters for video: without it LibRaw brightens each frame by its own histogram,
+    so frames without clipped highlights come out at different brightness and the movie
+    flickers (x4.14, x3.97, x3.99 on three frames of one dim take). The take's exposure
+    is pinned on the phone; the develop keeps it."""
     out = os.path.join(out_dir, os.path.basename(dng)[:-4] + ".ppm")
-    subprocess.run(["dcraw_emu", "-6", "-w", "-o", "1", "-q", "3", "-Z", out, dng],
+    subprocess.run(["dcraw_emu", "-6", "-w", "-W", "-o", "1", "-q", "3", "-Z", out, dng],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    timeout=DEVELOP_TIMEOUT_S["libraw"])
     return out
@@ -258,7 +264,7 @@ def read_ppm(path):
 # Encoding.
 # ---------------------------------------------------------------------------------
 
-def ffmpeg_command(out, codec, wav, offset_ms, timecode, take_name):
+def ffmpeg_command(out, codec, wav, offset_ms, timecode, take_name, frame_count):
     """The ffmpeg command line. The picture size is left as "{size}": it is known only
     once the first frame is developed (darktable crops, LibRaw does not)."""
     # Input 0: the frames, piped to ffmpeg's stdin as raw 16-bit RGB at 30 fps.
@@ -284,13 +290,16 @@ def ffmpeg_command(out, codec, wav, offset_ms, timecode, take_name):
         cmd += ["-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-crf", "16", "-tag:v", "hvc1"]
 
     if wav:
-        # The trimmed audio can end a few ms before the last frame. apad extends it with
-        # silence forever, and -shortest then ends the file with the video, so every
-        # frame is kept; -shortest alone cut the last frame of a real take.
-        audio_filter = "apad"
+        # The audio is made exactly as long as the video: padded with silence if the
+        # trimmed WAV ends a few ms early, cut if it runs on. Not -shortest, which cut a
+        # real take's last frame; and not apad without a length, which pads forever:
+        # ffmpeg then generated silence far ahead of the slow video encoder and buffered
+        # it, and was killed at 22 GB of memory partway through a whole song.
+        seconds = "%.6f" % (frame_count / FPS)
+        audio_filter = "apad=whole_dur=%s,atrim=duration=%s" % (seconds, seconds)
         if offset_ms and offset_ms < 0:
-            audio_filter = "adelay=%d:all=1,apad" % round(-offset_ms)
-        cmd += ["-af", audio_filter, "-c:a", "pcm_s16le", "-shortest"]
+            audio_filter = "adelay=%d:all=1,%s" % (round(-offset_ms), audio_filter)
+        cmd += ["-af", audio_filter, "-c:a", "pcm_s16le"]
 
     if timecode is not None:
         cmd += ["-metadata", "timecode=" + frames_to_tc(timecode)]   # becomes the MOV timecode track
@@ -429,7 +438,7 @@ def main():
         print("stamped %s, first frame %s" % (os.path.basename(take), frames_to_tc(timecode)), file=sys.stderr)
         return
 
-    cmd = ffmpeg_command(out, a.codec, wav, offset_ms, timecode, os.path.basename(take))
+    cmd = ffmpeg_command(out, a.codec, wav, offset_ms, timecode, os.path.basename(take), last - first + 1)
     develop = develop_libraw if a.developer == "libraw" else develop_darktable
     work = tempfile.mkdtemp(prefix="kanaha-develop-", dir=a.tmp or os.path.dirname(out))
     try:
