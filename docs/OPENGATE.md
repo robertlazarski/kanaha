@@ -958,7 +958,11 @@ track is read from the LTC in `take.wav` (`ltcdump`, x42 ltc-tools), moved to th
 first frame using the sidecar's `first_frame_after_first_sample_ms`. A dropped frame
 is filled with the one before it, so every camera stays in sync. A folder with fewer frames than
 the sidecar says the take wrote is refused (an `adb pull` over Wi-Fi that broke off
-loses the end of a take without leaving a gap); `--partial` goes ahead anyway. Developed frames are
+loses the end of a take without leaving a gap); `--partial` goes ahead anyway. It
+also measures the rate the LTC runs at and warns when it is not 30 fps: the first
+whole-song take with the Tentacle (2026-10-25) showed 29.97, which is a generator
+or recorder set to 29.97 non-drop, and makes camera and recorder timecode drift
+apart by about 8 frames over a song. Developed frames are
 deleted as soon as they are encoded, so the scratch space never holds more than a few
 GB.
 

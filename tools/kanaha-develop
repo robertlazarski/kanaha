@@ -76,9 +76,26 @@ def frames_to_tc(n, fps=FPS):
     return "%02d:%02d:%02d:%02d" % (n // (3600 * fps), n // (60 * fps) % 60, n // fps % 60, n % fps)
 
 
+def ltc_rate(wav, channel):
+    """The frame rate the LTC in the WAV actually runs at, from how many audio samples
+    its frames span over the whole take, or None if too little decodes.
+
+    The labels alone cannot tell 30 from 29.97 non-drop (both count 00 to 29), but
+    the spacing can: 1600 samples a frame at 30 fps, 1601.6 at 29.97. A timecode
+    generator set to 29.97 while the cameras shoot 30 makes every camera's labels
+    drift from the sound recorder's by about 8 frames over a 4.5 minute song."""
+    r = subprocess.run(["ltcdump", "-F", "-c", channel, wav], capture_output=True, text=True,
+                       timeout=LTCDUMP_TIMEOUT_S)
+    starts = [int(m.group(5)) for m in map(LTC_LINE.match, r.stdout.splitlines()) if m]
+    if len(starts) < 60:
+        return None
+    samples_per_frame = (starts[-1] - starts[0]) / (len(starts) - 1)
+    return AUDIO_RATE / samples_per_frame
+
+
 def first_frame_timecode(wav, offset_ms, fps=FPS):
     """The timecode of the take's first video frame, as a frame count, from the LTC
-    in take.wav. Returns (frames, how it was found), or (None, why not).
+    in take.wav. Returns (frames, how it was found, LTC channel), or (None, why not, None).
 
     ltcdump lists each timecode frame it decodes with the WAV sample it starts at.
     The first video frame was exposed offset_ms after the WAV's first sample (the
@@ -89,7 +106,7 @@ def first_frame_timecode(wav, offset_ms, fps=FPS):
     starts at sample 511; the first video frame is 162.8 ms in, sample 7814. That is
     7303 samples later = 0.152 s = 4.56 frames -> 5, so 02:26:06:11."""
     if not shutil.which("ltcdump"):
-        return None, "ltcdump not found; no timecode track"
+        return None, "ltcdump not found; no timecode track", None
     for channel in ("1", "2"):                     # the iRig may carry LTC on either side
         r = subprocess.run(["ltcdump", "-F", "-c", channel, wav], capture_output=True, text=True,
                            timeout=LTCDUMP_TIMEOUT_S)
@@ -101,8 +118,8 @@ def first_frame_timecode(wav, offset_ms, fps=FPS):
             ltc_frames = ((h * 60 + mi) * 60 + s) * fps + f
             first_video_sample = offset_ms / 1000.0 * AUDIO_RATE
             frames_later = round((first_video_sample - start) / AUDIO_RATE * fps)
-            return ltc_frames + frames_later, "LTC on channel %s" % channel
-    return None, "no LTC found in %s (was the iRig connected?); no timecode track" % os.path.basename(wav)
+            return ltc_frames + frames_later, "LTC on channel %s" % channel, channel
+    return None, "no LTC found in %s (was the iRig connected?); no timecode track" % os.path.basename(wav), None
 
 
 # ---------------------------------------------------------------------------------
@@ -389,14 +406,21 @@ def main():
 
     # Where the first frame sits in the WAV, and so its timecode.
     offset_ms = sidecar.get("first_frame_after_first_sample_ms")
+    channel = None
     if wav is None:
         timecode, why = None, "no take.wav"
     elif offset_ms is None:
         timecode, why = None, "sidecar has no audio offset"
     else:
-        timecode, why = first_frame_timecode(wav, offset_ms)
+        timecode, why, channel = first_frame_timecode(wav, offset_ms)
     print("timecode: %s (%s)" % (frames_to_tc(timecode) if timecode is not None else "none", why),
           file=sys.stderr)
+    if timecode is not None:
+        rate = ltc_rate(wav, channel)
+        if rate is not None and abs(rate - FPS) > 0.01:
+            print("warning: the LTC runs at %.3f fps, not %d: set the timecode generator and the "
+                  "sound recorder to %d fps and re-jam, or the labels drift %.1f frames over this take"
+                  % (rate, FPS, FPS, abs(rate - FPS) / FPS * (numbers[-1] - numbers[0] + 1)), file=sys.stderr)
 
     if a.stamp_dngs:
         if timecode is None:
