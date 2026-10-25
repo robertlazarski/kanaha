@@ -355,7 +355,13 @@ final class RawTake {
             // Let a frame already in the camera callback finish before the helper is told to end.
             CountDownLatch drained = new CountDownLatch(1);
             if (cameraHandler != null && cameraHandler.post(drained::countDown)) drained.await(2, TimeUnit.SECONDS);
-            if (session != null) { session.stopRepeating(); session.close(); }
+            if (session != null) {
+                // After a camera disconnect (lost()) the session is already closed and
+                // stopRepeating throws; the camera has stopped either way, so the take must
+                // still finish: an exception here once left a 146 s take's sidecar unwritten.
+                try { session.stopRepeating(); } catch (Exception e) { Log.w(TAG, "stopRepeating: " + e.getMessage()); }
+                try { session.close(); } catch (Exception ignored) { }
+            }
             if (audio != null) audio.stop();
             if (helper != null) helperResult = helper.finish(120);
             writeSidecar(true);
