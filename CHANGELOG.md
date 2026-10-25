@@ -15,8 +15,22 @@ All notable changes to Kanaha are documented here.
   build flavor (`minSdkVersion 26`); the default `foss` flavor is unchanged
   and reports `unavailable`. See [GOOGLE_NANO_INTEGRATION.md](docs/GOOGLE_NANO_INTEGRATION.md).
 
+- **12-bit RAW takes** — `startRecording` with `"raw12": true` records the full
+  4080×3072 sensor at 30 fps as a folder of losslessly compressed 12-bit DNG frames,
+  with `take.wav` (the iRig's LTC timecode) and a sidecar that places the first frame
+  in it. Whole-song takes (270 s) record with no dropped frame on the Pixel 10 Pro XL;
+  phones without 12-bit RAW refuse it with the reason. `listFiles`, `deleteFiles`,
+  `cleanupFiles` and `sftpTransfer` treat a take folder as one recording. See
+  [12-bit_depth.md](docs/12-bit_depth.md).
+- **`tools/kanaha-develop`** — Develops a take into a ProRes 4444 (or 10-bit HEVC) MOV
+  with its audio and timecode, using LibRaw and ffmpeg; `--stamp-dngs` writes the
+  timecode into the DNGs instead.
+
 ### Bug Fixes
 
+- **`sftpTransfer` sends take folders** — The C layer accepted only `.mp4`, `.mov` and
+  `.mkv` names and reported every failure as "Failed to transfer file"; it now passes
+  the request and the Java side's reply through.
 - **MCP stdout hygiene** — The `am broadcast` child process inherited the MCP
   server's stdout and printed two lines of chatter before every JSON-RPC
   reply; a strict MCP client would reject the stream. The child's stdout now
