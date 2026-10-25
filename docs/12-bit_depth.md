@@ -292,6 +292,19 @@ desktop is sluggish. To keep the machine usable, run it with `nice -n 10
 tools/kanaha-develop …`, which keeps full speed when nothing else wants the CPU, or
 with fewer jobs (`--jobs 16`), which leaves cores free at the cost of speed.
 
+**Watching the result.** The MOV is an editing master, not something to play
+directly: decoding 4080×3072 ProRes 4444 is over a gigabyte a second of 12-bit video,
+and Linux has no hardware decoder for ProRes. mplayer refuses its 12-bit 4:4:4 output
+outright ("Unexpected decoder output format"), and mpv plays it but stutters and reports
+"Audio device underrun" as the decoder falls behind. To watch a take, make a small
+preview:
+
+```bash
+ffmpeg -i RAW_verse1_20261025_025807.mov -vf scale=1440:-2 -c:v libx264 -crf 18 -pix_fmt yuv420p -c:a aac RAW_verse1_preview.mp4
+```
+
+or let mpv drop frames to keep up: `mpv --framedrop=decoder RAW_verse1_20261025_025807.mov`.
+
 `--stamp-dngs` makes no movie: it writes each frame's timecode into its DNG as the
 CinemaDNG tags, for an editor that reads DNG folders directly. No open-source tool in
 this workflow reads those tags; the MOV's timecode track is what ffmpeg uses.
