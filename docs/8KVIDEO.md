@@ -28,7 +28,7 @@ Google Photos. A Camera2 app records through the phone's hardware encoders, whic
 at most 3840×2160 for H.264 and 3840×2176 for HEVC (`/vendor/etc/media_codecs_c2.xml`,
 read from the device on 2026-10-19). The camera offers larger streams, up to 4032×3024 at
 4:3, but nothing can encode them; the full 12-megapixel frame is reachable only as RAW
-stills or RAW sequences (see [OPENGATE.md](OPENGATE.md), Part 2).
+stills or RAW sequences (see [12-bit_depth.md](12-bit_depth.md)).
 
 ## Reframing: 4K for pixels, open gate for coverage
 

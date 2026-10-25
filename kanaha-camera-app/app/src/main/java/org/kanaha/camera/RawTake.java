@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * sends its slot number; the helper compresses and writes {@code frame_NNNNNN.dng}
  * and releases the slot. If no buffer is free the frame is dropped and counted.
  * Measured on a Pixel 10 Pro XL: three 270 s takes with no dropped frame
- * (docs/OPENGATE.md). Threading: docs/THREAD_MODEL.md.
+ * (docs/12-bit_depth.md). Threading: docs/THREAD_MODEL.md.
  *
  * <p>A take writes one folder: the frames, {@code take.wav} (the audio input, which
  * with the iRig is SMPTE timecode) and {@code take.kanaha_start.json}, which says when

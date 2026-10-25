@@ -1,0 +1,276 @@
+# 12-bit RAW Recording in Kanaha
+
+## BLUF
+
+Kanaha records 12-bit RAW (CinemaDNG frames, losslessly compressed) on phones whose
+sensor provides it, and is built for live multicam shoots: takes start on a schedule
+from a script, carry timecode from the same generator as the sound recorder, and are
+finished into ProRes with ffmpeg and LibRaw. Among open-source camera apps it is, as
+far as we know, the only one that records RAW with sound and timecode.
+
+```bash
+$CURL -d '{"action":"startRecording","clip_name":"verse1","raw12":true,"duration":270}' \
+  "https://$CAMERA:8443/services/CameraControlService/startRecording"
+# later, on the computer, after copying the take folder off the phone:
+tools/kanaha-develop RAW_verse1_20261025_025807/    # -> RAW_verse1_20261025_025807.mov
+```
+
+**What you need to know:**
+- **Phones:** the Pixel 10 Pro XL so far. The Moto G Play's RAW is 10-bit and Kanaha
+  refuses `raw12` on it with that reason. Most phones give less; see
+  [Which phones](#which-phones-the-encoder-and-the-sensor-are-two-routes).
+- **A take is a folder, not a file:** one DNG per frame, a WAV and a sidecar. About
+  48 GB for a 4.5 minute song; about three songs fit on a 256 GB Pixel.
+- **It must be developed before anything plays it:** about an hour per song on a
+  22-core machine, to a ProRes 4444 MOV of about 85 GB.
+- **Timecode must run at 30 fps.** The F8 and every Tentacle set to 30, not 29.97; the
+  post script warns when they are not.
+
+**This is the specialist path.** For most shoots 10-bit HLG video (`"hlg10": true`) is
+the better trade: one file per take, ordinary sizes, no developing. See
+[OPENGATE.md](OPENGATE.md).
+
+---
+
+## Which phones: the encoder and the sensor are two routes
+
+"Bit depth" means two different things on a phone, and spec sheets only describe the
+first:
+
+| Route | What it is | Bit depth |
+|---|---|---|
+| **Video recording** | The phone's hardware encoder makes H.264/HEVC, HDR or log video | **10-bit at most, on every phone**, the Pixel included |
+| **RAW frames** | Camera2 hands the app untouched sensor readings (`RAW_SENSOR`), frame by frame | **Whatever the sensor reads out:** its white level, 4095 for 12-bit, 1023 for 10-bit |
+
+A phone advertised as "10-bit log video" can still deliver 12-bit RAW frames, and
+Kanaha's 12-bit takes come from the second route: the frames never pass through the
+video encoder. The 12-bit question for a phone is therefore one line:
+
+```sh
+adb shell dumpsys media.camera | grep -iE "whiteLevel|RAW_SENSOR"
+```
+
+A white level of 4095 on the main camera, and `RAW_SENSOR` at full size with a minimum
+frame duration of 33,333,333 ns (30 fps), is what Kanaha needs. `startRecording`
+checks both and refuses with the reason otherwise.
+
+| Phone | Video encoder | RAW frames | `raw12` |
+|---|---|---|---|
+| Pixel 10 Pro XL | 10-bit HLG | **12-bit**, 4080×3072 at 30 fps | Yes |
+| Moto G Play 2024 | 8-bit | 10-bit | Refused: "This camera's RAW is not 12-bit (white level 1023)" |
+
+On the Pixel the samples were checked to really carry 12 bits: in a daylight frame
+10.5% of them sat above the 10-bit range and their two lowest bits were populated,
+which 10-bit data scaled up never has (2026-10-19).
+
+iPhones have no equivalent: iOS gives apps RAW stills (ProRAW) but not RAW frames at
+video rates, and Apple's own video route is ProRes and ProRes RAW.
+
+---
+
+## What a take is
+
+CinemaDNG is not a single file like MOV or MP4. A take is a folder:
+
+```
+RAW_verse1_20261025_025807/
+├── frame_000000.dng ... frame_008113.dng   one per frame, 4080×3072, lossless 12-bit
+├── take.wav                                the phone's audio input: with the iRig, the Tentacle's LTC
+└── take.kanaha_start.json                  settings, frame counts, and where the first frame sits in take.wav
+```
+
+- **Each DNG** holds the sensor readings and the data to develop them: black and white
+  levels, both colour and forward matrices, a noise profile and the lens-distortion
+  correction (no lens-shading map). The
+  colour data comes from Android's `DngCreator`; the frames are Kanaha's own writer,
+  compressed with lossless JPEG (DNG compression 7, as cinema cameras use), 8–12 MB a
+  frame depending on the scene.
+- **There is no sound or timecode inside the frames.** The sound and the timecode are
+  in `take.wav`, and the sidecar's `first_frame_after_first_sample_ms` places the first
+  frame in it to well under a millisecond.
+- **CinemaDNG timecode is binary, not XML.** The standard carries it as two TIFF tags
+  in every frame (`TimeCodes`, `FrameRate`). DNG files can also carry XMP, which is
+  XML, and XMP has a timecode field some tools read, but that is not the CinemaDNG
+  way. The phone cannot write the tags while recording, since it only has the LTC as
+  audio; `tools/kanaha-develop --stamp-dngs` writes them afterwards.
+
+### DNG against ProRes
+
+| | 12-bit DNG take | ProRes 4444 MOV |
+|---|---|---|
+| What it holds | Untouched sensor readings: white balance, exposure and colour decided in post | A finished picture |
+| Size, 4.5 min song | **About 48 GB** | About 85 GB |
+| Plays in a player or editor | No: every frame must be developed first | Yes |
+| Open-source support | ffmpeg reads DNG but develops it without the camera's colour data (wrong colour); LibRaw, darktable and RawTherapee develop it correctly, one frame at a time | Everywhere |
+| Files | Thousands per take | One |
+| Sound and timecode | Beside the frames | Inside the file |
+
+The size runs the other way from what one might expect: the compressed DNG is smaller
+than the ProRes made from it. What DNG costs is the developing, the tooling and the
+file count. `tools/kanaha-develop` makes the ProRes, so the edit gets one ordinary file
+per take and the DNGs stay as the camera original.
+
+**Why DNG at all:** BRAW and ProRes RAW are the efficient RAW video formats, but their
+encoders exist only inside Blackmagic's and Apple-licensed cameras and recorders;
+nothing on Android or Linux can write them. CinemaDNG is the only open RAW video
+format.
+
+---
+
+## Recording a take
+
+Pin the exposure first. `startRecording` refuses a 12-bit take on automatic exposure,
+or with a shutter slower than 1/40 s, because either one lets the frame rate fall
+below 30 fps:
+
+```bash
+$CURL -d '{"action":"setExposure","iso":400,"exposure_time_ns":16666667,"fps":30}' \
+  "https://$CAMERA:8443/services/CameraControlService/setExposure"
+$CURL -d "{\"action\":\"startRecording\",\"clip_name\":\"verse1\",\"raw12\":true,\"duration\":270,\"start_at\":$AT}" \
+  "https://$CAMERA:8443/services/CameraControlService/startRecording"
+```
+
+- **The take screen.** The app switches to a screen of its own for the take (preview
+  plus frames, drops, free space and heat) and returns to OpenCamera after.
+- **`start_at`** schedules the first frame. Measured: the first frame 29 ms after the
+  requested moment, within one frame.
+- **A take ends** on `stopRecording`, on its `duration`, when free space falls below
+  6 GB, if its screen is hidden or closed, or if the camera is lost. The reply to
+  `stopRecording`, and `getStatus` while it runs (`raw12_take`), give frames written,
+  dropped and missing at the sensor, and `ended_by`.
+- **White balance** is locked for the take: the gains set with `setExposure`, or the
+  automatic balance as it stands when the take arms.
+- **Refusals:** a phone without 12-bit RAW, `hlg10` with `raw12`, a recording already
+  running, an unpinned or too slow shutter, and less than 30 s of free space.
+
+`listFiles`, `deleteFiles`, `cleanupFiles` and `sftpTransfer` treat a take folder as
+one recording, and never touch a take that is still recording. Folder layout and
+fields: README, "12-bit RAW takes".
+
+---
+
+## Timecode
+
+The sound recorder is the timecode master. In the studio rig a Zoom F8 jams three
+Tentacle Sync E units, one per camera; on the Pixel the Tentacle's LTC goes into an
+iRig PRO I/O on the USB-C port and is recorded in `take.wav`. Connecting the iRig, its
+fragile 7-pin cable, and checking a recording's LTC:
+[IRIG_PRO_SMPTE_TIMECODE_SETUP.md](IRIG_PRO_SMPTE_TIMECODE_SETUP.md).
+
+- **Everything at 30 fps.** The cameras shoot 30; LTC at 29.97 (a common default)
+  runs 0.1% slow against them, and the camera's timecode drifts from the recorder's by
+  about 8 frames over a 4.5 minute song. The first whole-song take with the Tentacle
+  (2026-10-25) measured exactly that. `kanaha-develop` measures the LTC's rate from the
+  spacing of its frames and warns when it is not 30.
+- **Re-jam after the F8 restarts.** A Tentacle runs freely from its last jam; if the F8
+  comes back up at 00:00:00, its files no longer match the Tentacles.
+- **Input level:** LTC is a square wave and decodes even when it clips, but set the
+  iRig's gain so it peaks around −6 dBFS.
+
+Measured on the whole-song take: 8,111 consecutive LTC frames across 270 s, no gap or
+jump.
+
+---
+
+## Getting takes off the phone
+
+| Route | Measured | A 48 GB song |
+|---|---|---|
+| `adb pull` over USB, USB 2 link | 31 MB/s | about 26 minutes |
+| `adb pull` or `sftpTransfer` over Wi-Fi, computer on 2.4 GHz | 2–5 MB/s | hours |
+
+- **USB is the route on a shoot day.** The iRig occupies the USB-C port during a take,
+  so copying happens between songs. A USB 3 cable and port would raise the rate; check
+  the link with `lsusb -t` (480M is USB 2).
+- **Wi-Fi speed is set by the slower end:** the measurements above had the computer on
+  2.4 GHz at 72 Mb/s while the Pixel was on 5 GHz.
+- **`sftpTransfer`** sends a take folder with all its files (verified byte for byte,
+  2026-10-25). Give the phone an SFTP-only key on the computer (`restrict,command=
+  "/usr/lib/openssh/sftp-server"` in `authorized_keys`); `destination_folder` must be
+  an absolute path.
+- **Keep the computer awake.** A laptop that suspends mid-copy drops the connection;
+  wrap long copies in `systemd-inhibit --what=sleep:idle`.
+
+`kanaha-develop` refuses a folder with fewer frames than the sidecar says the take
+wrote, since a copy that broke off loses the end of a take without leaving a gap.
+
+---
+
+## Post: `tools/kanaha-develop`
+
+```bash
+tools/kanaha-develop RAW_verse1_20261025_025807/                  # ProRes 4444 MOV
+tools/kanaha-develop RAW_verse1_20261025_025807/ --codec hevc10   # small 10-bit HEVC
+```
+
+1. **Develops each DNG** with LibRaw's `dcraw_emu`: the camera's white balance and
+   colour matrix, AHD demosaic. `--developer darktable` uses darktable's processing
+   instead (slower, best highlight handling).
+2. **Encodes** the frames with ffmpeg, with `take.wav` as the audio trimmed to start at
+   the first frame. A dropped frame is filled with the one before it, so the movie
+   keeps the take's timing.
+3. **Writes the timecode** of the first frame, read from the LTC in `take.wav`, into
+   the MOV's timecode track, where ffmpeg and ffprobe read it.
+
+Frames are developed in parallel a little ahead of ffmpeg and deleted once encoded,
+so the scratch space stays at a few GB. On a 22-core machine a real take develops at
+2 to 2.5 frames a second: about an hour for a 4.5 minute song. It needs `ffmpeg`,
+`libraw-bin` (or `darktable`) and `ltc-tools`.
+
+`--stamp-dngs` makes no movie: it writes each frame's timecode into its DNG as the
+CinemaDNG tags, for an editor that reads DNG folders directly. No open-source tool in
+this workflow reads those tags; the MOV's timecode track is what ffmpeg uses.
+
+---
+
+## Measured results
+
+All on the Pixel 10 Pro XL (256 GB, Android 17).
+
+| Date | What | Result |
+|---|---|---|
+| 2026-09-04 | Capability (`dumpsys`) | White level 4095; `RAW_SENSOR`/`RAW12` at 4080×3072, 30 fps, stall 0 |
+| 2026-10-19 | Probe | Full-size RAW at 30 fps with no frame missing; samples genuinely 12-bit |
+| 2026-10-20 | Uncompressed DNG per frame, 60 s | Kept up: 745 MB/s |
+| 2026-10-22 | Uncompressed, a whole song | **Failed:** writes collapsed after ~113 GB when the storage's fast write cache ran out (to ~360 MB/s, below the 564 MB/s needed) |
+| 2026-10-22 | Lossless JPEG compression | 44–65% of the packed size, scene-dependent; about 360 MB/s for a 30 fps take |
+| 2026-10-23 | Whole-song takes, compressed | Four 270 s takes, 8,100+ of 8,100+ frames each, thermal status 2 at most |
+| 2026-10-23 | `start_at` | First frame 29 ms after the requested moment |
+| 2026-10-23 | Stops | Home pressed: 319 of 319 frames saved; storage low: 170 of 170 |
+| 2026-10-25 | Whole song with LTC through the iRig | 8,114 of 8,114 frames, none missing at the sensor; 8,111 continuous LTC frames |
+| 2026-10-25 | `sftpTransfer` of a take | 111 files, byte-identical |
+
+Compression is what makes a whole song possible: it keeps the write rate under both the
+storage's cache cliff and its speed after it. The probe that produced the early rows,
+`RawProbeActivity` (debug builds), is still there for measuring another phone.
+
+---
+
+## How it works
+
+- **`RawTakeActivity`** owns the camera for the take; OpenCamera closes its camera
+  while this screen is in front.
+- **`RawTake`** captures `RAW_SENSOR` frames into 40 shared-memory buffers (about
+  1 GB), which absorb storage stalls of up to a second.
+- **`libkanaha_dng.so`** is a native executable the app starts with ProcessBuilder, as
+  it starts httpd: no JNI. It maps the same buffers (descriptors passed once over a
+  Unix socket), compresses each frame on four threads and writes the DNG; per frame
+  only a slot number crosses the socket.
+- **`TimecodeAudio`** records `take.wav` and the boot-clock time of its first sample,
+  the clock the camera stamps frames with.
+
+Threads and lifetimes: [THREAD_MODEL.md](THREAD_MODEL.md). Why the compressor is C and
+everything else Java: [CPP_AND_JAVA_DESIGN.md](CPP_AND_JAVA_DESIGN.md).
+
+---
+
+## Limits
+
+- **One phone so far.** Only the Pixel 10 Pro XL has recorded 12-bit takes; a second
+  Pixel of the same model is expected to behave the same, untested.
+- **Capacity.** About 48 GB a song; the phone stops a take below 6 GB free.
+- **Heat.** Thermal status 2 over a whole song, starting warm; back-to-back songs
+  without a pause are untested.
+- **The USB-C port** carries the iRig during a take, so no external storage and no
+  copying until the song is done.
+- **Only the main camera** reads out 12 bits on the Pixel; the others give 10.

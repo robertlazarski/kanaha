@@ -491,7 +491,8 @@ began one second apart:
 
 - [SECURITY.md](SECURITY.md): certificates, the TLS configuration, input validation
 - [GPS.md](GPS.md): how well cameras align, and how that compares with SMPTE LTC
-- [OPENGATE.md](OPENGATE.md): open gate, 10-bit HLG, 12-bit RAW, grading with ffmpeg
+- [OPENGATE.md](OPENGATE.md): open gate, 10-bit HLG, grading with ffmpeg
+- [12-bit_depth.md](12-bit_depth.md): 12-bit RAW takes, timecode, `kanaha-develop`
 - [SFTP-FILE-TRANSFER.md](SFTP-FILE-TRANSFER.md): storage server and SSH key setup
 - [ANDROID_APK_BUILDING.md](ANDROID_APK_BUILDING.md): building, installing, tested devices
 - [THREAD_MODEL.md](THREAD_MODEL.md): the threads a request crosses

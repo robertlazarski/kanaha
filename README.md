@@ -436,7 +436,7 @@ no URL, so for them `"action"` is what selects the tool.
 - `take.wav` — the audio input for the whole take: with the iRig, the Tentacle's SMPTE timecode.
 - `take.kanaha_start.json` — `recording_start_ms` (when the first frame was exposed), `first_frame_after_first_sample_ms` (where that frame falls in `take.wav`, which ties every frame to timecode), the exposure, and when the take ends its `frames`, `dropped` and `seconds`.
 
-`stopRecording` waits for every frame to be written and replies with the counts; `getStatus` carries `raw12_take` while it runs. `listFiles` lists each take as one entry (`"type": "raw12_take"`, `frames`, `size`), and `deleteFiles`, `cleanupFiles` and `sftpTransfer` treat a take folder as one recording: matched by its folder name or by `*`, `today` or a date, deleted whole, sent as a folder. A take still recording is never deleted or sent. `tools/kanaha-develop <take folder>` develops a take into one ProRes 4444 `.mov` with its audio and timecode; `--stamp-dngs` instead writes the timecode into the DNGs for editing them directly; details and alternatives in [OPENGATE.md](docs/OPENGATE.md).
+`stopRecording` waits for every frame to be written and replies with the counts; `getStatus` carries `raw12_take` while it runs. `listFiles` lists each take as one entry (`"type": "raw12_take"`, `frames`, `size`), and `deleteFiles`, `cleanupFiles` and `sftpTransfer` treat a take folder as one recording: matched by its folder name or by `*`, `today` or a date, deleted whole, sent as a folder. A take still recording is never deleted or sent. `tools/kanaha-develop <take folder>` develops a take into one ProRes 4444 `.mov` with its audio and timecode; `--stamp-dngs` instead writes the timecode into the DNGs for editing them directly; details, timecode and copying takes off the phone in [12-bit_depth.md](docs/12-bit_depth.md).
 
 **Recording-start sidecar**: each recording gets `<recording basename>.kanaha_start.json` (for `VID_20261019_142007.mp4`, `VID_20261019_142007.kanaha_start.json`) in the app's external files directory, written once the recording has started. Contains `file`, `recording_start_ms` (when the start fired, to the millisecond; not the first frame), `clip_name`, `open_gate`, `hlg10` and the GPS fix time if available. `sftpTransfer` and `deleteFiles` carry it with its recording. Clips are aligned on SMPTE timecode; the sidecar locates takes.
 
@@ -539,7 +539,8 @@ See [Security Documentation](docs/SECURITY.md) for threat model, certificate man
 | [Security Guide](docs/SECURITY.md) | Threat model, certificate management, hardening |
 | [Multi-Camera Deployment](docs/MULTI_CAMERA_DEPLOYMENT_SYSTEM.md) | Complete system guide, mTLS setup, API reference |
 | [SFTP File Transfer](docs/SFTP-FILE-TRANSFER.md) | SSH key setup for secure file retrieval |
-| [Open Gate Recording](docs/OPENGATE.md) | Full 4:3 sensor recording, device support, DaVinci Resolve workflow, LUT grading, C layer build process |
+| [Open Gate Recording](docs/OPENGATE.md) | Full 4:3 sensor recording, 8- and 10-bit per phone, reframing, LUT grading, C layer build process |
+| [12-bit RAW](docs/12-bit_depth.md) | 12-bit RAW takes: which phones, what a take is, DNG against ProRes, timecode, copying, `kanaha-develop` |
 | [8K Video](docs/8KVIDEO.md) | Why Kanaha has no 8K on Pixels, open gate as the alternative, local upscaling, and checking other phones for native 8K |
 | [APK Building](docs/ANDROID_APK_BUILDING.md) | Compiling from source |
 | [Cross-Compilation](docs/ANDROID_CROSS_COMPILATION.md) | Building native C libraries |

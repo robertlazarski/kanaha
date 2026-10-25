@@ -64,7 +64,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Debug-only 12-bit RAW probe (docs/OPENGATE.md, Part 2). Answers on the device the
+ * Debug-only 12-bit RAW probe (docs/12-bit_depth.md, "Measured results"). Answers on the device the
  * questions that size the 12-bit work before any of it is designed:
  * <ol>
  *   <li>capture: does the camera deliver full-size RAW at 30 fps without drops?</li>
