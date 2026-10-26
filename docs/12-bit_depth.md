@@ -25,7 +25,10 @@ tools/kanaha-develop RAW_verse1_20261025_025807/    # -> RAW_verse1_20261025_025
   minute song is 50–100 GB depending on the scene, so one to three songs fit in a
   256 GB Pixel's free space.
 - **It must be developed before anything plays it:** about an hour per song on a
-  22-core machine, to a ProRes 4444 MOV of about the same size as the DNGs.
+  22-core machine, to a ProRes 4444 MOV of about the same size as the DNGs. An editor
+  that reads CinemaDNG itself, such as Resolve, can skip this and use the DNGs once
+  `--stamp-dngs` has written the timecode into them (see
+  [Editing the DNGs directly](#editing-the-dngs-directly-resolve-and-others---stamp-dngs)).
 - **Timecode must run at 30 fps.** The F8 and every Tentacle set to 30, not 29.97; the
   post script warns when they are not.
 
@@ -119,7 +122,8 @@ RAW_verse1_20261025_025807/
   in every frame (`TimeCodes`, `FrameRate`). DNG files can also carry XMP, which is
   XML, and XMP has a timecode field some tools read, but that is not the CinemaDNG
   way. The phone cannot write the tags while recording, since it only has the LTC as
-  audio; `tools/kanaha-develop --stamp-dngs` writes them afterwards.
+  audio; `tools/kanaha-develop --stamp-dngs` writes them afterwards, for editors that
+  read DNG folders directly ([Editing the DNGs directly](#editing-the-dngs-directly-resolve-and-others---stamp-dngs)).
 
 ### DNG against ProRes: more data, and more work
 
@@ -318,9 +322,27 @@ ffmpeg -i RAW_verse1_20261025_025807.mov -vf scale=1440:-2 -c:v libx264 -crf 18 
 
 or let mpv drop frames to keep up: `mpv --framedrop=decoder RAW_verse1_20261025_025807.mov`.
 
-`--stamp-dngs` makes no movie: it writes each frame's timecode into its DNG as the
-CinemaDNG tags, for an editor that reads DNG folders directly. No open-source tool in
-this workflow reads those tags; the MOV's timecode track is what ffmpeg uses.
+### Editing the DNGs directly (Resolve and others): `--stamp-dngs`
+
+An editor that opens CinemaDNG folders itself, such as DaVinci Resolve, develops the
+frames with its own RAW controls and needs no MOV. What it does need is the timecode
+in the frames, which the phone cannot write while recording. This is optional: the
+ffmpeg route above never needs it.
+
+```bash
+tools/kanaha-develop RAW_verse1_20261025_025807/ --stamp-dngs
+```
+
+- **What it writes:** each frame's timecode, read from the LTC in `take.wav`, as the
+  CinemaDNG `TimeCodes` and `FrameRate` tags (binary TIFF tags, not XMP). It makes no
+  movie.
+- **In place:** it edits the DNGs in the take folder, leaving their image data untouched.
+  Stamping again is safe, so a take can be re-stamped after fixing a wrong rate.
+- **Sound:** `take.wav` holds the LTC, not the music. Sync the recorder's files to the
+  frames by timecode in the editor.
+- **30 fps LTC**, as for the MOV, or the stamped timecodes drift from the recorder's.
+- **Not yet tried in Resolve** (it is not available here on Linux). The tags follow the
+  CinemaDNG specification; a report of how Resolve reads them is welcome.
 
 ---
 
