@@ -200,6 +200,19 @@ $CURL -d "{\"action\":\"startRecording\",\"clip_name\":\"verse1\",\"raw12\":true
 - **Refusals:** a phone without 12-bit RAW, `hlg10` with `raw12`, a recording already
   running, an unpinned or too slow shutter, and less than 30 s of free space.
 
+**Between songs, release the camera.** The idle preview alone keeps about two cores
+busy (camera provider, app and camera server) and warms the phone about 0.4 °C a
+minute, so a phone left previewing for half an hour starts the song hot. Measured: a
+song started after about 30 minutes of preview reached thermal status 4 and dropped
+523 of 8,117 frames (6.4%); the next, started cool, stayed at status 2 or below and
+dropped none. Send the app to the background after a take and bring it back about a
+minute before the next (the camera needs the app in front):
+
+```bash
+adb shell input keyevent KEYCODE_HOME
+adb shell am start -n org.kanaha.camera/net.sourceforge.opencamera.MainActivity
+```
+
 `listFiles`, `deleteFiles`, `cleanupFiles` and `sftpTransfer` treat a take folder as
 one recording, and never touch a take that is still recording. Folder layout and
 fields: README, "12-bit RAW takes".
@@ -262,10 +275,10 @@ tools/kanaha-develop RAW_verse1_20261025_025807/ --codec hevc10   # small 10-bit
 tools/kanaha-develop RAW_verse1_20261025_025807/ --prores-encoder ks   # ProRes, size capped
 ```
 
-ffmpeg has two ProRes 4444 encoders. The default, `prores_aw`, is about twice as fast
-(about 40 minutes a song) but has no size target, so dark or noisy footage balloons:
-about 11 MB a frame on a lit scene, 36 MB on a dark one, 292 GB for a whole dark song.
-`--prores-encoder ks` keeps about 9 MB a frame whatever the scene at half the speed
+ffmpeg has two ProRes 4444 encoders. The default, `prores_aw`, is the faster (about an
+hour a song) but has no size target, so dark or noisy footage balloons: about 10 MB a
+frame on a lit scene, 36 MB on a dark one, 292 GB for a whole dark song.
+`--prores-encoder ks` keeps about 9 MB a frame whatever the scene, more slowly
 (about 85 minutes a song). Use it for dim or high-ISO songs, or when disk space matters
 more than turnaround.
 
@@ -328,6 +341,8 @@ All on the Pixel 10 Pro XL (256 GB, Android 17).
 | 2026-10-25 | Whole song with LTC through the iRig | 8,114 of 8,114 frames, none missing at the sensor; 8,111 continuous LTC frames |
 | 2026-10-25 | `sftpTransfer` of a take | 111 files, byte-identical |
 | 2026-10-25 | Whole song copied and developed | 8,116 files over USB in 23 min, checksums matching the phone; developed in 69 min to ProRes, 8,114 frames, audio exactly the video's length; timecode track and audio LTC 8 frames apart by the last frame, the 29.97 drift |
+| 2026-10-25 | Two songs, 30 min of idle preview before the first | Started hot: thermal status 4, 523 of 8,117 frames dropped. Started cool: status 2 at most, none dropped |
+| 2026-10-25 | Lit studio song developed | 93.5 GB of DNG over USB in 44 min at 34 MB/s, checksums matching; 84 GB of ProRes 4444 in 64 min, 8.5 GB of memory at peak; no flicker (no frame's brightness more than 1% from the one before) |
 
 Compression is what makes a whole song possible: it keeps the write rate under both the
 storage's cache cliff and its speed after it. The probe that produced the early rows,
@@ -359,8 +374,9 @@ everything else Java: [CPP_AND_JAVA_DESIGN.md](CPP_AND_JAVA_DESIGN.md).
   Pixel of the same model is expected to behave the same, untested.
 - **Capacity.** 50–100 GB a song depending on the scene; the phone stops a take below
   6 GB free.
-- **Heat.** Thermal status 2 over a whole song, starting warm; back-to-back songs
-  without a pause are untested.
+- **Heat.** Thermal status 2 over a whole song when it starts cool; a phone that has
+  previewed for half an hour first drops frames ([Recording a take](#recording-a-take)).
+  Back-to-back songs without a pause are untested.
 - **The USB-C port** carries the iRig during a take, so no external storage and no
   copying until the song is done.
 - **Only the main camera** reads out 12 bits on the Pixel; the others give 10.
