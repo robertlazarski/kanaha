@@ -58,8 +58,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * (docs/12-bit_depth.md). Threading: docs/THREAD_MODEL.md.
  *
  * <p>A take writes one folder: the frames, {@code take.wav} (the audio input, which
- * with the iRig is SMPTE timecode) and {@code take.kanaha_start.json}, which says when
- * the first frame was exposed and where it falls in the WAV.
+ * with the iRig is SMPTE timecode), {@code take.gcsv} (the phone's motion, for
+ * Gyroflow; {@link MotionLog}) and {@code take.kanaha_start.json}, which says when the
+ * first frame was exposed and where it falls in the WAV.
  *
  * <p>Exposure is fixed for the take from setExposure's saved settings, and the shutter
  * must be pinned: on auto exposure in a dim room the sensor ran at 29.74 fps.
@@ -119,6 +120,9 @@ final class RawTake {
     private ImageReader reader;
     private DngHelper helper;
     private TimecodeAudio audio;
+    private MotionLog motion;
+    private volatile long motionSamples = -1;
+    private volatile long rollingShutterNs;
     private Size size;
     private final BlockingQueue<ByteBuffer> free = new ArrayBlockingQueue<>(BUFFERS);
     private final List<ByteBuffer> buffers = new ArrayList<>();
@@ -213,6 +217,10 @@ final class RawTake {
         session = createSession(surfaces);
         audio = new TimecodeAudio(new File(dir, "take.wav"));
         audio.start();   // before the first frame, so the WAV covers the whole take
+        if (bootClock) {   // the log is timed from the first frame, so needs the same clock
+            motion = new MotionLog(context, dir);
+            if (!motion.start()) motion = null;
+        }
         session.setRepeatingRequest(request(surfaces, false), captureCallback, cameraHandler);
 
         if (!armedLatch.await(10, TimeUnit.SECONDS) || !armed) {
@@ -242,6 +250,10 @@ final class RawTake {
         b.set(CaptureRequest.SENSOR_SENSITIVITY, settings.iso);
         b.set(CaptureRequest.SENSOR_EXPOSURE_TIME, settings.exposureNs);
         b.set(CaptureRequest.SENSOR_FRAME_DURATION, 1_000_000_000L / TARGET_FPS);
+        // RAW_SENSOR frames are not corrected for vignetting. With the shading map in the
+        // arming frame's result, DngCreator writes it as an OpcodeList2 GainMap, which the
+        // template then carries into every frame of the take.
+        b.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE, CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE_ON);
         if (settings.focusDistance >= 0) {
             b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF);
             b.set(CaptureRequest.LENS_FOCUS_DISTANCE, settings.focusDistance);
@@ -282,6 +294,7 @@ final class RawTake {
             state = State.RECORDING;
             firstFrameNs = ts;
             firstFrameWallMs = ((bootClock ? ts : SystemClock.elapsedRealtimeNanos()) + wallMinusBootNs) / 1_000_000L;
+            if (motion != null) motion.begin(ts, rollingShutterNs / 1e6);
             new Thread(() -> writeSidecar(false), "KanahaRawTakeSidecar").start();
         }
         if (state != State.RECORDING) { image.close(); return; }
@@ -319,6 +332,8 @@ final class RawTake {
                 if (result == null) Thread.sleep(5);
             }
             if (result == null) throw new IllegalStateException("no capture result for the arming frame");
+            Long skew = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW);
+            if (skew != null) rollingShutterNs = skew;
             ByteArrayOutputStream template = new ByteArrayOutputStream(26 << 20);
             try (DngCreator creator = new DngCreator(chars, result)) {
                 creator.writeImage(template, image);
@@ -363,6 +378,7 @@ final class RawTake {
                 try { session.close(); } catch (Exception ignored) { }
             }
             if (audio != null) audio.stop();
+            if (motion != null) motionSamples = motion.stop();
             if (helper != null) helperResult = helper.finish(120);
             writeSidecar(true);
             state = State.DONE;
@@ -392,6 +408,7 @@ final class RawTake {
         }
         armedLatch.countDown();
         try { if (audio != null) audio.stop(); } catch (InterruptedException ignored) { }
+        if (motion != null) motion.stop();
         if (helper != null) helper.abort();
         close();
     }
@@ -455,6 +472,8 @@ final class RawTake {
                 j.put("first_frame_after_first_sample_ms", Math.round((firstFrameNs - audio.firstSampleBootNs()) / 1e5) / 10.0);
             }
             if (finished && audio != null) j.put("audio_seconds", Math.round(audio.seconds() * 10) / 10.0);
+            j.put("motion", motion != null ? motion.fileName() : JSONObject.NULL);
+            if (finished && motionSamples >= 0) j.put("motion_samples", motionSamples);
             j.put("finished", finished);
             File tmp = new File(dir, SIDECAR + ".tmp");
             try (FileOutputStream out = new FileOutputStream(tmp)) {

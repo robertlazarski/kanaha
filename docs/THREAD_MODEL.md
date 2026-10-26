@@ -215,6 +215,8 @@ libkanaha_dng.so  [separate process]
 "DngHelperReleases" thread [app]   → slot 7 back into the pool of free buffers
 "DngHelperOutput" thread   [app]   → counts the helper's OK / ERR / DONE lines
 "KanahaRawTakeTemplate" thread [app] → once, at arming: the DNG template and the buffers
+"KanahaTimecodeAudio" thread [app]   → take.wav
+"KanahaMotionLog" handler thread [app] → gyroscope samples into take.gcsv
 ```
 
 - **A buffer belongs to one side at a time.** It is the helper's from the moment

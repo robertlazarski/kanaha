@@ -28,6 +28,9 @@ not the 600 GB a whole take of 16-bit frames would need. A frame missing from th
 folder (a dropped frame) is filled with the frame before it, so the movie keeps the
 take's timing.
 
+A take with a motion log (take.gcsv, the phone's gyroscope) also gets <movie>.gcsv
+beside the movie, which Gyroflow loads with it to stabilise the take.
+
 With --stamp-dngs it makes no movie: it writes each frame's timecode into the DNGs
 themselves (the CinemaDNG TimeCodes and FrameRate tags), so an editor that reads
 DNG sequences, such as DaVinci Resolve, lines the take up without developing it.
@@ -455,6 +458,34 @@ def main():
     finally:
         shutil.rmtree(work, ignore_errors=True)   # developed frames, even after a failure
     print("wrote %s" % out, file=sys.stderr)
+    motion = copy_motion_log(take, out, first)
+    if motion:
+        print("wrote %s" % motion, file=sys.stderr)
+
+
+# Gyroflow: the phone's motion log (take.gcsv) put beside the movie under the movie's
+# name, which is where Gyroflow looks for it when the movie is opened.
+def copy_motion_log(take, out, first):
+    """Copy take.gcsv to <movie>.gcsv. Its times start at frame 0's exposure; the movie
+    starts at frame `first`, so the times are shifted to match. Returns the path, or None
+    if the take has no motion log."""
+    src = os.path.join(take, "take.gcsv")
+    if not os.path.isfile(src):
+        return None
+    dst = os.path.splitext(out)[0] + ".gcsv"
+    shift_us = round(first * 1e6 / FPS)
+    with open(src) as f, open(dst, "w") as g:
+        data = False
+        for line in f:
+            if data:
+                t, rest = line.split(",", 1)
+                t = int(t) - shift_us
+                if t >= 0:
+                    g.write("%d,%s" % (t, rest))
+            else:
+                g.write(line)
+                data = line.startswith("t,")   # the column names end the header
+    return dst
 
 
 if __name__ == "__main__":

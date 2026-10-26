@@ -85,11 +85,12 @@ OpenCamera with settings added, not a rewrite.
 | `NetworkDiscoveryService.java` | 333 | `NsdManager` registration so clients find the camera by hostname. | **No.** Movable to C. |
 | `DeviceIdentifier.java` | 208 | One hostname used for both the certificate SAN and the mDNS name, so TLS verification by discovered name works. | **No.** Movable to C. |
 | `CertProvisioning.java` | 136 | Mints the device keypair and CSR on first run (BouncyCastle); the key never leaves the device. | **No.** OpenSSL is already in the httpd. |
-| `RawTake.java` | 491 | A 12-bit RAW take: opens the camera, captures full-size `RAW_SENSOR` at 30 fps, copies each frame into a shared buffer for the compressor, records the timecode WAV, writes the take's sidecar. | **Yes.** Camera2 is a Java API. |
+| `RawTake.java` | 526 | A 12-bit RAW take: opens the camera, captures full-size `RAW_SENSOR` at 30 fps, copies each frame into a shared buffer for the compressor, records the timecode WAV and motion log, writes the take's sidecar. | **Yes.** Camera2 is a Java API. |
 | `RawTakeActivity.java` | 126 | The take's screen: preview, status line, the duration and storage limits. Owns the camera for the take. | **Yes.** Android gives the camera to a foreground activity. |
 | `DngHelper.java` | 269 | Starts `libkanaha_dng.so`, hands it the SharedMemory buffers' descriptors over a Unix socket, sends slot numbers, reads its reports. | **Yes**, the SharedMemory and socket APIs used to share Java's buffers without JNI. |
 | `PackedDngWriter.java` | 186 | Turns Android's own DNG (from `DngCreator`, once per take) into the DNG header every frame carries. | **Yes**, `DngCreator` is the camera's own metadata. |
 | `TimecodeAudio.java` | 99 | The take's WAV from the audio input (with the iRig, SMPTE timecode), stamped on the camera's clock. | **Yes.** `AudioRecord`. |
+| `MotionLog.java` | 120 | The take's gyroscope log for Gyroflow (`take.gcsv`), timed from the first frame. | **Yes.** `SensorManager`. |
 | `FrameSampler.java`, `OnDeviceModel.java`, `ClipDescriber.java` (per flavor) | 135, 62 | `describeClip`: frames from a recording and the on-device model. | **Yes.** `MediaMetadataRetriever` and ML Kit are Java. |
 
 ### C (~3,200 lines, `app/src/main/cpp`)

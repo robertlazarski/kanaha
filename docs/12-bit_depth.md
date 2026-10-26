@@ -105,12 +105,13 @@ CinemaDNG is not a single file like MOV or MP4. A take is a folder:
 RAW_verse1_20261025_025807/
 ├── frame_000000.dng ... frame_008113.dng   one per frame, 4080×3072, lossless 12-bit
 ├── take.wav                                the phone's audio input: with the iRig, the Tentacle's LTC
+├── take.gcsv                               the phone's gyroscope, for stabilising with Gyroflow
 └── take.kanaha_start.json                  settings, frame counts, and where the first frame sits in take.wav
 ```
 
 - **Each DNG** holds the sensor readings and the data to develop them: black and white
-  levels, both colour and forward matrices, a noise profile and the lens-distortion
-  correction (no lens-shading map). The
+  levels, both colour and forward matrices, a noise profile, the lens-distortion
+  correction and the lens-shading map (OpcodeList2). The
   colour data comes from Android's `DngCreator`; the frames are Kanaha's own writer,
   compressed with lossless JPEG (DNG compression 7, as cinema cameras use), 6–13 MB a
   frame depending on the scene: lossless compression shrinks a plain, dim frame far
@@ -346,6 +347,37 @@ tools/kanaha-develop RAW_verse1_20261025_025807/ --stamp-dngs
 
 ---
 
+### Lens shading
+
+The Pixel's RAW frames are not corrected for vignetting: the corners need about 1.7
+stops (×3.3) more than the centre, nearly the same for every colour. Since 2026-10-26
+each DNG carries Android's lens-shading map as the DNG gain map (OpcodeList2) that
+corrects it; earlier takes have none.
+
+- **darktable and RawTherapee apply it**, so `--developer darktable` gives evenly lit
+  corners. Measured on a plain wall: corners 0.94–1.01 of the centre.
+- **LibRaw ignores it**, so the default develop keeps the vignette: corners 0.46–0.61
+  of the centre on the same frame.
+
+### Stabilising with Gyroflow
+
+A take records the phone's gyroscope (`take.gcsv`, several hundred samples a second,
+timed from the first frame), and `kanaha-develop` puts it beside the movie as
+`<movie>.gcsv`, where [Gyroflow](https://gyroflow.xyz) (open source; a Linux AppImage
+on its releases page) finds it when the movie is opened.
+
+1. Open the MOV in Gyroflow; "Motion data" shows the log, orientation `yXZ`.
+2. Load a lens profile. There is none yet for the Pixel 10 Pro XL; the Pixel 8 Pro's
+   25 mm, 4080×3072 profile is close and was used to test this. A profile of its own
+   comes from Gyroflow's calibrator and a 12-bit take of its checkerboard.
+3. Auto sync. The right offset is about 18 ms (half the exposure plus half the
+   readout); delete a sync point that lands far from the others, which happens where
+   the picture has nothing to track, such as a plain wall.
+
+For a locked-off camera there is nothing to stabilise and the log can be ignored.
+
+---
+
 ## Measured results
 
 All on the Pixel 10 Pro XL (256 GB, Android 17).
@@ -365,6 +397,7 @@ All on the Pixel 10 Pro XL (256 GB, Android 17).
 | 2026-10-25 | Whole song copied and developed | 8,116 files over USB in 23 min, checksums matching the phone; developed in 69 min to ProRes, 8,114 frames, audio exactly the video's length; timecode track and audio LTC 8 frames apart by the last frame, the 29.97 drift |
 | 2026-10-25 | Two songs, 30 min of idle preview before the first | Started hot: thermal status 4, 523 of 8,117 frames dropped. Started cool: status 2 at most, none dropped |
 | 2026-10-25 | Lit studio song developed | 93.5 GB of DNG over USB in 44 min at 34 MB/s, checksums matching; 84 GB of ProRes 4444 in 64 min, 8.5 GB of memory at peak; no flicker (no frame's brightness more than 1% from the one before) |
+| 2026-10-26 | Lens-shading map in the DNGs; Gyroflow | Corners need ×3.3 (1.7 stops); darktable applies the map, LibRaw does not. A handheld take stabilised in Gyroflow from its own `take.gcsv` |
 
 Compression is what makes a whole song possible: it keeps the write rate under both the
 storage's cache cliff and its speed after it. The probe that produced the early rows,

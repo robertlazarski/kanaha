@@ -24,6 +24,8 @@
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Gyroscope above 200 Hz for a 12-bit take's motion log (MotionLog); granted at install. -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 

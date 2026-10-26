@@ -434,7 +434,8 @@ no URL, so for them `"action"` is what selects the tool.
 
 - `frame_000000.dng`, … — every frame, 12-bit, lossless JPEG compressed (DNG Compression 7), 8–12 MB each depending on the scene. Compressed by `libkanaha_dng.so`, a separate native program, so the camera never waits on it.
 - `take.wav` — the audio input for the whole take: with the iRig, the Tentacle's SMPTE timecode.
-- `take.kanaha_start.json` — `recording_start_ms` (when the first frame was exposed), `first_frame_after_first_sample_ms` (where that frame falls in `take.wav`, which ties every frame to timecode), the exposure, and when the take ends its `frames`, `dropped` and `seconds`.
+- `take.gcsv` — the phone's gyroscope and accelerometer from the first frame on, in Gyroflow's format, for stabilising in post.
+- `take.kanaha_start.json` — `recording_start_ms` (when the first frame was exposed), `first_frame_after_first_sample_ms` (where that frame falls in `take.wav`, which ties every frame to timecode), the exposure, `motion` (the motion log's name, or null), and when the take ends its `frames`, `dropped`, `seconds` and `motion_samples`.
 
 `stopRecording` waits for every frame to be written and replies with the counts; `getStatus` carries `raw12_take` while it runs. `listFiles` lists each take as one entry (`"type": "raw12_take"`, `frames`, `size`), and `deleteFiles`, `cleanupFiles` and `sftpTransfer` treat a take folder as one recording: matched by its folder name or by `*`, `today` or a date, deleted whole, sent as a folder. A take still recording is never deleted or sent. `tools/kanaha-develop <take folder>` develops a take into one ProRes 4444 `.mov` with its audio and timecode; `--stamp-dngs` instead writes the timecode into the DNGs for editing them directly; details, timecode and copying takes off the phone in [12-bit_depth.md](docs/12-bit_depth.md).
 
