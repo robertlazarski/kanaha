@@ -13,7 +13,8 @@ it, the way an edit expects a camera clip:
   1. Develop each DNG into a picture. ffmpeg reads DNGs but demosaics without the
      camera's colour matrix and white balance, so a raw developer does it: LibRaw's
      dcraw_emu by default, or darktable-cli (--developer darktable: several times
-     slower, best highlight handling).
+     slower, best highlight handling). The DNGs' lens-shading map, which LibRaw
+     ignores, is applied here (Shading below).
   2. Encode the developed frames with ffmpeg: ProRes 4444 by default (about 320 MB/s,
      so about 85 GB for a 4.5 minute take) or 10-bit HEVC (--codec hevc10, small),
      with take.wav as the audio track, trimmed to start exactly at the first frame.
@@ -35,9 +36,10 @@ With --stamp-dngs it makes no movie: it writes each frame's timecode into the DN
 themselves (the CinemaDNG TimeCodes and FrameRate tags), so an editor that reads
 DNG sequences, such as DaVinci Resolve, lines the take up without developing it.
 
-Needs: python3, ffmpeg, dcraw_emu (libraw-bin) or darktable-cli, and ltcdump for
-timecode (optional; without it the file has no timecode track). ffmpeg's ProRes encoder
-uses about 6 GB of memory at this frame size, plus a few GB of developed frames.
+Needs: python3, numpy (for the lens shading with LibRaw), ffmpeg, dcraw_emu
+(libraw-bin) or darktable-cli, and ltcdump for timecode (optional; without it the
+file has no timecode track). ffmpeg's ProRes encoder uses about 6 GB of memory at
+this frame size, plus a few GB of developed frames.
 """
 import argparse
 import concurrent.futures
@@ -205,7 +207,7 @@ def stamp_take(take, numbers, first, timecode):
 # developers write: a short text header, then raw big-endian RGB samples.
 # ---------------------------------------------------------------------------------
 
-def develop_libraw(dng, out_dir):
+def develop_libraw(dng, out_dir, shading=None):
     """One DNG to a 16-bit PPM with the camera's white balance and colour (AHD demosaic).
     dcraw_emu flags: -6 16-bit, -w camera white balance, -W no auto-brighten,
     -o 1 sRGB primaries, -q 3 AHD demosaic, -Z the output file.
@@ -213,12 +215,141 @@ def develop_libraw(dng, out_dir):
     -W matters for video: without it LibRaw brightens each frame by its own histogram,
     so frames without clipped highlights come out at different brightness and the movie
     flickers (x4.14, x3.97, x3.99 on three frames of one dim take). The take's exposure
-    is pinned on the phone; the develop keeps it."""
+    is pinned on the phone; the develop keeps it.
+
+    With a Shading, LibRaw writes linear values (-g 1 1) and the frame is corrected for
+    vignetting and given LibRaw's usual curve here, since LibRaw ignores the DNG's map."""
     out = os.path.join(out_dir, os.path.basename(dng)[:-4] + ".ppm")
-    subprocess.run(["dcraw_emu", "-6", "-w", "-W", "-o", "1", "-q", "3", "-Z", out, dng],
+    linear = ["-g", "1", "1"] if shading else []
+    subprocess.run(["dcraw_emu", "-6", "-w", "-W", "-o", "1", "-q", "3"] + linear + ["-Z", out, dng],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                    timeout=DEVELOP_TIMEOUT_S["libraw"])
+    if shading:
+        shading.apply(out)
     return out
+
+
+# ---------------------------------------------------------------------------------
+# Lens shading. The phone's RAW frames are not corrected for vignetting: on the Pixel
+# the corners need about x3.3 (1.7 stops) more than the centre. Each DNG carries the
+# correction as gain maps in its OpcodeList2 tag (one map per colour position of the
+# sensor's 2x2 pattern). darktable applies them; LibRaw does not, so for LibRaw they
+# are applied here, to the developed frame.
+#
+# A developed pixel mixes all four colour positions, so the four maps are averaged
+# into one and every channel of a pixel gets the same gain. On the Pixel the four
+# maps differ by under 3%, so this is a vignetting correction, not a colour one.
+# ---------------------------------------------------------------------------------
+
+TAG_OPCODELIST2 = 51009
+OPCODE_GAINMAP = 9
+
+
+def read_gain_maps(dng):
+    """The GainMap opcodes in a DNG's OpcodeList2, as a list of dicts, or [] if none.
+    Opcode lists are big-endian whatever the file's byte order (DNG spec, chapter 6)."""
+    with open(dng, "rb") as f:
+        head = f.read(8)
+        e = {b"II": "<", b"MM": ">"}.get(head[:2])
+        if e is None:
+            raise ValueError("%s: not a TIFF/DNG" % dng)
+        f.seek(struct.unpack(e + "I", head[4:8])[0])
+        count = struct.unpack(e + "H", f.read(2))[0]
+        data = None
+        for _ in range(count):
+            tag, _type, n, offset = struct.unpack(e + "HHII", f.read(12))
+            if tag == TAG_OPCODELIST2:
+                here = f.tell()
+                f.seek(offset)
+                data = f.read(n)
+                f.seek(here)
+    if not data:
+        return []
+    maps, pos = [], 4
+    for _ in range(struct.unpack(">I", data[:4])[0]):
+        opcode, _version, _flags, size = struct.unpack(">IIII", data[pos:pos + 16])
+        p = data[pos + 16:pos + 16 + size]
+        pos += 16 + size
+        if opcode != OPCODE_GAINMAP:
+            continue
+        top, left, bottom, right, _plane, _planes, _rp, _cp, rows, cols = struct.unpack(">10I", p[:40])
+        spacing_v, spacing_h, origin_v, origin_h = struct.unpack(">4d", p[40:72])
+        _map_planes = struct.unpack(">I", p[72:76])[0]
+        gains = struct.unpack(">%df" % (rows * cols), p[76:76 + 4 * rows * cols])
+        maps.append(dict(area=(top, left, bottom, right), rows=rows, cols=cols,
+                         spacing=(spacing_v, spacing_h), origin=(origin_v, origin_h), gains=gains))
+    return maps
+
+
+# LibRaw's default output curve (BT.709: power 0.45, linear slope 4.5), as its
+# gamma_curve() builds it. With -W and the default brightness its input white is
+# 0x10000, so this maps linear 16-bit values to what `dcraw_emu -6 -W` writes.
+def libraw_curve(pwr=0.45, ts=4.5):
+    import math
+    g = [pwr, ts, 0.0, 0.0, 0.0]
+    bnd = [0.0, 0.0]
+    bnd[1 if ts >= 1 else 0] = 1.0
+    if ts and (ts - 1) * (pwr - 1) <= 0:
+        for _ in range(48):
+            g[2] = (bnd[0] + bnd[1]) / 2
+            bnd[1 if (math.pow(g[2] / g[1], -g[0]) - 1) / g[0] - 1 / g[2] > -1 else 0] = g[2]
+        g[3] = g[2] / g[1]
+        g[4] = g[2] * (1 / g[0] - 1)
+    curve = []
+    for i in range(0x10000):
+        r = i / 0x10000
+        v = r * g[1] if r < g[3] else math.pow(r, g[0]) * (1 + g[4]) - g[4]
+        curve.append(min(0xffff, int(0x10000 * v)))
+    return curve
+
+
+class Shading:
+    """One take's vignetting correction for LibRaw-developed frames: the gain for every
+    pixel, built once, and the curve LibRaw would have applied."""
+
+    def __init__(self, maps):
+        import numpy as np
+        self.np = np
+        m = maps[0]
+        if any((x["rows"], x["cols"], x["spacing"], x["origin"]) !=
+               (m["rows"], m["cols"], m["spacing"], m["origin"]) for x in maps):
+            raise ValueError("the gain maps differ in layout")
+        # The maps cover the whole sensor (each starts on its own colour position, at
+        # row or column 0 or 1), and LibRaw develops the whole sensor, uncropped.
+        width, height = max(x["area"][3] for x in maps), max(x["area"][2] for x in maps)
+        grid = np.mean([np.array(x["gains"], dtype=np.float64).reshape(m["rows"], m["cols"]) for x in maps], axis=0)
+        # Each pixel's place in the map grid: positions are fractions of the area,
+        # spaced by `spacing` from `origin` (DNG spec, GainMap), clamped at the edges.
+        def axis(n, origin, spacing, points):
+            pos = ((np.arange(n) + 0.5) / n - origin) / spacing
+            pos = np.clip(pos, 0, points - 1)
+            i = np.minimum(pos.astype(int), points - 2)
+            return i, pos - i
+        iy, fy = axis(height, m["origin"][0], m["spacing"][0], m["rows"])
+        ix, fx = axis(width, m["origin"][1], m["spacing"][1], m["cols"])
+        rows = grid[iy] * (1 - fy)[:, None] + grid[iy + 1] * fy[:, None]           # height x cols
+        self.gain = (rows[:, ix] * (1 - fx) + rows[:, ix + 1] * fx).astype(np.float32)  # height x width
+        self.curve = np.array(libraw_curve(), dtype=np.uint16)
+        self.width, self.height = width, height
+        self.max_gain = float(grid.max())
+
+    def apply(self, ppm):
+        """Correct a linear 16-bit PPM in place and give it LibRaw's curve, a band of rows
+        at a time so a frame never needs more than a few MB of extra memory."""
+        np = self.np
+        w, h = self.width, self.height
+        start = os.path.getsize(ppm) - w * h * 6     # the pixels end the file; the header is before
+        with open(ppm, "rb") as f:
+            if f.read(start).split()[:4] != [b"P6", b"%d" % w, b"%d" % h, b"65535"]:
+                raise ValueError("%s: not a 16-bit %dx%d PPM" % (ppm, w, h))
+        frame = np.memmap(ppm, dtype=">u2", mode="r+", offset=start, shape=(h, w, 3))
+        for y in range(0, h, 128):
+            band = frame[y:y + 128].astype(np.float32)
+            band *= self.gain[y:y + 128, :, None]
+            np.minimum(band, 65535, out=band)
+            frame[y:y + 128] = self.curve[band.astype(np.uint16)]
+        frame.flush()
+        del frame
 
 
 def develop_darktable(dng, out_dir):
@@ -382,6 +513,11 @@ def main():
     p.add_argument("--tmp", help="working folder for developed frames (default: next to the output)")
     p.add_argument("--stamp-dngs", action="store_true",
                    help="write each frame's timecode into its DNG instead of making a movie")
+    p.add_argument("--shading-from", metavar="TAKE_OR_DNG",
+                   help="take the lens-shading map from another take (for takes recorded before "
+                        "the phone wrote one); default: this take's own")
+    p.add_argument("--no-shading", action="store_true",
+                   help="leave the vignette in (LibRaw only; darktable always corrects it)")
     p.add_argument("--partial", action="store_true",
                    help="go ahead although the folder has fewer frames than the take wrote")
     a = p.parse_args()
@@ -451,7 +587,10 @@ def main():
 
     cmd = ffmpeg_command(out, a.codec, a.prores_encoder, wav, offset_ms, timecode,
                          os.path.basename(take), last - first + 1)
-    develop = develop_libraw if a.developer == "libraw" else develop_darktable
+    develop = develop_darktable
+    if a.developer == "libraw":
+        shading = None if a.no_shading else take_shading(take, numbers, a.shading_from)
+        develop = lambda dng, out_dir: develop_libraw(dng, out_dir, shading)
     work = tempfile.mkdtemp(prefix="kanaha-develop-", dir=a.tmp or os.path.dirname(out))
     try:
         encode_take(take, numbers, cmd, develop, a.jobs, work)
@@ -461,6 +600,32 @@ def main():
     motion = copy_motion_log(take, out, first)
     if motion:
         print("wrote %s" % motion, file=sys.stderr)
+
+
+def take_shading(take, numbers, source):
+    """The Shading for a LibRaw develop: from `source` (a take folder or a DNG) if
+    given, else from the take's first frame; None, with a warning, if there is none."""
+    if source:
+        if os.path.isdir(source):
+            frames = sorted(n for n in os.listdir(source) if FRAME.match(n))
+            if not frames:
+                sys.exit("no frame_NNNNNN.dng in " + source)
+            source = os.path.join(source, frames[0])
+    else:
+        source = os.path.join(take, "frame_%06d.dng" % numbers[0])
+    maps = read_gain_maps(source)
+    if not maps:
+        print("warning: %s has no lens-shading map, so the corners stay dark; take one from a "
+              "newer take of the same phone with --shading-from" % os.path.basename(source), file=sys.stderr)
+        return None
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        sys.exit("correcting the lens shading needs numpy (python3-numpy), or pass --no-shading")
+    shading = Shading(maps)
+    print("lens shading: from %s, up to x%.2f at the corners" % (os.path.basename(source), shading.max_gain),
+          file=sys.stderr)
+    return shading
 
 
 # Gyroflow: the phone's motion log (take.gcsv) put beside the movie under the movie's

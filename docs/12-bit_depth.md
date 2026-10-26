@@ -290,7 +290,8 @@ more than turnaround.
 1. **Develops each DNG** with LibRaw's `dcraw_emu`: the camera's white balance and
    colour matrix, AHD demosaic, and the exposure as recorded. LibRaw's default
    auto-brighten is off: it scales each frame by its own histogram, which made frames
-   of one dim take differ by 4% and would flicker. `--developer darktable` uses darktable's processing
+   of one dim take differ by 4% and would flicker. The lens-shading map is applied too
+   ([Lens shading](#lens-shading)). `--developer darktable` uses darktable's processing
    instead (slower, best highlight handling).
 2. **Encodes** the frames with ffmpeg, with `take.wav` as the audio trimmed to start at
    the first frame. A dropped frame is filled with the one before it, so the movie
@@ -301,7 +302,7 @@ more than turnaround.
 Frames are developed in parallel a little ahead of ffmpeg and deleted once encoded,
 so the scratch space stays at a few GB. On a 22-core machine a real take develops at
 2 to 2.5 frames a second: a whole song (8,114 frames) took 69 minutes, with about 9 GB
-of memory at its peak. It needs `ffmpeg`, `libraw-bin` (or `darktable`) and `ltc-tools`.
+of memory at its peak. It needs `ffmpeg`, `libraw-bin` (or `darktable`), `python3-numpy` and `ltc-tools`.
 
 **It uses the whole machine.** By default it develops one frame per core (`--jobs`
 defaults to the core count) while ffmpeg encodes on threads of its own, so the load
@@ -354,10 +355,20 @@ stops (×3.3) more than the centre, nearly the same for every colour. Since 2026
 each DNG carries Android's lens-shading map as the DNG gain map (OpcodeList2) that
 corrects it; earlier takes have none.
 
-- **darktable and RawTherapee apply it**, so `--developer darktable` gives evenly lit
-  corners. Measured on a plain wall: corners 0.94–1.01 of the centre.
-- **LibRaw ignores it**, so the default develop keeps the vignette: corners 0.46–0.61
-  of the centre on the same frame.
+- **`kanaha-develop` applies it.** LibRaw ignores the map, so with LibRaw (the default)
+  the script has it write linear values, multiplies each frame by the map and then
+  applies LibRaw's usual curve itself; with the map left out this reproduces LibRaw's
+  output exactly. The four colours' maps differ by under 3% on the Pixel, so one
+  averaged map is applied to every channel. It adds about 8% to a develop.
+- **darktable and RawTherapee apply it themselves**, and so should any editor that
+  reads the DNGs directly.
+- **Takes recorded before 2026-10-26** have no map; `--shading-from <newer take>`
+  borrows one from a take of the same phone. The vignette is the lens's, so this is
+  close, though the map shifts a little with focus distance. `--no-shading` leaves the
+  vignette in.
+
+Measured on a plain wall: corners 0.46–0.61 of the centre before, 0.80–1.01 after (the
+wall itself was darker towards one corner).
 
 ### Stabilising with Gyroflow
 
@@ -397,7 +408,7 @@ All on the Pixel 10 Pro XL (256 GB, Android 17).
 | 2026-10-25 | Whole song copied and developed | 8,116 files over USB in 23 min, checksums matching the phone; developed in 69 min to ProRes, 8,114 frames, audio exactly the video's length; timecode track and audio LTC 8 frames apart by the last frame, the 29.97 drift |
 | 2026-10-25 | Two songs, 30 min of idle preview before the first | Started hot: thermal status 4, 523 of 8,117 frames dropped. Started cool: status 2 at most, none dropped |
 | 2026-10-25 | Lit studio song developed | 93.5 GB of DNG over USB in 44 min at 34 MB/s, checksums matching; 84 GB of ProRes 4444 in 64 min, 8.5 GB of memory at peak; no flicker (no frame's brightness more than 1% from the one before) |
-| 2026-10-26 | Lens-shading map in the DNGs; Gyroflow | Corners need ×3.3 (1.7 stops); darktable applies the map, LibRaw does not. A handheld take stabilised in Gyroflow from its own `take.gcsv` |
+| 2026-10-26 | Lens-shading map in the DNGs; Gyroflow | Corners need ×3.3 (1.7 stops); applied by `kanaha-develop` (LibRaw) and darktable. A handheld take stabilised in Gyroflow from its own `take.gcsv` |
 
 Compression is what makes a whole song possible: it keeps the write rate under both the
 storage's cache cliff and its speed after it. The probe that produced the early rows,
