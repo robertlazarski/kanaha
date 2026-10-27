@@ -378,14 +378,38 @@ timed from the first frame), and `kanaha-develop` puts it beside the movie as
 on its releases page) finds it when the movie is opened.
 
 1. Open the MOV in Gyroflow; "Motion data" shows the log, orientation `yXZ`.
-2. Load a lens profile. There is none yet for the Pixel 10 Pro XL; the Pixel 8 Pro's
-   25 mm, 4080×3072 profile is close and was used to test this. A profile of its own
-   comes from Gyroflow's calibrator and a 12-bit take of its checkerboard.
+2. Lens profile → Open file: [`docs/gyroflow/pixel10proxl_main_kanaha12bit.json`](gyroflow/pixel10proxl_main_kanaha12bit.json),
+   the Pixel 10 Pro XL's main camera at 4080×3072 (Gyroflow's database has none for
+   this phone). Keep Lens correction at 100%.
 3. Auto sync. The right offset is about 18 ms (half the exposure plus half the
    readout); delete a sync point that lands far from the others, which happens where
    the picture has nothing to track, such as a plain wall.
+4. Stabilization: Dynamic zooming. With "No zooming" there is no room to crop and the
+   picture still shakes. Set Advanced → Preview resolution to 1/4 or 1/2; at Full,
+   the preview cannot decode 12-bit ProRes in real time and stutters.
 
 For a locked-off camera there is nothing to stabilise and the log can be ignored.
+
+#### How the profile was made
+
+With Gyroflow 1.6.3's calibrator (`Gyroflow.AppImage --calibrator`), from a 12-bit take
+of its checkerboard shown full screen on a monitor:
+
+- The whole board in frame, filling various parts of the picture, focus on the screen
+  and no clipped whites (ISO 800 here; at ISO 1600 the glare closed the squares'
+  corners and nothing was detected).
+- Calibrated on a quarter-size proxy, `ffmpeg -i take.mov -an -vf scale=1020:768:flags=area -c:v libx264 -crf 10 -pix_fmt yuv420p proxy.mp4`:
+  at full size and half size the board's slight blur defeated detection.
+- Calibrator settings: "Plain chessboard pattern" unticked, Processing resolution
+  Full (the default 4k squeezes a 4:3 frame to 3840×2160).
+- Result: RMS error 0.34 over 15 frames. The calibrator writes the proxy's size into
+  the profile and Gyroflow does not rescale it, so the focal length and centre were
+  multiplied by 4 and the sizes set to 4080×3072; the distortion coefficients do not
+  depend on size.
+
+The board rarely reached the frame's corners, so the fit is extrapolated there. Walls
+and edges stayed straight on the test take; a recalibration should move the board into
+each corner.
 
 ---
 
@@ -409,6 +433,7 @@ All on the Pixel 10 Pro XL (256 GB, Android 17).
 | 2026-10-25 | Two songs, 30 min of idle preview before the first | Started hot: thermal status 4, 523 of 8,117 frames dropped. Started cool: status 2 at most, none dropped |
 | 2026-10-25 | Lit studio song developed | 93.5 GB of DNG over USB in 44 min at 34 MB/s, checksums matching; 84 GB of ProRes 4444 in 64 min, 8.5 GB of memory at peak; no flicker (no frame's brightness more than 1% from the one before) |
 | 2026-10-26 | Lens-shading map in the DNGs; Gyroflow | Corners need ×3.3 (1.7 stops); applied by `kanaha-develop` (LibRaw) and darktable. A handheld take stabilised in Gyroflow from its own `take.gcsv` |
+| 2026-10-27 | Gyroflow lens profile | Calibrated from a checkerboard take, RMS error 0.34; the handheld take steady with dynamic zooming, sync points 13–19 ms |
 
 Compression is what makes a whole song possible: it keeps the write rate under both the
 storage's cache cliff and its speed after it. The probe that produced the early rows,
