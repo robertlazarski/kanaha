@@ -513,9 +513,10 @@ def main():
     p.add_argument("--tmp", help="working folder for developed frames (default: next to the output)")
     p.add_argument("--stamp-dngs", action="store_true",
                    help="write each frame's timecode into its DNG instead of making a movie")
-    p.add_argument("--shading-from", metavar="TAKE_OR_DNG",
-                   help="take the lens-shading map from another take (for takes recorded before "
-                        "the phone wrote one); default: this take's own")
+    p.add_argument("--shading-from", metavar="TAKE_DNG_OR_JSON",
+                   help="take the lens-shading map from another take, a DNG, or a file in "
+                        "tools/lens-shading (when this take's own is missing or weak); default: "
+                        "this take's own")
     p.add_argument("--no-shading", action="store_true",
                    help="leave the vignette in (LibRaw only; darktable always corrects it)")
     p.add_argument("--partial", action="store_true",
@@ -602,9 +603,20 @@ def main():
         print("wrote %s" % motion, file=sys.stderr)
 
 
+# The phone does not always record the lens's real vignetting: on the same Pixel, with
+# the same settings and scene, some takes carry a map reaching x3.3 at the corners and
+# others one of x1.2, which leaves the corners at half the centre's brightness. Below
+# this, the take's map is treated as suspect (a Pixel figure; other lenses may differ).
+WEAK_SHADING = 2.0
+
+# Known-good maps kept with this script, for --shading-from.
+SHADING_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lens-shading")
+
+
 def take_shading(take, numbers, source):
-    """The Shading for a LibRaw develop: from `source` (a take folder or a DNG) if
-    given, else from the take's first frame; None, with a warning, if there is none."""
+    """The Shading for a LibRaw develop: from `source` (a take folder, a DNG, or a JSON
+    file from tools/lens-shading) if given, else from the take's first frame; None, with
+    a warning, if there is none."""
     if source:
         if os.path.isdir(source):
             frames = sorted(n for n in os.listdir(source) if FRAME.match(n))
@@ -613,7 +625,14 @@ def take_shading(take, numbers, source):
             source = os.path.join(source, frames[0])
     else:
         source = os.path.join(take, "frame_%06d.dng" % numbers[0])
-    maps = read_gain_maps(source)
+    try:
+        if source.endswith(".json"):
+            with open(source) as f:
+                maps = json.load(f)["maps"]
+        else:
+            maps = read_gain_maps(source)
+    except (OSError, ValueError, KeyError, struct.error) as e:
+        sys.exit("cannot read a lens-shading map from %s: %s" % (source, e))
     if not maps:
         print("warning: %s has no lens-shading map, so the corners stay dark; take one from a "
               "newer take of the same phone with --shading-from" % os.path.basename(source), file=sys.stderr)
@@ -625,6 +644,11 @@ def take_shading(take, numbers, source):
     shading = Shading(maps)
     print("lens shading: from %s, up to x%.2f at the corners" % (os.path.basename(source), shading.max_gain),
           file=sys.stderr)
+    if shading.max_gain < WEAK_SHADING:
+        known = sorted(n for n in os.listdir(SHADING_DIR) if n.endswith(".json")) if os.path.isdir(SHADING_DIR) else []
+        print("warning: that map may be weaker than the lens's vignetting, so the corners stay dark; "
+              "if this phone has a known-good map in %s (%s), pass it with --shading-from"
+              % (SHADING_DIR, ", ".join(known) or "none yet"), file=sys.stderr)
     return shading
 
 

@@ -362,13 +362,21 @@ corrects it; earlier takes have none.
   averaged map is applied to every channel. It adds about 8% to a develop.
 - **darktable and RawTherapee apply it themselves**, and so should any editor that
   reads the DNGs directly.
-- **Takes recorded before 2026-10-26** have no map; `--shading-from <newer take>`
-  borrows one from a take of the same phone. The vignette is the lens's, so this is
-  close, though the map shifts a little with focus distance. `--no-shading` leaves the
-  vignette in.
+- **The phone's map is not always right.** On the same Pixel some takes carry a map
+  reaching ×3.3 and others one of ×1.2, which leaves the corners at about half the
+  centre's brightness. Neither ISO, exposure, focus, white balance, the scene's light
+  nor the shading mode explained it. `kanaha-develop` warns when a take's map is under
+  ×2; then develop with the known-good map kept in the repo:
+  `--shading-from tools/lens-shading/pixel10proxl_main.json`. darktable and other
+  editors use the DNG's own map and cannot be given another.
+- **Takes recorded before 2026-10-26** have no map; `--shading-from` takes one from the
+  JSON file above, another take or a DNG. The vignette is the lens's, so a map from the
+  same phone fits, though it shifts a little with focus distance. `--no-shading` leaves
+  the vignette in.
 
 Measured on a plain wall: corners 0.46–0.61 of the centre before, 0.80–1.01 after (the
-wall itself was darker towards one corner).
+wall itself was darker towards one corner). On a take with a ×1.2 map, a lit wall's
+corners were 0.35–0.53 of the centre with that map and 0.61–0.88 with the JSON map.
 
 ### Stabilising with Gyroflow
 
@@ -433,6 +441,7 @@ All on the Pixel 10 Pro XL (256 GB, Android 17).
 | 2026-10-25 | Two songs, 30 min of idle preview before the first | Started hot: thermal status 4, 523 of 8,117 frames dropped. Started cool: status 2 at most, none dropped |
 | 2026-10-25 | Lit studio song developed | 93.5 GB of DNG over USB in 44 min at 34 MB/s, checksums matching; 84 GB of ProRes 4444 in 64 min, 8.5 GB of memory at peak; no flicker (no frame's brightness more than 1% from the one before) |
 | 2026-10-26 | Lens-shading map in the DNGs; Gyroflow | Corners need ×3.3 (1.7 stops); applied by `kanaha-develop` (LibRaw) and darktable. A handheld take stabilised in Gyroflow from its own `take.gcsv` |
+| 2026-10-27 | Lens-shading map strength | Takes on this day carried maps of ×1.1–1.3 whatever the ISO, exposure, focus, light or shading mode; the 2026-10-26 takes ×3.3. The ×3.3 map kept in `tools/lens-shading` |
 | 2026-10-27 | Gyroflow lens profile | Calibrated from a checkerboard take, RMS error 0.34; the handheld take steady with dynamic zooming, sync points 13–19 ms |
 
 Compression is what makes a whole song possible: it keeps the write rate under both the
