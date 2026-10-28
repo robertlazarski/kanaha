@@ -11,6 +11,7 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.DngCreator;
 import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.BlackLevelPattern;
 import android.hardware.camera2.params.ColorSpaceTransform;
 import android.hardware.camera2.params.RggbChannelVector;
 import android.hardware.camera2.params.StreamConfigurationMap;
@@ -124,6 +125,9 @@ final class RawTake {
     private volatile long motionSamples = -1;
     private volatile long rollingShutterNs;
     private Size size;
+    private int stride, white = 4095;
+    private double black;
+    private volatile RawExposure exposure;   // the arming frame's, then once a second
     private final BlockingQueue<ByteBuffer> free = new ArrayBlockingQueue<>(BUFFERS);
     private final List<ByteBuffer> buffers = new ArrayList<>();
     private final Map<ByteBuffer, Integer> slotOf = new IdentityHashMap<>();
@@ -314,6 +318,9 @@ final class RawTake {
         copy.put(image.getPlanes()[0].getBuffer());
         copy.flip();
         image.close();   // the camera has its buffer back at once
+        if (index % TARGET_FPS == 0) {
+            exposure = RawExposure.measure(copy, size.getWidth(), size.getHeight(), stride, black, white);
+        }
         try {
             helper.sendFrame(slotOf.get(copy), index, copy.remaining());
         } catch (Exception e) {
@@ -334,13 +341,15 @@ final class RawTake {
             if (result == null) throw new IllegalStateException("no capture result for the arming frame");
             Long skew = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW);
             if (skew != null) rollingShutterNs = skew;
+            measureLevels(result, chars);
             ByteArrayOutputStream template = new ByteArrayOutputStream(26 << 20);
             try (DngCreator creator = new DngCreator(chars, result)) {
                 creator.writeImage(template, image);
             }
             byte[] header = PackedDngWriter.fromTemplate(template.toByteArray()).header();
             Image.Plane plane = image.getPlanes()[0];
-            int stride = plane.getRowStride();
+            stride = plane.getRowStride();
+            exposure = RawExposure.measure(plane.getBuffer(), size.getWidth(), size.getHeight(), stride, black, white);
             buffers.addAll(helper.allocate(BUFFERS, plane.getBuffer().remaining()));
             for (int i = 0; i < buffers.size(); i++) slotOf.put(buffers.get(i), i);
             // Buffers become usable only as the helper releases them, once it has mapped
@@ -357,6 +366,22 @@ final class RawTake {
             image.close();
             armedLatch.countDown();
         }
+    }
+
+    /** The black and white levels the exposure meter measures between, from the arming frame. */
+    private void measureLevels(TotalCaptureResult result, CameraCharacteristics chars) {
+        float[] dynamic = result.get(CaptureResult.SENSOR_DYNAMIC_BLACK_LEVEL);
+        if (dynamic != null && dynamic.length > 0) {
+            double sum = 0;
+            for (float b : dynamic) sum += b;
+            black = sum / dynamic.length;
+        } else {
+            BlackLevelPattern pattern = chars.get(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN);
+            if (pattern != null) black = (pattern.getOffsetForIndex(0, 0) + pattern.getOffsetForIndex(1, 0)
+                    + pattern.getOffsetForIndex(0, 1) + pattern.getOffsetForIndex(1, 1)) / 4.0;
+        }
+        Integer dynamicWhite = result.get(CaptureResult.SENSOR_DYNAMIC_WHITE_LEVEL);
+        if (dynamicWhite != null && dynamicWhite > black && dynamicWhite <= 4095) white = dynamicWhite;
     }
 
     /** End the take: stop the camera, let the helper finish writing, close everything. */
@@ -452,6 +477,8 @@ final class RawTake {
             if (helper.failures.get() + sendFailures.get() > 0) s.put("failures", helper.failures.get() + sendFailures.get());
         }
         if (helperResult != null) s.put("helper", helperResult);
+        RawExposure e = exposure;
+        if (e != null) s.put("exposure", e.toJson());
         if (endReason != null) s.put("ended_by", endReason);
         if (error != null) s.put("error", error);
         return s;

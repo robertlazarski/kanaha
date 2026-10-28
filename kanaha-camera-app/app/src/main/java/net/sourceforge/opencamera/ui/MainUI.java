@@ -2528,6 +2528,14 @@ public class MainUI {
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if( MyDebug.LOG )
             Log.d(TAG, "onKeyDown: " + keyCode);
+        // Kanaha: with "Button starts 12-bit RAW takes" on, the gimbal or remote button
+        // starts a take; the take's own screen handles the press that stops it.
+        if( org.kanaha.camera.RawTakeActivity.isTakeButton(keyCode)
+                && PreferenceManager.getDefaultSharedPreferences(main_activity).getBoolean(PreferenceKeys.ButtonRaw12PreferenceKey, false) ) {
+            if( event.getRepeatCount() == 0 )
+                org.kanaha.camera.CameraControlReceiver.startButtonTake(main_activity);
+            return true;
+        }
         switch( keyCode ) {
             case KeyEvent.KEYCODE_VOLUME_UP:
             case KeyEvent.KEYCODE_VOLUME_DOWN:

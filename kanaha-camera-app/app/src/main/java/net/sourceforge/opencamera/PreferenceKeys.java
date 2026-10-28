@@ -350,6 +350,10 @@ public class PreferenceKeys {
     // concurrent-use constraint), so it is not a safe default.
     public static final String Hlg10PreferenceKey = "preference_kanaha_hlg10";
 
+    // Kanaha: a gimbal or Bluetooth remote button starts and stops 12-bit RAW takes
+    // instead of doing what "Volume keys" says. Off by default.
+    public static final String ButtonRaw12PreferenceKey = "preference_kanaha_button_raw12";
+
     /** Kanaha: white balance frozen at the camera's own gains and colour transform, as
      *  "r,ge,go,b;m00,m01,...,m22"; empty when not locked. Applies while white balance is "manual". */
     public static final String WhiteBalanceLockPreferenceKey = "preference_kanaha_wb_lock";

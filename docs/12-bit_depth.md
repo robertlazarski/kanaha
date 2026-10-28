@@ -205,6 +205,31 @@ $CURL -d "{\"action\":\"startRecording\",\"clip_name\":\"verse1\",\"raw12\":true
 - **Refusals:** a phone without 12-bit RAW, `hlg10` with `raw12`, a recording already
   running, an unpinned or too slow shutter, and less than 30 s of free space.
 
+**Checking exposure.** The take measures its own raw values: on the arming frame,
+then once a second. `startRecording`'s reply and `getStatus` (`raw12_take`) carry
+them under `exposure`, and the take screen shows them on a second line. The preview's
+tone curve can't show clipping or headroom; these numbers come from the sensor values
+themselves. To set up, start a take, read the reply, stop it, adjust `setExposure`,
+and repeat:
+
+| Field | What it is | Act when |
+|---|---|---|
+| `clipped_pct` | photosites at the white level | above about 0.1: shorten the shutter or lower ISO |
+| `headroom_stops` | brightest 0.1% up to clipping | under about 0.3: the next bright moment clips |
+| `median_stops_below_clip` | where most of the frame sits | well past 5–6: shadows get noisy when lifted |
+
+The thresholds are starting points, not measured limits. A lit wall behind the
+performer, say, may be worth clipping.
+
+**Starting takes from a gimbal or remote button.** In Settings, More camera
+controls, tick "Button starts 12-bit RAW takes". On the camera screen, a press of the
+gimbal's Bluetooth button, a shutter remote or a volume key then starts a take (named
+`button`) with the pinned exposure, and the next press stops it. Presses in the first
+second of a take are ignored, so a double press can't end it at once. A take the
+button can't start (exposure not pinned, no space) shows the reason as a message. The
+keys it answers to are volume up and down, camera, headset hook and play/pause. To
+see what a button sends, run `adb shell getevent -l` and press it.
+
 **Between songs, release the camera.** The idle preview alone keeps about two cores
 busy (camera provider, app and camera server) and warms the phone about 0.4 °C a
 minute, so a phone left previewing for half an hour starts the song hot. Measured: a

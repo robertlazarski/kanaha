@@ -560,46 +560,12 @@ public class CameraControlReceiver extends BroadcastReceiver {
         if (hlg10) {
             return createErrorResponse(operationId, "raw12 and hlg10 cannot be combined: raw12 records the sensor's 12-bit data, hlg10 is 10-bit video");
         }
-        String unsupported = RawTake.unsupportedReason(context);
-        if (unsupported != null) return createErrorResponse(operationId, unsupported + "; record without raw12");
-        if (isRecordingActive(mainActivity)) {
-            return createErrorResponse(operationId, "A recording is already running; stop it first");
-        }
-        MyApplicationInterface app = mainActivity.getApplicationInterface();
-        if (CameraController.ISO_DEFAULT.equals(app.getISOPref()) || app.getExposureTimePref() > RAW12_MAX_EXPOSURE_NS) {
-            return createErrorResponse(operationId, "raw12 needs a pinned shutter of 1/40 s or faster and a fixed ISO, "
-                    + "or the sensor drifts below 30 fps: setExposure {\"iso\": 400, \"exposure_time_ns\": 16666667} first");
-        }
-        RawTake.Settings settings = new RawTake.Settings();
-        settings.iso = Integer.parseInt(app.getISOPref());
-        settings.exposureNs = app.getExposureTimePref();
-        float[][] lock = Preview.parseWhiteBalanceLock(app.getWhiteBalanceLockPref());
-        if ("manual".equals(app.getWhiteBalancePref()) && lock != null) {
-            settings.wbGains = lock[0];
-            settings.wbTransform = lock[1];
-        }
-        if ("focus_mode_manual2".equals(app.getFocusPref(true))) settings.focusDistance = app.getFocusDistancePref(false);
-
-        File parent = new File(context.getExternalFilesDir(null), "takes");
-        if (!parent.exists() && !parent.mkdirs()) return createErrorResponse(operationId, "Cannot create " + parent);
-        long roomSeconds = (parent.getUsableSpace() - RawTake.STOP_BELOW_FREE_BYTES) / RawTake.PLANNED_BYTES_PER_SECOND;
-        if (roomSeconds < 30) {
-            return createErrorResponse(operationId, String.format(Locale.US,
-                    "Only about %d s of 12-bit RAW fit in the free space (%d GB); offload takes first",
-                    Math.max(0, roomSeconds), parent.getUsableSpace() / 1_000_000_000L));
-        }
-        long maxSeconds = Math.min(duration > 0 ? duration : 1800, roomSeconds);
         long now = System.currentTimeMillis();
         long delayMs = startAt > 0 ? startAt - now : 0;
         boolean scheduled = delayMs >= 50 && delayMs <= 30000;   // as for any recording
-
-        String clip = clipName == null || clipName.isEmpty() ? "default_clip" : clipName;
-        String safeClip = clip.replaceAll("[^A-Za-z0-9_-]", "_");
-        if (safeClip.length() > 64) safeClip = safeClip.substring(0, 64);
-        String dirName = "RAW_" + safeClip + "_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date(now));
-        RawTake take = new RawTake(context, clip, new File(parent, dirName), scheduled ? startAt : 0, maxSeconds, settings);
-        RawTake.active = take;
-        mainActivity.runOnUiThread(() -> mainActivity.startActivity(new Intent(mainActivity, RawTakeActivity.class)));
+        RawTakePlan plan = armRawTake(context, mainActivity, clipName, duration, scheduled ? startAt : 0, now);
+        if (plan.error != null) return createErrorResponse(operationId, plan.error);
+        RawTake take = plan.take;
         // Arming fails by itself within about 30 s: opening the camera (retried for 5 s,
         // then up to 5 s more), the session (10 s) and the first frame (10 s) each have a
         // limit in RawTake. Wait longer than their sum, or a slow but working arm is cut off.
@@ -613,12 +579,102 @@ public class CameraControlReceiver extends BroadcastReceiver {
         response.put("operation_id", operationId);
         response.put("raw12", true);
         response.put("resolution", "4080x3072");
-        response.put("max_seconds", maxSeconds);
+        response.put("max_seconds", plan.maxSeconds);
         response.put("scheduled", scheduled);
         if (scheduled) response.put("start_at", startAt);
         if (startAt > 0 && !scheduled) response.put("start_at_ignored", "start_at must be 50 ms to 30 s ahead; started now");
         response.put("message", scheduled ? "12-bit RAW take armed; starts at start_at" : "12-bit RAW take started");
         return response;
+    }
+
+    /** A take that {@link #armRawTake} started arming, or why it could not. */
+    private static final class RawTakePlan {
+        RawTake take;
+        long maxSeconds;
+        String error;
+        static RawTakePlan refused(String error) { RawTakePlan p = new RawTakePlan(); p.error = error; return p; }
+    }
+
+    /**
+     * The checks and setup shared by startRecording with "raw12" and the camera button:
+     * refuses where the phone has no 12-bit RAW, while a recording runs, without a pinned
+     * shutter or without room for 30 s; otherwise makes the take, publishes it as
+     * {@link RawTake#active} and brings up {@link RawTakeActivity} to arm it. Synchronized
+     * so an API start and a button press cannot both pass the "already running" check.
+     */
+    private static synchronized RawTakePlan armRawTake(Context context, MainActivity mainActivity,
+                                                       String clipName, int duration, long startAt, long now) {
+        String unsupported = RawTake.unsupportedReason(context);
+        if (unsupported != null) return RawTakePlan.refused(unsupported + "; record without raw12");
+        if (isRecordingActive(mainActivity)) {
+            return RawTakePlan.refused("A recording is already running; stop it first");
+        }
+        MyApplicationInterface app = mainActivity.getApplicationInterface();
+        if (CameraController.ISO_DEFAULT.equals(app.getISOPref()) || app.getExposureTimePref() > RAW12_MAX_EXPOSURE_NS) {
+            return RawTakePlan.refused("raw12 needs a pinned shutter of 1/40 s or faster and a fixed ISO, "
+                    + "or the sensor drifts below 30 fps: setExposure {\"iso\": 400, \"exposure_time_ns\": 16666667} first");
+        }
+        RawTake.Settings settings = new RawTake.Settings();
+        settings.iso = Integer.parseInt(app.getISOPref());
+        settings.exposureNs = app.getExposureTimePref();
+        float[][] lock = Preview.parseWhiteBalanceLock(app.getWhiteBalanceLockPref());
+        if ("manual".equals(app.getWhiteBalancePref()) && lock != null) {
+            settings.wbGains = lock[0];
+            settings.wbTransform = lock[1];
+        }
+        if ("focus_mode_manual2".equals(app.getFocusPref(true))) settings.focusDistance = app.getFocusDistancePref(false);
+
+        File parent = new File(context.getExternalFilesDir(null), "takes");
+        if (!parent.exists() && !parent.mkdirs()) return RawTakePlan.refused("Cannot create " + parent);
+        long roomSeconds = (parent.getUsableSpace() - RawTake.STOP_BELOW_FREE_BYTES) / RawTake.PLANNED_BYTES_PER_SECOND;
+        if (roomSeconds < 30) {
+            return RawTakePlan.refused(String.format(Locale.US,
+                    "Only about %d s of 12-bit RAW fit in the free space (%d GB); offload takes first",
+                    Math.max(0, roomSeconds), parent.getUsableSpace() / 1_000_000_000L));
+        }
+        RawTakePlan plan = new RawTakePlan();
+        plan.maxSeconds = Math.min(duration > 0 ? duration : 1800, roomSeconds);
+
+        String clip = clipName == null || clipName.isEmpty() ? "default_clip" : clipName;
+        String safeClip = clip.replaceAll("[^A-Za-z0-9_-]", "_");
+        if (safeClip.length() > 64) safeClip = safeClip.substring(0, 64);
+        String dirName = "RAW_" + safeClip + "_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date(now));
+        plan.take = new RawTake(context, clip, new File(parent, dirName), startAt, plan.maxSeconds, settings);
+        RawTake.active = plan.take;
+        mainActivity.runOnUiThread(() -> mainActivity.startActivity(new Intent(mainActivity, RawTakeActivity.class)));
+        return plan;
+    }
+
+    /**
+     * The camera screen's button press with "Button starts 12-bit RAW takes" on (a gimbal
+     * or Bluetooth remote, see {@link RawTakeActivity#isTakeButton}): starts a take with
+     * the pinned settings, as startRecording with "raw12" would, named "button". Returns
+     * at once; a refusal or a failed arm shows as a toast. The next press, on the take's
+     * screen, stops it.
+     */
+    public static void startButtonTake(MainActivity mainActivity) {
+        Context context = mainActivity.getApplicationContext();
+        new Thread(() -> {
+            RawTakePlan plan = armRawTake(context, mainActivity, "button", 1800, 0, System.currentTimeMillis());
+            String error = plan.error;
+            boolean armed = false;
+            if (error == null) {
+                try {
+                    armed = plan.take.awaitArmed(35000);   // the API start's limit, see startRawTake
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (error == null && (!armed || plan.take.state == RawTake.State.FAILED)) {
+                plan.take.stop("did not arm");
+                error = plan.take.error != null ? plan.take.error : "The 12-bit RAW take did not arm within 35 s";
+            }
+            if (error != null) {
+                Log.w(TAG, "Button take refused: " + error);
+                String shown = error;
+                mainActivity.runOnUiThread(() -> android.widget.Toast.makeText(mainActivity, shown, android.widget.Toast.LENGTH_LONG).show());
+            }
+        }, "KanahaButtonTake").start();
     }
 
     /**

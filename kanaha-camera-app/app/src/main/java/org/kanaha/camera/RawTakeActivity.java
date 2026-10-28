@@ -9,13 +9,17 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.preference.PreferenceManager;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+
+import net.sourceforge.opencamera.PreferenceKeys;
 
 /**
  * The screen of a 12-bit RAW take (startRecording with "raw12": true). It owns the
@@ -23,8 +27,8 @@ import android.widget.TextView;
  * and shows the live preview with one status line: frames, drops, free space, heat.
  *
  * <p>CameraControlReceiver creates the {@link RawTake} and starts this screen; the
- * take ends on stopRecording, when its duration runs out, when free space runs low,
- * or if this screen is closed. Then the screen closes and OpenCamera returns.
+ * take ends on stopRecording, a button press (with "Button starts 12-bit RAW takes"
+ * on), when its duration runs out, when free space runs low, or if this screen is closed. Then the screen closes and OpenCamera returns.
  *
  * <p>Like the RAW probe it shows over the lock screen and handles configuration
  * changes itself (manifest): a phone that locks mid-take would otherwise recreate the
@@ -101,13 +105,57 @@ public class RawTakeActivity extends Activity {
                 org.json.JSONObject s = t.status();
                 status.setText(String.format(java.util.Locale.US, "12-bit RAW  %s  %s   %d frames  %d dropped  %.0f s   %d GB free   heat %d",
                         s.getString("take"), s.getString("state"), s.getInt("frames"), s.getInt("dropped"),
-                        s.getDouble("seconds"), s.getLong("free_gb"), thermal));
+                        s.getDouble("seconds"), s.getLong("free_gb"), thermal)
+                        + exposureText(s.optJSONObject("exposure")));
             } catch (Exception e) {
                 Log.w(TAG, "status line", e);
             }
             ui.postDelayed(this, 1000);
         }
     };
+
+    /**
+     * The keys a gimbal or Bluetooth shutter remote sends: most present themselves as a
+     * keyboard and send volume up, some send camera, headset-hook or play/pause.
+     */
+    public static boolean isTakeButton(int keyCode) {
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_VOLUME_UP:
+            case KeyEvent.KEYCODE_VOLUME_DOWN:
+            case KeyEvent.KEYCODE_CAMERA:
+            case KeyEvent.KEYCODE_HEADSETHOOK:
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * With "Button starts 12-bit RAW takes" on, the button stops the take. Presses in the
+     * first second of recording are ignored, so a double press or key bounce cannot end
+     * a take as soon as it starts; the keys are consumed either way, so a volume key does
+     * not change the volume mid-take.
+     */
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (isTakeButton(keyCode) && PreferenceManager.getDefaultSharedPreferences(this)
+                .getBoolean(PreferenceKeys.ButtonRaw12PreferenceKey, false)) {
+            RawTake t = take;
+            if (event.getRepeatCount() == 0 && t != null && t.isRecording() && t.seconds() >= 1) {
+                stopInBackground("button");
+            }
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    /** The exposure meter on the status line: how much is clipped and the margin above the rest. */
+    private static String exposureText(org.json.JSONObject e) {
+        if (e == null) return "";
+        return String.format(java.util.Locale.US, "\nclipped %.2f%%   headroom %.1f stops   median %.1f stops down",
+                e.optDouble("clipped_pct"), e.optDouble("headroom_stops"), e.optDouble("median_stops_below_clip"));
+    }
 
     private void stopInBackground(String reason) {
         RawTake t = take;
