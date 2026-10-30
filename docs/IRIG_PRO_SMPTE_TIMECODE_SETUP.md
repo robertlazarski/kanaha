@@ -254,9 +254,16 @@ network coordination during the take.
   powers up again at 00:00:00 no longer matches the Tentacles.
 - **Gain.** The iRig's mono input appears on both channels of the recording. LTC is a
   square wave and decodes even when clipping, but set the gain so it peaks around
-  −6 dBFS (orange LED, not red).
+  −6 dBFS (orange LED, not red). Judge by the median level of a test clip, not its
+  peak: AAC overshoot puts a square wave's peaks at 0 dBFS even when it is not clipping.
+- **Audio source differs by phone.** Set it in Settings > Video settings > Audio source,
+  then pick the one that does not clip at the gain the iRig needs. The Moto G Play's External
+  mic adds about 19 dB and automatic gain, so use Unprocessed. The Pixel 10 Pro XL's
+  Unprocessed clips even at zero iRig gain, so use External mic. Camcorder records the
+  built-in mic, not the iRig. 12-bit RAW takes always record Unprocessed.
 - **The USB-C port is taken.** With the iRig in the phone's only port, use wireless adb
-  for control during a shoot and copy recordings off between songs.
+  for control during a shoot and copy recordings off between songs. Its port changes
+  when the phone locks; `avahi-browse -rt _adb-tls-connect._tcp` finds it again.
 
 ### Checking it
 
