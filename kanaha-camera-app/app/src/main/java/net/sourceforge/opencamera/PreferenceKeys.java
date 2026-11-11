@@ -354,6 +354,10 @@ public class PreferenceKeys {
     // instead of doing what "Volume keys" says. Off by default.
     public static final String ButtonRaw12PreferenceKey = "preference_kanaha_button_raw12";
 
+    // Kanaha: record a separate timecode track with each video (org.kanaha.camera.ClipTimecode).
+    // Off by default.
+    public static final String ClipTimecodePreferenceKey = "preference_kanaha_timecode_audio";
+
     /** Kanaha: white balance frozen at the camera's own gains and colour transform, as
      *  "r,ge,go,b;m00,m01,...,m22"; empty when not locked. Applies while white balance is "manual". */
     public static final String WhiteBalanceLockPreferenceKey = "preference_kanaha_wb_lock";

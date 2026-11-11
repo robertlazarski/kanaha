@@ -1121,5 +1121,7 @@
     <string name="preference_kanaha_hlg10">10-bit HLG video</string>
     <string name="preference_kanaha_hlg10_summary">Record HDR video in 10-bit HLG. Forces HEVC output. The preview also switches to HLG10 while recording, and video snapshots are unavailable.</string>
     <string name="preference_kanaha_button_raw12">Button starts 12-bit RAW takes</string>
+    <string name="preference_kanaha_timecode_audio">Separate timecode track</string>
+    <string name="preference_kanaha_timecode_audio_summary">With an iRig and timecode attached, also record the audio input as its own WAV and log every frame\'s camera timestamp, so the clip lines up on timecode exactly. Both files travel with the clip.</string>
     <string name="preference_kanaha_button_raw12_summary">A gimbal or Bluetooth remote button (or a volume key) starts a 12-bit RAW take with the pinned exposure, and the next press stops it. Overrides Volume keys.</string>
 </resources>

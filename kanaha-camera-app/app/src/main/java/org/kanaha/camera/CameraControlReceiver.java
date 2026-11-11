@@ -427,6 +427,8 @@ public class CameraControlReceiver extends BroadcastReceiver {
         boolean openGate = "1".equals(intent.getStringExtra("open_gate"));
         boolean hlg10 = "1".equals(intent.getStringExtra("hlg10"));
         boolean raw12 = "1".equals(intent.getStringExtra("raw12"));
+        // A separate timecode track for this recording (ClipTimecode), whatever the setting
+        boolean timecodeAudio = "1".equals(intent.getStringExtra("timecode_audio"));
 
         // Optional scheduled start: start_at is a Unix epoch ms timestamp on this device's clock
         String startAtStr = intent.getStringExtra("start_at");
@@ -492,8 +494,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     long fireTime = System.currentTimeMillis();
                     Log.i(TAG, "Scheduled recording start firing at " + fireTime);
+                    if (timecodeAudio) ClipTimecode.requestedForNext = true;
                     if (startRecordingInternal(activity, clip)) {
                         writeSyncSidecar(context, clip, fireTime, og, tenBit);
+                    } else {
+                        ClipTimecode.requestedForNext = false;
                     }
                 }, delayMs);
 
@@ -507,14 +512,18 @@ public class CameraControlReceiver extends BroadcastReceiver {
                 response.put("timestamp", now);
                 response.put("open_gate", openGate);
                 response.put("hlg10", hlg10);
+                if (timecodeAudio) response.put("timecode_audio", true);
                 if (resolution != null) response.put("resolution", resolution);
+                putFocusDistance(response, mainActivity);
                 response.put("message", "Recording scheduled");
                 return response;
             }
 
             // Immediate start (no start_at or already past)
             long startMs = System.currentTimeMillis();
+            if (timecodeAudio) ClipTimecode.requestedForNext = true;
             boolean success = startRecordingInternal(mainActivity, clipName);
+            if (!success) ClipTimecode.requestedForNext = false;   // not carried to a later recording
             if (success) {
                 writeSyncSidecar(context, clipName, startMs, openGate, hlg10);
             }
@@ -529,7 +538,9 @@ public class CameraControlReceiver extends BroadcastReceiver {
             response.put("format", format);
             response.put("open_gate", openGate);
             response.put("hlg10", hlg10);
+            if (timecodeAudio) response.put("timecode_audio", true);
             if (resolution != null) response.put("resolution", resolution);
+            putFocusDistance(response, mainActivity);
 
             if (success) {
                 response.put("message", "Recording started successfully");
@@ -3081,7 +3092,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
     }
 
     /** Directory the sidecars live in: the app's own external files dir. */
-    private static File sidecarDirectory(Context context) {
+    static File sidecarDirectory(Context context) {
         File dir = context.getExternalFilesDir(null);
         if (dir == null) dir = context.getFilesDir();
         if (!dir.exists()) dir.mkdirs();
@@ -3097,13 +3108,16 @@ public class CameraControlReceiver extends BroadcastReceiver {
     }
 
     /** <video basename>.kanaha_start.json, the recording-start sidecar for a clip. */
-    private static File startSidecarFor(Context context, String videoName) {
+    static File startSidecarFor(Context context, String videoName) {
         int dot = videoName.lastIndexOf('.');
         String base = dot > 0 ? videoName.substring(0, dot) : videoName;
         return new File(sidecarDirectory(context), base + START_SIDECAR_SUFFIX);
     }
 
-    /** The given clips plus every existing sidecar (description, recording start) that belongs to one of them. */
+    /**
+     * The given clips plus every existing sidecar that belongs to one of them: the
+     * description, the recording start, and the separate timecode track (ClipTimecode).
+     */
     private static File[] withSidecars(Context context, File[] videos) {
         if (videos == null) return new File[0];
         java.util.ArrayList<File> all = new java.util.ArrayList<>();
@@ -3113,6 +3127,11 @@ public class CameraControlReceiver extends BroadcastReceiver {
             if (sc.exists()) all.add(sc);
             File start = startSidecarFor(context, v.getName());
             if (start.exists()) all.add(start);
+            String base = ClipTimecode.baseName(v.getName());
+            for (String suffix : new String[]{ClipTimecode.WAV_SUFFIX, ClipTimecode.FRAMES_SUFFIX}) {
+                File f = new File(sidecarDirectory(context), base + suffix);
+                if (f.exists()) all.add(f);
+            }
         }
         return all.toArray(new File[0]);
     }
@@ -3332,6 +3351,19 @@ public class CameraControlReceiver extends BroadcastReceiver {
     }
 
     /**
+     * The lens focus as the camera last reported it, in dioptres (0 = infinity), for
+     * getStatus and startRecording. In manual focus OpenCamera shows a focus slider on
+     * the screen, and a touch while handling the phone moves it; this shows that before
+     * a take is spent out of focus.
+     */
+    private static void putFocusDistance(JSONObject json, MainActivity mainActivity) throws JSONException {
+        CameraController controller = mainActivity.getPreview() != null ? mainActivity.getPreview().getCameraController() : null;
+        if (controller != null && controller.captureResultHasFocusDistance()) {
+            json.put("focus_distance", Math.round(controller.captureResultFocusDistance() * 1000) / 1000.0);
+        }
+    }
+
+    /**
      * Add detailed camera status information to response
      */
     private static void addCameraStatusDetails(JSONObject response, MainActivity mainActivity) throws JSONException {
@@ -3352,6 +3384,7 @@ public class CameraControlReceiver extends BroadcastReceiver {
             response.put("video_mode", isVideoMode);
             response.put("supports_hlg10", mainActivity.getPreview() != null
                     && mainActivity.getPreview().supportsHlg10());
+            putFocusDistance(response, mainActivity);
 
             // Battery level (from Android system)
             android.content.Intent batteryIntent = mainActivity.registerReceiver(null,

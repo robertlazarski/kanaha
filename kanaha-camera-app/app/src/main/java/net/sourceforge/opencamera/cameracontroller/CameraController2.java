@@ -242,6 +242,20 @@ public class CameraController2 extends CameraController {
 
     private boolean want_jpeg_r;
     private boolean want_hlg10; // Kanaha: 10-bit HLG capture session
+
+    /** Kanaha: told of every completed frame while set; see org.kanaha.camera.ClipTimecode. */
+    public interface FrameListener {
+        /** Sensor timestamp, exposure and rolling-shutter skew of one frame, in ns (0 if not reported). */
+        void onFrame(long frameNumber, long timestampNs, long exposureNs, long skewNs);
+    }
+    public static volatile FrameListener kanahaFrameListener;
+
+    /** Kanaha: whether this camera stamps frames on the boot clock (SystemClock.elapsedRealtimeNanos). */
+    public boolean kanahaTimestampsAreBootTime() {
+        Integer source = characteristics != null ? characteristics.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) : null;
+        return source != null && source == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME;
+    }
+
     private boolean want_raw;
     //private boolean want_raw = true;
     private int max_raw_images;
@@ -8067,6 +8081,15 @@ public class CameraController2 extends CameraController {
                     Log.d(TAG, "frameNumber: " + result.getFrameNumber());
                     Log.d(TAG, "exposure time: " + request.get(CaptureRequest.SENSOR_EXPOSURE_TIME));
                     Log.d(TAG, "frame duration: " + request.get(CaptureRequest.SENSOR_FRAME_DURATION));
+                }
+            }
+            FrameListener frameListener = kanahaFrameListener;
+            if( frameListener != null ) {
+                Long ts = result.get(CaptureResult.SENSOR_TIMESTAMP);
+                if( ts != null ) {
+                    Long exposure = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
+                    Long skew = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW);
+                    frameListener.onFrame(result.getFrameNumber(), ts, exposure != null ? exposure : 0, skew != null ? skew : 0);
                 }
             }
             process(request, result);

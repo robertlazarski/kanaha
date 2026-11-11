@@ -13,6 +13,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 
 import net.sourceforge.opencamera.cameracontroller.CameraController;
+import net.sourceforge.opencamera.cameracontroller.CameraController2;
 import net.sourceforge.opencamera.cameracontroller.RawImage;
 import net.sourceforge.opencamera.preview.ApplicationInterface;
 import net.sourceforge.opencamera.preview.BasicApplicationInterface;
@@ -2181,6 +2182,10 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             main_activity.lockScreen();
         }
         main_activity.stopAudioListeners(); // important otherwise MediaRecorder will fail to start() if we have an audiolistener! Also don't want to have the speech recognizer going off
+        // Kanaha: the separate timecode track, if wanted, starts its frame log here
+        CameraController camera_controller = main_activity.getPreview().getCameraController();
+        org.kanaha.camera.ClipTimecode.startingVideo(getContext(), getLastVideoFileName(), getRecordAudioSourcePref(),
+                camera_controller instanceof CameraController2 && ((CameraController2)camera_controller).kanahaTimestampsAreBootTime());
         ImageButton view = main_activity.findViewById(R.id.take_photo);
         view.setImageResource(R.drawable.take_video_recording);
         view.setContentDescription( getContext().getResources().getString(R.string.stop_video) );
@@ -2464,6 +2469,8 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     public void startedVideo() {
         if( MyDebug.LOG )
             Log.d(TAG, "startedVideo()");
+        // Kanaha: the timecode WAV, now the recorder runs
+        org.kanaha.camera.ClipTimecode.startedVideo();
         if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.N ) {
             if( !( main_activity.getMainUI().inImmersiveMode() && main_activity.usingKitKatImmersiveModeEverything() ) ) {
                 View pauseVideoButton = main_activity.findViewById(R.id.pause_video);
@@ -2531,6 +2538,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
             subtitleVideoTimerTask.cancel();
             subtitleVideoTimerTask = null;
         }
+        org.kanaha.camera.ClipTimecode.stoppedVideo(); // Kanaha: close the separate timecode track
 
         completeVideo(video_method, uri);
         boolean done = broadcastVideo(video_method, uri, filename);
@@ -2735,6 +2743,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
 
     @Override
     public void deleteUnusedVideo(final VideoMethod video_method, final Uri uri, final String filename) {
+        org.kanaha.camera.ClipTimecode.abort(); // Kanaha: the video is discarded, so is its timecode track
         if( MyDebug.LOG ) {
             Log.d(TAG, "deleteUnusedVideo");
             Log.d(TAG, "video_method " + video_method);
@@ -2816,6 +2825,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     public void onVideoRecordStartError(VideoProfile profile) {
         if( MyDebug.LOG )
             Log.d(TAG, "onVideoRecordStartError");
+        org.kanaha.camera.ClipTimecode.abort(); // Kanaha: no recording, so no timecode track
         String error_message;
         String features = main_activity.getPreview().getErrorFeatures(profile);
         if( !features.isEmpty() ) {
@@ -2849,6 +2859,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     public void onFailedCreateVideoFileError() {
         if( MyDebug.LOG )
             Log.d(TAG, "onFailedCreateVideoFileError");
+        org.kanaha.camera.ClipTimecode.abort(); // Kanaha: no recording, so no timecode track
         main_activity.getPreview().showToast(null, R.string.failed_to_save_video);
     }
 

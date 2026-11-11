@@ -610,8 +610,9 @@ static void create_error_response(char* buffer, size_t size, const char* error) 
  * ======================================================================== */
 
 int camera_device_start_recording_impl(const char* clip_name, const char* quality, int duration, const char* format, long long start_at, int open_gate,
-                                       int hlg10, char* reason, size_t reason_size,
-                                       char* resolution, size_t resolution_size);
+                                       int hlg10, int timecode_audio, char* reason, size_t reason_size,
+                                       char* resolution, size_t resolution_size,
+                                       char* focus_distance, size_t focus_distance_size);
 
 /* setExposure fields as the Java side takes them: numbers as their JSON text,
  * "" when not given; stabilization -1 when not given. */
@@ -715,6 +716,7 @@ int camera_control_service_invoke_json_impl(
         int open_gate = extract_json_bool(json_request, "open_gate", 0);
         int hlg10 = extract_json_bool(json_request, "hlg10", 0);
         int raw12 = extract_json_bool(json_request, "raw12", 0);
+        int timecode_audio = extract_json_bool(json_request, "timecode_audio", 0);
 
         if (raw12) {
             /* A 12-bit RAW take: the Java side's response goes back as it is - the take
@@ -728,21 +730,28 @@ int camera_control_service_invoke_json_impl(
 
         char reason[384] = "";
         char resolution[32] = "";
+        char focus_distance[32] = "";
         int result = camera_device_start_recording_impl(clip_name, quality, duration, format, start_at, open_gate,
-                                                        hlg10, reason, sizeof(reason),
-                                                        resolution, sizeof(resolution));
+                                                        hlg10, timecode_audio, reason, sizeof(reason),
+                                                        resolution, sizeof(resolution),
+                                                        focus_distance, sizeof(focus_distance));
 
         if (result == 0) {
             /* quality is what was asked for; resolution is what the camera records,
-             * which differs on a phone whose encoder cannot take the request. */
+             * which differs on a phone whose encoder cannot take the request.
+             * focus_distance (dioptres, 0 = infinity) is the lens as the take starts, so a
+             * focus moved by a touch on the phone's screen shows before the take is wasted;
+             * it is a number checked by extract_json_number_token, so it goes in unquoted. */
             char esc_clip[513], esc_quality[129], esc_res[65];   /* 2*src+1 worst-case escaping */
+            char focus_field[64] = "";
+            if (focus_distance[0]) snprintf(focus_field, sizeof(focus_field), ",\"focus_distance\":%s", focus_distance);
             snprintf(json_response, response_size,
                 "{\"success\":true,\"message\":\"Recording started\",\"clip_name\":\"%s\",\"quality\":\"%s\","
-                "\"resolution\":\"%s\",\"hlg10\":%s}",
+                "\"resolution\":\"%s\",\"hlg10\":%s%s}",
                 json_escape(clip_name, esc_clip, sizeof(esc_clip)),
                 json_escape(quality, esc_quality, sizeof(esc_quality)),
                 json_escape(resolution, esc_res, sizeof(esc_res)),
-                hlg10 ? "true" : "false");
+                hlg10 ? "true" : "false", focus_field);
         } else if (reason[0]) {
             /* The Java side's own reason, such as the camera app being in the
              * background, rather than a failure that says nothing. */
@@ -1040,10 +1049,13 @@ int camera_device_start_recording_impl(
     long long start_at,
     int open_gate,
     int hlg10,
+    int timecode_audio,
     char* reason,
     size_t reason_size,
     char* resolution,
-    size_t resolution_size
+    size_t resolution_size,
+    char* focus_distance,
+    size_t focus_distance_size
 ) {
     LOGI("camera_device_start_recording_impl called");
     LOGI("  clip_name: %s", clip_name ? clip_name : "NULL");
@@ -1053,6 +1065,7 @@ int camera_device_start_recording_impl(
     LOGI("  start_at: %lld", start_at);
     LOGI("  open_gate: %d", open_gate);
     LOGI("  hlg10: %d", hlg10);
+    LOGI("  timecode_audio: %d", timecode_audio);
 
     if (!clip_name || !quality) {
         LOGE("Invalid parameters: clip_name or quality is NULL");
@@ -1080,7 +1093,8 @@ int camera_device_start_recording_impl(
         {"--es", "format", format ? format : "MP4"},
         {"--es", "start_at", start_at_str},
         {"--es", "open_gate", open_gate ? "1" : "0"},
-        {"--es", "hlg10", hlg10 ? "1" : "0"}
+        {"--es", "hlg10", hlg10 ? "1" : "0"},
+        {"--es", "timecode_audio", timecode_audio ? "1" : "0"}
     };
 
     LOGI("Sending secure intent broadcast to start recording");
@@ -1107,6 +1121,8 @@ int camera_device_start_recording_impl(
                 !extract_json_string(response_buffer, "resolution", resolution, resolution_size)) {
                 resolution[0] = '\0';
             }
+            if (focus_distance && focus_distance_size > 0)
+                extract_json_number_token(response_buffer, "focus_distance", focus_distance, focus_distance_size);
         } else if (reason && reason_size > 0 &&
                    !extract_json_string(response_buffer, "error", reason, reason_size)) {
             reason[0] = '\0';

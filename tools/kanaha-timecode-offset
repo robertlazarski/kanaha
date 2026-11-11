@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Robert Lazarski
+"""kanaha-timecode-offset: how far a normal recording's picture sits from its own timecode.
+
+A normal recording (an MP4) carries the Tentacle's timecode as its audio track, and an
+edit lines cameras up by reading it. But the MP4 places its audio against its picture
+by when each audio buffer reached the app, which misses the delay inside the iRig and
+USB. On the Moto G Play the picture usually sits about 61 ms (1.8 frames) early against
+its timecode, but some recordings start up to 50 ms further out, so measure every clip;
+the Pixel 10 Pro XL holds near -12 ms. A recording made with the Separate timecode track setting (or startRecording
+"timecode_audio": true) has the evidence to measure that for itself, in files beside
+its start sidecar:
+
+    VID_20261031_143759.kanaha_start.json   timecode_audio_first_sample_boot_ns
+    VID_20261031_143759.timecode.wav        the timecode input, timed on the boot clock
+    VID_20261031_143759.frames.csv          every frame's sensor timestamp, same clock
+
+    kanaha-timecode-offset VID_20261031_143759.mp4
+
+  1. Match the MP4's frames to the frame log. The MP4 keeps the camera's frame times
+     relative to each other, so its gaps between frames repeat the log's, jitter and
+     dropped frames included; the one shift that makes every gap line up says which
+     logged frame each MP4 frame is. Where a phone spaces every frame exactly alike
+     (the Moto G Play), the frames it skips as the recorder starts pick out that shift.
+  2. Read the timecode of each matched frame two ways: from the separate WAV, by its
+     sensor timestamp (mid-exposure, half-way down the frame), and from the MP4's own
+     audio, by its place in the file, as an edit would.
+  3. Print the difference: the offset to add to the timecode the MP4 gives its frames.
+     It is the number parseLTC_kanaha.sh takes as camNTimecodeOffsetMs. Also how much
+     it changes from the start of the clip to the end (drift): an MP4 that stores each
+     frame gap slightly long lets its picture slide against its own timecode.
+
+With --sidecars DIR the three files are looked for in DIR instead of beside the clip.
+
+Needs: python3, numpy, ffmpeg/ffprobe and ltcdump (x42 ltc-tools).
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+import numpy as np
+
+FPS = 30
+AUDIO_RATE = 48000
+LTCDUMP_TIMEOUT_S = 300
+# The frame log matches the MP4 when its frame gaps agree to well under the camera's
+# own frame-to-frame jitter; a wrong shift by one frame leaves residuals of that jitter,
+# and a whole frame's miss wherever the camera skipped a frame (MISS_NS).
+# 30 s of frames, and the MP4's first frame looked for in the log's first 3 s: the log
+# starts as the recorder is about to start, so a match later than that cannot be right.
+MATCH_FRAMES = 900
+FIRST_FRAME_WITHIN_S = 3
+MISS_NS = 8_000_000   # a quarter frame
+
+LTC_LINE = re.compile(r"^\s*[0-9a-fA-F]{8}\s+(\d\d):(\d\d):(\d\d)[:;.](\d\d)\s+\|\s+(-?\d+)\s+(-?\d+)")
+
+
+def fail(msg):
+    sys.exit("kanaha-timecode-offset: " + msg)
+
+
+def tc_text(seconds):
+    """Seconds since midnight -> "HH:MM:SS:FF.ff", the frame to a hundredth."""
+    frames = round(seconds * FPS, 2)
+    s = int(frames // FPS)
+    return "%02d:%02d:%02d:%05.2f" % (s // 3600, s // 60 % 60, s % 60, frames - s * FPS)
+
+
+def ltc_fit(wav, label):
+    """Timecode seconds = t0 + rate * sample, fitted over every LTC frame in the WAV.
+
+    A frame's timecode names the instant its LTC word starts, the sample ltcdump gives
+    first. Decodes that land off the line (a dropout misread) are left out of the fit."""
+    for channel in ("1", "2"):                     # the iRig may carry LTC on either side
+        r = subprocess.run(["ltcdump", "-F", "-c", channel, wav], capture_output=True, text=True,
+                           timeout=LTCDUMP_TIMEOUT_S)
+        pts = []
+        for m in map(LTC_LINE.match, r.stdout.splitlines()):
+            if m:
+                h, mi, s, f, start = (int(x) for x in m.groups()[:5])
+                pts.append((start, (h * 60 + mi) * 60 + s + f / FPS))
+        if len(pts) >= 30:
+            break
+    else:
+        fail("no timecode in %s (%s)" % (os.path.basename(wav), label))
+    s, t = np.array(pts, float).T
+    # Start from the nominal speed and the median offset, which a misread frame (ltcdump
+    # can report 01:00:60:00) cannot move, keep the frames on that line, then fit them.
+    t0 = np.median(t - s / AUDIO_RATE)
+    keep = np.abs(t - (t0 + s / AUDIO_RATE)) < 0.5 / FPS
+    rate, t0 = np.polyfit(s[keep], t[keep], 1)
+    return t0, rate, int(keep.sum())
+
+
+def mp4_frames(clip):
+    """Video frame times in seconds, exact from the stream's own ticks, and the audio start."""
+    info = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", clip],
+                                     capture_output=True, text=True).stdout)
+    video = next(s for s in info["streams"] if s["codec_type"] == "video")
+    audio = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)
+    if audio is None:
+        fail("%s has no audio track to compare with" % clip)
+    num, den = (int(x) for x in video["time_base"].split("/"))
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+                          "frame=best_effort_timestamp", "-of", "csv=p=0", clip],
+                         capture_output=True, text=True).stdout.split()
+    ticks = np.array([int(x.strip(",")) for x in out if x.strip(",").lstrip("-").isdigit()], np.int64)
+    return ticks * num / den, float(audio.get("start_time", 0)), (num, den)
+
+
+def match(pts, log_ts):
+    """The best and next best candidates for the logged frame that is the MP4's frame 0,
+    each as (misses, mean residual in ns, index into the log).
+
+    For each candidate logged frame k as the MP4's first, every MP4 frame's time is
+    shifted onto the log by the same amount and the nearest logged frame found. Two
+    things tell the right k from its neighbours:
+    - misses, MP4 frames with no logged frame within a quarter frame, plus logged
+      frames inside the clip that no MP4 frame lands on. A phone whose frames are
+      evenly spaced (the Moto G Play's are, to the microsecond) still skips the odd
+      frame, usually as the recorder starts, and the MP4 has the same hole; a wrong
+      shift puts an MP4 frame into the log's hole or the MP4's hole over a logged
+      frame. The right k has none, or one per frame the recorder itself dropped.
+    - the mean residual, each capped at 2 ms, on a phone whose frame gaps vary by tens
+      of microseconds: a shift one frame off misses by that variation on every frame.
+      Not on its own on an evenly spaced phone, where the MP4's rounded frame times
+      drift from the log by about 2 us a frame and that drift outweighs a few misses.
+    A frame the recorder drops counts as one miss against every candidate alike."""
+    rel = ((pts[:MATCH_FRAMES] - pts[0]) * 1e9).astype(np.int64)
+    best = []
+    for k in range(len(log_ts)):
+        if log_ts[k] - log_ts[0] > FIRST_FRAME_WITHIN_S * 1e9:
+            break
+        pred = log_ts[k] + rel
+        if pred[-1] > log_ts[-1] + 50_000_000:
+            break
+        j = np.clip(np.searchsorted(log_ts, pred), 1, len(log_ts) - 1)
+        res = np.minimum(np.abs(log_ts[j] - pred), np.abs(log_ts[j - 1] - pred))
+        hit = np.where(np.abs(log_ts[j] - pred) <= np.abs(log_ts[j - 1] - pred), j, j - 1)[res <= MISS_NS]
+        in_clip = np.searchsorted(log_ts, pred[-1] + MISS_NS) - np.searchsorted(log_ts, pred[0] - MISS_NS)
+        misses = int((res > MISS_NS).sum()) + int(in_clip - len(np.unique(hit)))
+        best.append((misses, float(np.minimum(res, 2_000_000).mean()), k))
+    if not best:
+        fail("the frame log is shorter than the clip")
+    best.sort()
+    return best[0], (best[1] if len(best) > 1 else (len(rel), float("inf"), -1))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("clip", help="the recording (.mp4)")
+    ap.add_argument("--sidecars", help="folder holding its sidecars (default: beside the clip)")
+    a = ap.parse_args()
+    for tool in ("ffmpeg", "ffprobe", "ltcdump"):
+        if not shutil.which(tool):
+            fail(tool + " not found")
+
+    base = os.path.splitext(os.path.basename(a.clip))[0]
+    folder = a.sidecars or os.path.dirname(os.path.abspath(a.clip))
+    sidecar_path = os.path.join(folder, base + ".kanaha_start.json")
+    if not os.path.isfile(sidecar_path):
+        fail("no start sidecar %s" % sidecar_path)
+    side = json.load(open(sidecar_path))
+    if "timecode_audio" not in side:
+        fail("%s was recorded without a separate timecode track" % os.path.basename(a.clip))
+    if side.get("frame_clock") != "boottime":
+        fail("this camera does not stamp frames on the boot clock; its frames cannot be timed against the WAV")
+    first_sample_ns = int(side.get("timecode_audio_first_sample_boot_ns") or 0)
+    if not first_sample_ns:
+        fail("the phone did not give the timecode WAV's start time")
+    wav = os.path.join(folder, side["timecode_audio"])
+    log = np.loadtxt(os.path.join(folder, side["frame_log"]), delimiter=",", skiprows=1, dtype=np.int64, ndmin=2)
+    log = log[np.argsort(log[:, 1])]
+    log = log[np.concatenate(([True], np.diff(log[:, 1]) > 0))]   # one row per frame
+    log_ts, exposure, skew = log[:, 1], log[:, 2], log[:, 3]
+
+    pts, audio_start, (num, den) = mp4_frames(a.clip)
+    (misses, residual, k), (runner_misses, runner_up, _) = match(pts, log_ts)
+    print("%s: %d frames in the MP4, %d in the frame log" % (base, len(pts), len(log_ts)))
+    print("  frames matched with %d misses and a mean timing residual of %.3f ms"
+          " (next best shift: %d misses, %.3f ms)" % (misses, residual / 1e6, runner_misses, runner_up / 1e6))
+    # No misses against at least one: the next best would need the recorder to have
+    # dropped a frame exactly where the camera skipped one.
+    clear = ((misses == 0 and runner_misses >= 1) or runner_misses >= misses + 2
+             or runner_up >= 3 * residual + 5_000)
+    if misses > 1 or residual > 1e6 or not clear:
+        fail("the MP4's frames do not match the frame log unambiguously; no offset given")
+
+    wav_t0, wav_rate, wav_n = ltc_fit(wav, "separate WAV")
+    with tempfile.TemporaryDirectory() as d:
+        mp4_wav = os.path.join(d, "a.wav")
+        subprocess.run(["ffmpeg", "-v", "error", "-i", a.clip, "-map", "0:a:0", "-c:a", "pcm_s16le",
+                        "-ar", str(AUDIO_RATE), mp4_wav, "-y"], check=True)
+        mp4_t0, mp4_rate, mp4_n = ltc_fit(mp4_wav, "MP4 audio")
+    print("  timecode: %d frames decoded from the separate WAV, %d from the MP4's audio" % (wav_n, mp4_n))
+    # The WAV's start is the median of ~100 audio timestamps; their interquartile range
+    # says how far to trust it. Older recordings took a single one and leave this out.
+    iqr_ns = side.get("timecode_audio_stamp_iqr_ns")
+    if iqr_ns is None:
+        print("  WAV start from a single audio timestamp (recorded before the median); it can be tens of ms off")
+    else:
+        print("  WAV start: audio timestamps agree within %.2f ms (interquartile range)" % (iqr_ns / 1e6))
+        if iqr_ns > 2_000_000:
+            print("  warning: the audio timestamps disagree by more than 2 ms; the offset may be off by as much")
+
+    # Each MP4 frame's logged frame, and both readings of its timecode, wherever the
+    # separate WAV covers it (it starts a moment after the recording).
+    shift = log_ts[k] - int(round(pts[0] * 1e9))
+    pred = (pts * 1e9).astype(np.int64) + shift
+    j = np.clip(np.searchsorted(log_ts, pred), 1, len(log_ts) - 1)
+    j = np.where(np.abs(log_ts[j - 1] - pred) < np.abs(log_ts[j] - pred), j - 1, j)
+    ok = np.abs(log_ts[j] - pred) < 1_000_000
+    picture_ns = log_ts[j] + exposure[j] // 2 + skew[j] // 2           # mid-exposure, mid-frame
+    wav_sample = (picture_ns - first_sample_ns) / 1e9 * AUDIO_RATE
+    ok &= wav_sample > 0
+    true_tc = wav_t0 + wav_rate * wav_sample
+    mp4_tc = mp4_t0 + mp4_rate * (pts - audio_start) * AUDIO_RATE
+    diff_ms = (true_tc - mp4_tc)[ok] * 1000
+    if len(diff_ms) < 30:
+        fail("too few frames covered by both timecode readings (%d)" % len(diff_ms))
+    offset = float(np.median(diff_ms))
+    first = int(np.argmax(ok))
+    # Drift: the offset as a straight line over the clip's own time.
+    t = pts[ok] - pts[ok][0]
+    slope, start = np.polyfit(t, diff_ms, 1)
+    end = start + slope * t[-1]
+    scatter = float(np.std(diff_ms - (start + slope * t)))
+    print("  %d frames compared over %.0f s; scatter about the line %.2f ms"
+          % (len(diff_ms), t[-1], scatter))
+    print("  frame %d: %s by its own audio, %s by the camera's clock" % (first, tc_text(mp4_tc[first]), tc_text(true_tc[first])))
+    print("\ntimecode offset %+.1f ms (%+.2f frames): add it to the timecode the MP4 gives its frames" % (offset, offset * FPS / 1000))
+    print("drift %+.2f ms a minute: %+.1f ms at the start of the clip, %+.1f ms at the end"
+          % (slope * 60, start, end))
+    print("for parseLTC_kanaha.sh: camNTimecodeOffsetMs=%.1f" % offset)
+
+
+if __name__ == "__main__":
+    main()
