@@ -358,25 +358,6 @@ timestamps leave out; the gate test above measures that.
 
 ---
 
-## The "Drawer Phone" Opportunity
-
-There are an estimated **500 million unused smartphones** sitting in drawers worldwide. Many of these are perfectly capable devices limited only by:
-- Outdated OS (can't run latest apps)
-- Cracked screens (still functional for recording)
-- Battery degradation (works fine when plugged in)
-
-Kanaha's multi-camera system can repurpose these devices as dedicated recording stations. The key challenges documented here—USB OTG compatibility and power delivery—are solvable with the right equipment.
-
-**Caveat:** Phones from approximately 2019 and older (notably the Moto X4 / Qualcomm SDM660)
-lack sufficient USB OTG VBUS current for the iRig Pro I/O to enumerate. After exhaustive
-testing (5 approaches including hubs, Y-splitters, batteries, and DC adapters), these phones
-are **not viable for SMPTE timecode recording**. Kanaha itself works fine for camera control
-and video recording on these devices — only the USB audio interface for timecode is affected.
-Phones from ~2021+ (Pixel 6 and later) with full USB-C Power Delivery work with a simple
-direct connection.
-
----
-
 ## References
 
 - Kanaha Multi-Camera Deployment System: [MULTI_CAMERA_DEPLOYMENT_SYSTEM.md](MULTI_CAMERA_DEPLOYMENT_SYSTEM.md)
