@@ -344,7 +344,23 @@ sequencer's gate output drives both an LED in shot and an F8 input:
 - **Wiring.** GATE OUT (3.5 mm) split two ways: tip → 1 kΩ → LED → sleeve; and tip →
   10 kΩ → the tip of a 1/4" TS plug, with 1 kΩ from there to ground (5 V becomes about
   0.45 V). Into an F8 input at line level, phantom power off. Optionally the Tentacle's
-  LTC on another F8 input, to tell its drift from the phone's delay.
+  LTC on another F8 input, to tell its drift from the phone's delay. On a breadboard,
+  which does the splitting (no Y-cable or multiple):
+
+  ```
+  SQ-1 GATE OUT ── 3.5 mm TS plug, screw terminals
+                     pin 1 (tip) ───── gate row
+                     pin 2 (sleeve) ── ground rail (−)
+
+  gate row ── 1 kΩ ── LED long leg      LED short leg ── ground rail
+  gate row ── 10 kΩ ── F8 row           F8 row ── 1 kΩ ── ground rail
+  F8 row ── wire ── tip of a 1/4" TS plug, screw terminals ── F8 input
+  ground rail ── wire ── sleeve of the same plug
+  ```
+
+  Every hole in a breadboard row is joined, so both branches see the same gate. Solid
+  22 AWG wire stays put in the holes; stranded wire works loose. A 15 V gate is safe
+  too: about 13 mA through the LED and 1.4 V at the F8.
 - **Shooting.** The LED near the middle of the frame's height (the rolling shutter
   times each row differently), at the exposure used for real takes. Record a minute or
   more of steps with the phone (Separate timecode track on) and the F8 together.
