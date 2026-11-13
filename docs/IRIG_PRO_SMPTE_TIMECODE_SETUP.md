@@ -381,6 +381,28 @@ time), and the tools treated the iRig as exactly 48 kHz (about 1 ms a song). Wha
 clock comparison shows is a fixed delay inside the iRig and USB that the phone's audio
 timestamps leave out; the gate test above measures that.
 
+### Which phone syncs better
+
+Measured every clip and retimed, both phones land within 0.04 ms of their own LTC; they
+differ in how much of that depends on inference (2026-11-13):
+
+| | Moto G Play 2024 | Pixel 10 Pro XL |
+|---|---|---|
+| MP4 frame times | the sensor's real ones | rounded to exactly 1/30 s |
+| Drift against its LTC | none: one offset per clip | 1.5 ms a minute: needs `--retime` |
+| iRig audio clock | follows the phone's | its own, 4.6 ppm off: measured per take |
+| The MP4's first frame | found from the frame timing | inferred from the camera's start-up pause |
+| Offset at the start | +60 ms, but twice 27 and 52 ms further out | −11 ms, steady |
+| Cadence in a 30 fps render | one frame skipped about every 46 s (30.0217 fps) | one frame shown twice about every 6 min (29.9974 fps) |
+| 12-bit RAW | no | yes |
+
+For sync the Moto is the simpler of the two: everything in its chain can be checked
+from the clip itself, and the start jumps that are its one known fault are caught
+because its frame match is unambiguous. The Pixel's corrections are predictable but
+there are more of them, and its first frame rests on an inference the gate test
+confirms. If it passes, the two are equal for sync and the Pixel is the better camera
+for cadence and picture.
+
 ---
 
 ## References
