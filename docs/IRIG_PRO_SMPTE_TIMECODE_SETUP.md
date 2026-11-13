@@ -316,7 +316,8 @@ frame out on one take. So measure every clip:
    `"timecode_audio": true`. Beside the start sidecar the phone writes the LTC as its own
    WAV, timed on the boot clock, and every frame's sensor timestamp on the same clock.
    A take of 80 s or more also measures the WAV's real sample rate on that clock: the
-   iRig's converter has its own crystal (4.6 ppm slow against the Pixel, 2026-11-13),
+   iRig's converter can run on its own crystal (4.6 ppm slow against the Pixel; on the
+   Moto G Play its audio followed the phone's clock exactly, 2026-11-13),
    which unmeasured would misplace frames by about 1 ms by the end of a song.
 2. Run `tools/kanaha-timecode-offset VID_….mp4 --retime fixed/VID_….mp4`. It prints the
    offset and drift and writes a stream copy (no re-encode) with each frame moved onto
@@ -369,7 +370,7 @@ assumes two of these clocks agree. Each relationship is measured per take instea
 |---|---|---|---|
 | Zoom F8 | the master timecode and its own audio | — | the reference |
 | Tentacle Sync E | its LTC | 1.6 ppm (Pixel, 2026-11-13) | jammed from the F8, then free-running; re-jam each session |
-| iRig Pro I/O | when each audio sample is taken | 4.6 ppm slow | measured from audio timestamps at both ends of a take of 80 s or more |
+| iRig Pro I/O | when each audio sample is taken | 4.6 ppm slow on the Pixel; 0.0 on the Moto, whose audio follows its clock | measured from audio timestamps at both ends of a take of 80 s or more |
 | Phone boot clock | frame and audio timestamps | — | the bridge every other clock is measured through |
 | Camera sensor | when frames are exposed | about 103 ppm (Pixel) | Android converts frame times to the boot clock; the frame log carries them |
 
