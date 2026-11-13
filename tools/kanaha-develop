@@ -25,9 +25,10 @@ it, the way an edit expects a camera clip:
 With LibRaw on a 22-core machine a real take develops at 2 to 2.5 frames a second:
 a 4.5 minute take takes about an hour. Frames are developed in parallel a little
 ahead of ffmpeg and deleted once encoded, so the working space is a window of frames,
-not the 600 GB a whole take of 16-bit frames would need. A frame missing from the
-folder (a dropped frame) is filled with the frame before it, so the movie keeps the
-take's timing.
+not the 600 GB a whole take of 16-bit frames would need. The movie shows, at each
+1/30 s, the frame the sensor exposed nearest to it (take.frames.csv), so it keeps the
+take's timing although the sensor's 30 fps is not exactly 30, and a frame missing from
+the folder (a dropped frame) is filled with its neighbour.
 
 A take with a motion log (take.gcsv, the phone's gyroscope) also gets <movie>.gcsv
 beside the movie, which Gyroflow loads with it to stabilise the take.
@@ -446,8 +447,41 @@ def ffmpeg_command(out, codec, prores_encoder, wav, offset_ms, timecode, take_na
     return cmd
 
 
-def encode_take(take, numbers, cmd, develop, jobs, work):
-    """Develop every frame and pipe it to ffmpeg, in order.
+def frame_schedule(take, numbers):
+    """The frame number shown at each 1/30 s of the movie, and how it was worked out.
+
+    A sensor's 30 fps is not exactly 30: the Pixel 10 Pro XL's runs at 29.9974, so a
+    movie that showed one frame after another would slide 5.3 ms a minute against the
+    take's audio and timecode. With take.frames.csv (each frame's sensor timestamp) each
+    1/30 s after the first frame shows the frame exposed nearest to it; the Pixel's then
+    shows one frame twice about every 6 minutes, and a dropped frame (no DNG) is filled
+    with its nearest neighbour. Without the log, one frame per number, as recorded, with
+    a dropped frame filled by the one before it."""
+    import numpy as np
+    present = np.array(numbers)
+    path = os.path.join(take, "take.frames.csv")
+    if not os.path.exists(path):
+        frames = np.arange(numbers[0], numbers[-1] + 1)
+        return present[np.searchsorted(present, frames, side="right") - 1].tolist(), \
+            "no frame log: one frame per number"
+    log = np.loadtxt(path, delimiter=",", skiprows=1, dtype=np.int64, ndmin=2)
+    stamp = dict(zip(log[:, 0].tolist(), log[:, 1].tolist()))
+    present = present[[n in stamp for n in numbers]]
+    if len(present) < 2:
+        return [numbers[0]], "frame log covers fewer than two frames"
+    times = np.array([stamp[n] for n in present.tolist()])
+    t0 = times[0]
+    count = int(round((times[-1] - t0) * FPS / 1e9)) + 1
+    want = t0 + np.arange(count) * 1e9 / FPS
+    j = np.clip(np.searchsorted(times, want), 1, len(times) - 1)
+    j = np.where(want - times[j - 1] < times[j] - want, j - 1, j)
+    period = np.median(np.diff(times)) if len(times) > 2 else 1e9 / FPS
+    return present[j].tolist(), "placed by sensor time (frames %.4f fps, %+d ppm)" % (
+        1e9 / period, round((period * FPS / 1e9 - 1) * 1e6))
+
+
+def encode_take(take, schedule, cmd, develop, jobs, work):
+    """Develop every frame the schedule shows and pipe it to ffmpeg, one per 1/30 s.
 
     Developing is the slow part, so `jobs` frames are developed at once on a thread
     pool, each one a separate dcraw_emu or darktable-cli process. Up to `window`
@@ -455,24 +489,27 @@ def encode_take(take, numbers, cmd, develop, jobs, work):
     read, deleted, and written to ffmpeg's stdin as soon as its turn comes, so the
     working folder never holds more than `window` frames (a few GB).
 
-    A dropped frame (a number missing from the folder) is filled by sending the
-    previous frame again, so the movie has one frame per 1/30 s of the take."""
-    first, last = numbers[0], numbers[-1]
+    The schedule (frame_schedule) never goes back, and names a frame twice in a row
+    where it is shown twice (a dropped frame, or a sensor slower than 30 fps); the
+    frame is developed once and its pixels sent again."""
+    order = sorted(set(schedule))   # each frame developed once, in the order shown
     window = max(2, jobs * 2)
     encoder = None          # ffmpeg, started on the first frame, which gives the size
     size = None
-    previous = None         # the last frame's pixels, resent for a dropped frame
+    previous = None         # the last frame's pixels, resent when it is shown again
+    shown = None            # the frame number those pixels are
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             pending = {}    # frame number -> future of its developed PPM path
-            nxt = 0         # index in `numbers` of the next frame to start developing
-            for n in range(first, last + 1):
+            nxt = 0         # index in `order` of the next frame to start developing
+            for n in schedule:
                 # Keep the pool fed: start frames in order until `window` are in flight.
-                while nxt < len(numbers) and len(pending) < window:
-                    k = numbers[nxt]
+                while nxt < len(order) and len(pending) < window:
+                    k = order[nxt]
                     pending[k] = pool.submit(develop, os.path.join(take, "frame_%06d.dng" % k), work)
                     nxt += 1
-                if n in pending:                           # n is in the folder (not dropped)
+                if n != shown:
+                    shown = n
                     developed = pending.pop(n).result()    # waits for it if still developing
                     w, h, data = read_ppm(developed)
                     os.remove(developed)
@@ -483,7 +520,6 @@ def encode_take(take, numbers, cmd, develop, jobs, work):
                     elif (w, h) != size:
                         sys.exit("frame %d is %dx%d, not %dx%d" % ((n, w, h) + size))
                     previous = data
-                # Sends frame n, or, if n was dropped, the frame before it again.
                 encoder.stdin.write(previous)
     except BaseException:
         # A frame failed, or Ctrl-C: stop ffmpeg rather than leave it waiting on a pipe
@@ -586,15 +622,17 @@ def main():
         print("stamped %s, first frame %s" % (os.path.basename(take), frames_to_tc(timecode)), file=sys.stderr)
         return
 
+    schedule, how = frame_schedule(take, numbers)
+    print("movie: %d frames, %s" % (len(schedule), how), file=sys.stderr)
     cmd = ffmpeg_command(out, a.codec, a.prores_encoder, wav, offset_ms, timecode,
-                         os.path.basename(take), last - first + 1)
+                         os.path.basename(take), len(schedule))
     develop = develop_darktable
     if a.developer == "libraw":
         shading = None if a.no_shading else take_shading(take, numbers, a.shading_from)
         develop = lambda dng, out_dir: develop_libraw(dng, out_dir, shading)
     work = tempfile.mkdtemp(prefix="kanaha-develop-", dir=a.tmp or os.path.dirname(out))
     try:
-        encode_take(take, numbers, cmd, develop, a.jobs, work)
+        encode_take(take, schedule, cmd, develop, a.jobs, work)
     finally:
         shutil.rmtree(work, ignore_errors=True)   # developed frames, even after a failure
     print("wrote %s" % out, file=sys.stderr)

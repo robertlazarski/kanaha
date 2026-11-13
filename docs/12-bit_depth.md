@@ -106,6 +106,7 @@ RAW_verse1_20261025_025807/
 ├── frame_000000.dng ... frame_008113.dng   one per frame, 4080×3072, lossless 12-bit
 ├── take.wav                                the phone's audio input: with the iRig, the Tentacle's LTC
 ├── take.gcsv                               the phone's gyroscope, for stabilising with Gyroflow
+├── take.frames.csv                         each frame's sensor timestamp
 └── take.kanaha_start.json                  settings, frame counts, and where the first frame sits in take.wav
 ```
 
@@ -318,9 +319,14 @@ more than turnaround.
    of one dim take differ by 4% and would flicker. The lens-shading map is applied too
    ([Lens shading](#lens-shading)). `--developer darktable` uses darktable's processing
    instead (slower, best highlight handling).
-2. **Encodes** the frames with ffmpeg, with `take.wav` as the audio trimmed to start at
-   the first frame. A dropped frame is filled with the one before it, so the movie
-   keeps the take's timing.
+2. **Encodes** the frames with ffmpeg at exactly 30 fps, with `take.wav` as the audio
+   trimmed to start at the first frame. Each 1/30 s shows the frame the sensor exposed
+   nearest to it (`take.frames.csv`): the Pixel 10 Pro XL's sensor runs at 29.9974 fps
+   at its fastest (the same minimum frame duration as its 4K video, measured
+   2026-11-13), so one after another its frames would slide 5.3 ms a minute behind the
+   audio, 21 ms over a song. Placed by time, one frame shows twice about every 6
+   minutes instead. A dropped frame is filled with its neighbour. Takes recorded before
+   the frame log keep one frame per number.
 3. **Writes the timecode** of the first frame, read from the LTC in `take.wav`, into
    the MOV's timecode track, where ffmpeg and ffprobe read it.
 

@@ -28,9 +28,12 @@ import android.view.Surface;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -60,8 +63,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>A take writes one folder: the frames, {@code take.wav} (the audio input, which
  * with the iRig is SMPTE timecode), {@code take.gcsv} (the phone's motion, for
- * Gyroflow; {@link MotionLog}) and {@code take.kanaha_start.json}, which says when the
- * first frame was exposed and where it falls in the WAV.
+ * Gyroflow; {@link MotionLog}), {@code take.frames.csv} (each frame's sensor timestamp)
+ * and {@code take.kanaha_start.json}, which says when the first frame was exposed and
+ * where it falls in the WAV.
  *
  * <p>Exposure is fixed for the take from setExposure's saved settings, and the shutter
  * must be pinned: on auto exposure in a dim room the sensor ran at 29.74 fps.
@@ -79,6 +83,7 @@ final class RawTake {
     /** A take stops itself when free space falls this low. */
     static final long STOP_BELOW_FREE_BYTES = 6L << 30;
     static final String SIDECAR = "take.kanaha_start.json";
+    static final String FRAME_LOG = "take.frames.csv";
 
     enum State { ARMING, WAITING, RECORDING, STOPPING, DONE, FAILED }
 
@@ -109,6 +114,7 @@ final class RawTake {
     private final AtomicInteger missing = new AtomicInteger();
     private final AtomicInteger sendFailures = new AtomicInteger();
     private volatile long firstFrameNs, lastFrameNs, firstFrameWallMs;
+    private BufferedWriter frameLog;         // take.frames.csv, written on the camera thread
     private volatile long startClockNs;      // frames stamped earlier are not part of the take
     private volatile boolean bootClock;      // sensor timestamps are boot time (REALTIME source)
     private volatile String helperResult;
@@ -211,6 +217,8 @@ final class RawTake {
         size = largest(chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP).getOutputSizes(ImageFormat.RAW_SENSOR));
 
         helper = DngHelper.start(context, dir, THREADS);
+        frameLog = new BufferedWriter(new FileWriter(new File(dir, FRAME_LOG)));
+        frameLog.write("frame_number,timestamp_ns\n");
         camera = openCamera(manager, id);
         reader = ImageReader.newInstance(size.getWidth(), size.getHeight(), ImageFormat.RAW_SENSOR, 8);
         reader.setOnImageAvailableListener(r -> onFrame(r, chars), cameraHandler);
@@ -308,6 +316,13 @@ final class RawTake {
         }
         lastFrameNs = ts;
         int index = frames.getAndIncrement();
+        // Each frame's sensor time, so kanaha-develop places it by when it was exposed:
+        // the sensor's 30 fps is not exactly 30 (29.9974 on the Pixel 10 Pro XL).
+        try {
+            frameLog.write(index + "," + ts + "\n");
+        } catch (IOException e) {
+            Log.w(TAG, "frame log: " + e.getMessage());
+        }
         ByteBuffer copy = free.poll();
         if (copy == null) {
             drops.incrementAndGet();
@@ -404,6 +419,7 @@ final class RawTake {
             }
             if (audio != null) audio.stop();
             if (motion != null) motionSamples = motion.stop();
+            closeFrameLog();
             if (helper != null) helperResult = helper.finish(120);
             writeSidecar(true);
             state = State.DONE;
@@ -438,11 +454,18 @@ final class RawTake {
         close();
     }
 
+    /** Once the camera has stopped delivering frames; closing twice is harmless. */
+    private void closeFrameLog() {
+        try { if (frameLog != null) frameLog.close(); } catch (IOException ignored) { }
+    }
+
+    /** Every way a take ends (stop, fail) comes through here. */
     private void close() {
         try { if (session != null) session.close(); } catch (Exception ignored) { }
         if (camera != null) camera.close();
         if (reader != null) reader.close();
         if (cameraThread != null) cameraThread.quitSafely();
+        closeFrameLog();
     }
 
     boolean isRunning() {
@@ -500,6 +523,7 @@ final class RawTake {
             }
             if (finished && audio != null) j.put("audio_seconds", Math.round(audio.seconds() * 10) / 10.0);
             j.put("motion", motion != null ? motion.fileName() : JSONObject.NULL);
+            j.put("frame_log", FRAME_LOG);
             if (finished && motionSamples >= 0) j.put("motion_samples", motionSamples);
             j.put("finished", finished);
             File tmp = new File(dir, SIDECAR + ".tmp");
