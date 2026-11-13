@@ -286,6 +286,41 @@ warns when the rate is not 30 fps: [12-bit_depth.md](12-bit_depth.md#timecode). 
 sync without timecode hardware (GPS/NTP, `start_at`, a slate tone) is in
 [GPS.md](GPS.md).
 
+### Placing the picture on its timecode (normal video)
+
+An MP4's timecode is not its picture's. The recorder places the audio against the
+picture by when each audio buffer reached the app, so the LTC in the MP4 sits a fixed
+amount from the frames, and on the Pixel the gap also grows during the take:
+
+| Phone | Offset at the start | Drift | Why |
+|---|---|---|---|
+| Moto G Play 2024 | about +60 ms (1.8 frames) | none | MP4 frame times follow the sensor |
+| Pixel 10 Pro XL | about −11 ms | +1.7 ms a minute | MP4 spaces frames exactly 1/30 s; the sensor runs 88 ppm slow |
+
+Neither number can be set once and trusted. The Moto has twice started a recording
+27 and 52 ms further out (not reproduced in 28 later takes), and the Pixel has read one
+frame out on one take. So measure every clip:
+
+1. Record with the Separate timecode track setting, or `startRecording` with
+   `"timecode_audio": true`. Beside the start sidecar the phone writes the LTC as its own
+   WAV, timed on the boot clock, and every frame's sensor timestamp on the same clock.
+2. Run `tools/kanaha-timecode-offset VID_….mp4 --retime fixed/VID_….mp4`. It prints the
+   offset and drift and writes a stream copy (no re-encode) with each frame moved onto
+   its own audio's timecode. ffmpeg places frames by their timestamps, so the copy needs
+   no further offset in an ffmpeg edit; an editor that counts frames at 30 fps would not
+   honour it.
+
+On 16 two-minute takes (8 per phone, 2026-11-11) the retimed copies measured 0.0 ms
+offset and no drift, against a scatter of 0.04 ms. That check uses the phone's own
+clocks. Two things it cannot see:
+
+- **Delay the phone's audio timestamp does not include**, such as inside the iRig. The
+  end-to-end check is a gate (a Korg SQ-1 GATE OUT) lighting an LED in shot and feeding
+  an F8 input at the same instant, then comparing the two in the edit.
+- **Which frame the Pixel's MP4 starts on.** Its even frame times cannot show it, so the
+  tool takes the first frame after the camera's start-up pause, which is the frame the
+  timing picks on every Moto clip. The gate test confirms it.
+
 ---
 
 ## The "Drawer Phone" Opportunity

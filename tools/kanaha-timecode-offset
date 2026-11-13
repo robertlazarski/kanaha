@@ -8,7 +8,7 @@ edit lines cameras up by reading it. But the MP4 places its audio against its pi
 by when each audio buffer reached the app, which misses the delay inside the iRig and
 USB. On the Moto G Play the picture usually sits about 61 ms (1.8 frames) early against
 its timecode, but some recordings start up to 50 ms further out, so measure every clip;
-the Pixel 10 Pro XL holds near -12 ms. A recording made with the Separate timecode track setting (or startRecording
+the Pixel 10 Pro XL starts near -12 ms and drifts about 1.7 ms a minute. A recording made with the Separate timecode track setting (or startRecording
 "timecode_audio": true) has the evidence to measure that for itself, in files beside
 its start sidecar:
 
@@ -23,6 +23,8 @@ its start sidecar:
      dropped frames included; the one shift that makes every gap line up says which
      logged frame each MP4 frame is. Where a phone spaces every frame exactly alike
      (the Moto G Play), the frames it skips as the recorder starts pick out that shift.
+     Where the MP4 writes every gap alike (the Pixel 10 Pro XL), the best shift is
+     taken only if it starts at the first frame after the camera's start-up pause.
   2. Read the timecode of each matched frame two ways: from the separate WAV, by its
      sensor timestamp (mid-exposure, half-way down the frame), and from the MP4's own
      audio, by its place in the file, as an edit would.
@@ -32,6 +34,8 @@ its start sidecar:
      frame gap slightly long lets its picture slide against its own timecode.
 
 With --sidecars DIR the three files are looked for in DIR instead of beside the clip.
+With --retime OUT.mp4 it also writes a copy of the clip, not re-encoded, whose frames
+are moved by the offset and drift, so its picture sits on its own audio's timecode.
 
 Needs: python3, numpy, ffmpeg/ffprobe and ltcdump (x42 ltc-tools).
 """
@@ -152,10 +156,41 @@ def match(pts, log_ts):
     return best[0], (best[1] if len(best) > 1 else (len(rel), float("inf"), -1))
 
 
+def startup_pause(log_ts):
+    """The logged frame just after the camera's one long pause (over 100 ms) in its first
+    3 s, or -1 if there is not exactly one."""
+    gaps = np.diff(log_ts)
+    early = log_ts[1:] - log_ts[0] < FIRST_FRAME_WITHIN_S * 1e9
+    long = np.where(early & (gaps > 100_000_000))[0]
+    return int(long[0]) + 1 if len(long) == 1 else -1
+
+
+def follow(pts, log_ts, k):
+    """Each MP4 frame's logged frame, k being frame 0's, and which frames found one.
+
+    Each frame is looked for one MP4 gap after the last frame found, not at one shift
+    from the start: the Pixel 10 Pro XL writes every gap as exactly 1/30 s while its
+    sensor runs a little slower, so a single shift loses its frames after half a minute."""
+    ns = (pts * 1e9).astype(np.int64)
+    j = np.zeros(len(pts), np.int64)
+    ok = np.zeros(len(pts), bool)
+    j[0], ok[0] = k, True
+    last = 0
+    for i in range(1, len(pts)):
+        pred = log_ts[j[last]] + ns[i] - ns[last]
+        n = int(np.clip(np.searchsorted(log_ts, pred), 1, len(log_ts) - 1))
+        n = n - 1 if abs(log_ts[n - 1] - pred) < abs(log_ts[n] - pred) else n
+        j[i] = n
+        if abs(log_ts[n] - pred) < MISS_NS:
+            ok[i], last = True, i
+    return j, ok
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("clip", help="the recording (.mp4)")
     ap.add_argument("--sidecars", help="folder holding its sidecars (default: beside the clip)")
+    ap.add_argument("--retime", metavar="OUT.mp4", help="also write a copy with the offset and drift taken out")
     a = ap.parse_args()
     for tool in ("ffmpeg", "ffprobe", "ltcdump"):
         if not shutil.which(tool):
@@ -189,8 +224,17 @@ def main():
     # dropped a frame exactly where the camera skipped one.
     clear = ((misses == 0 and runner_misses >= 1) or runner_misses >= misses + 2
              or runner_up >= 3 * residual + 5_000)
-    if misses > 1 or residual > 1e6 or not clear:
-        fail("the MP4's frames do not match the frame log unambiguously; no offset given")
+    if misses > 1 or residual > 1e6:
+        fail("the MP4's frames do not match the frame log; no offset given")
+    if not clear:
+        # The Pixel 10 Pro XL writes every frame exactly 1/30 s apart, so the timing
+        # cannot tell its first frame from its neighbours. The camera pauses once as the
+        # recorder starts and the MP4 begins with the first frame after that pause; on
+        # every Moto G Play clip, where the timing does decide, that is the frame it
+        # picks. Take the best shift only where the pause points at the same frame.
+        if startup_pause(log_ts) != k:
+            fail("the MP4's frames do not match the frame log unambiguously; no offset given")
+        print("  frame match by timing alone is ambiguous; the camera's start-up pause agrees")
 
     wav_t0, wav_rate, wav_n = ltc_fit(wav, "separate WAV")
     with tempfile.TemporaryDirectory() as d:
@@ -211,11 +255,7 @@ def main():
 
     # Each MP4 frame's logged frame, and both readings of its timecode, wherever the
     # separate WAV covers it (it starts a moment after the recording).
-    shift = log_ts[k] - int(round(pts[0] * 1e9))
-    pred = (pts * 1e9).astype(np.int64) + shift
-    j = np.clip(np.searchsorted(log_ts, pred), 1, len(log_ts) - 1)
-    j = np.where(np.abs(log_ts[j - 1] - pred) < np.abs(log_ts[j] - pred), j - 1, j)
-    ok = np.abs(log_ts[j] - pred) < 1_000_000
+    j, ok = follow(pts, log_ts, k)
     picture_ns = log_ts[j] + exposure[j] // 2 + skew[j] // 2           # mid-exposure, mid-frame
     wav_sample = (picture_ns - first_sample_ns) / 1e9 * AUDIO_RATE
     ok &= wav_sample > 0
@@ -238,6 +278,28 @@ def main():
     print("drift %+.2f ms a minute: %+.1f ms at the start of the clip, %+.1f ms at the end"
           % (slope * 60, start, end))
     print("for parseLTC_kanaha.sh: camNTimecodeOffsetMs=%.1f" % offset)
+    if a.retime:
+        retime(a.clip, a.retime, pts[ok][0], start, slope)
+
+
+def retime(clip, out, t0, start_ms, slope_ms):
+    """Copy the clip with each video frame moved by its offset, so its picture sits on its
+    own audio's timecode from the first frame to the last; nothing is re-encoded.
+
+    The offset is a straight line over the clip (the drift), which a stream copy can
+    apply: the Pixel 10 Pro XL writes its frames exactly 1/30 s apart while its sensor
+    runs 88 ppm slower, so its picture slides about 1.7 ms a minute against its timecode.
+    Anything that places frames by their timestamps (ffmpeg's fps filter, for one) then
+    needs no offset; anything that counts frames at 30 fps does."""
+    # A negative offset would move the first frame before the audio's start, and the
+    # muxer clamps that to zero; delay both streams alike instead.
+    delay = max(0.0, -(t0 + start_ms / 1000)) + (0.001 if t0 + start_ms / 1000 < 0 else 0)
+    shift = "(%.9f+%.9f+%.12f*(TS*TB-%.9f))/TB" % (delay, start_ms / 1000, slope_ms / 1000, t0)
+    subprocess.run(["ffmpeg", "-v", "error", "-i", clip, "-map", "0", "-c", "copy",
+                    "-bsf:v", "setts=ts=TS+" + shift, "-bsf:a", "setts=ts=TS+%.9f/TB" % delay,
+                    # the edit list holds each stream's start; at the default 1/1000 s it rounds by up to a ms
+                    "-movie_timescale", "90000", "-movflags", "+faststart", out, "-y"], check=True)
+    print("retimed copy: %s" % out)
 
 
 if __name__ == "__main__":
