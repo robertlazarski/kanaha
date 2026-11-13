@@ -297,6 +297,17 @@ amount from the frames, and on the Pixel the gap also grows during the take:
 | Moto G Play 2024 | about +60 ms (1.8 frames) | none | MP4 frame times follow the sensor |
 | Pixel 10 Pro XL | about −11 ms | +1.7 ms a minute | MP4 spaces frames exactly 1/30 s; the sensor runs 88 ppm slow |
 
+The Pixel's drift cannot be removed at the camera. Its 4K30 sensor mode has a minimum
+frame duration of 33,339,673 ns by the sensor's own clock, the whole number of 6.34 µs
+row readouts just above 1/30 s; its clock runs about 103 ppm long against the phone's,
+which agrees with the Tentacle within 3 ppm. So the fastest it runs is 29.9974 fps, 88
+ppm slow. A shorter `SENSOR_FRAME_DURATION` is clamped to that minimum, and a longer one
+moves it further from 30 (measured 2026-11-13; `frames.csv` logs the duration the camera
+reports). The rest is the MP4's doing: it writes every frame exactly 1/30 s apart, where
+the Moto writes the real times. Keep the rig at 30 fps, never 29.97 (1000 ppm). A 30 fps
+render from a retimed Pixel clip shows one frame twice about every 6 minutes, with every
+frame still at its own time.
+
 Neither number can be set once and trusted. The Moto has twice started a recording
 27 and 52 ms further out (not reproduced in 28 later takes), and the Pixel has read one
 frame out on one take. So measure every clip:
