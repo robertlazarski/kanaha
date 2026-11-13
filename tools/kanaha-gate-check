@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Robert Lazarski
+"""kanaha-gate-check: how far a phone's timecode is from the sound recorder's, measured
+end to end with a light that flashes in shot and on a recorder input at the same instant.
+
+kanaha-timecode-offset places a recording's frames on its own timecode using the
+phone's clocks. What no phone clock can show is delay the phone's audio timestamps
+leave out, inside the iRig and USB, or a Tentacle that has wandered since its jam.
+This measures the whole chain against the recorder:
+
+    sequencer GATE OUT -+-> 1 kOhm -> LED, in shot of the camera
+                        +-> 10 kOhm / 1 kOhm divider -> a Zoom F8 input (line, no phantom)
+
+    kanaha-gate-check VID_20261120_143759.mp4 F8_ZOOM0001.WAV --gate-channel 4
+
+  1. The recorder: each gate edge in the gate channel, to a fraction of a sample (the
+     middle of the step, so an input that blocks DC sees it the same), timed by the
+     file's own timecode (the BWF start, bext TimeReference).
+  2. The phone: each frame's exposure of the LED's row, in the phone's timecode, the
+     way kanaha-timecode-offset reads it (separate timecode track, frame log, measured
+     WAV rate), and whether the LED is lit in it.
+  3. The delay d that makes the frames lit exactly when the recorder's gate was high:
+     the phone's timecode for an instant minus the recorder's. Rising and falling edges
+     are fitted apart and averaged, which cancels how much of a frame's exposure the LED
+     must cover to read as lit (a saturated LED reads lit early) and the gate's length.
+
+The light sits best near the middle of the frame's height: the rolling shutter exposes
+rows at different times, and a video cropped from the sensor (16:9 from 4:3) maps rows
+by an assumed centred crop (--sensor-aspect). Flashes land at every phase of the frame,
+so many of them pin d far finer than a frame: a minute of 16th notes gives hundreds.
+
+With --f8-ltc-channel N the Tentacle's LTC recorded on the F8 splits d into the
+Tentacle's offset from the F8 (its drift since the jam) and the rest, the phone's own.
+
+Needs: python3, numpy, ffmpeg/ffprobe and ltcdump, and kanaha-timecode-offset beside it.
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+import struct
+import subprocess
+import sys
+import tempfile
+
+import numpy as np
+
+_loader = importlib.machinery.SourceFileLoader(
+    "kanaha_timecode_offset", os.path.join(os.path.dirname(os.path.abspath(__file__)), "kanaha-timecode-offset"))
+tco = importlib.util.module_from_spec(importlib.util.spec_from_loader(_loader.name, _loader))
+_loader.exec_module(tco)
+
+SCAN_MS = 60            # d is looked for within +-60 ms
+STEP_MS = 0.02
+DECODE_WIDTH = 320      # the LED is found and read in a small copy of each frame
+
+
+def fail(msg):
+    sys.exit("kanaha-gate-check: " + msg)
+
+
+# ---------------------------------------------------------------------------------
+# The recorder
+
+def read_bwf(path, channel):
+    """(samples of one channel as float, sample rate, start in timecode seconds) of a
+    Broadcast WAV, its start from the bext chunk's TimeReference."""
+    with open(path, "rb") as f:
+        head = f.read(12)
+        if head[:4] == b"RF64":
+            fail("%s is RF64 (over 4 GB); record a shorter file" % path)
+        if head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+            fail("%s is not a WAV" % path)
+        fmt = time_ref = data = None
+        while True:
+            h = f.read(8)
+            if len(h) < 8:
+                break
+            cid, size = h[:4], struct.unpack("<I", h[4:])[0]
+            if cid == b"fmt ":
+                fmt = f.read(size)
+            elif cid == b"bext":
+                bext = f.read(size)
+                time_ref = struct.unpack("<Q", bext[338:346])[0]
+            elif cid == b"data":
+                data = (f.tell(), size)
+                f.seek(size, 1)
+            else:
+                f.seek(size, 1)
+            if size % 2:
+                f.seek(1, 1)
+    if fmt is None or data is None:
+        fail("%s has no fmt or data chunk" % path)
+    if time_ref is None:
+        fail("%s has no bext chunk: record it on the F8 (a Broadcast WAV) so it carries its timecode" % path)
+    channels, rate = struct.unpack("<HI", fmt[2:8])
+    bits = struct.unpack("<H", fmt[14:16])[0]
+    if not 1 <= channel <= channels:
+        fail("%s has %d channels, not %d" % (path, channels, channel))
+    width = bits // 8
+    frames = data[1] // (channels * width)
+    raw = np.memmap(path, np.uint8, "r", data[0], (frames, channels * width))
+    b = raw[:, (channel - 1) * width:channel * width].astype(np.int32)
+    if width == 2:
+        x = (b[:, 0] | b[:, 1] << 8).astype(np.int16).astype(np.float64)
+    elif width == 3:
+        v = b[:, 0] | b[:, 1] << 8 | b[:, 2] << 16
+        x = np.where(v >= 1 << 23, v - (1 << 24), v).astype(np.float64)
+    elif width == 4:
+        x = np.frombuffer(np.ascontiguousarray(raw[:, (channel - 1) * 4:channel * 4]).tobytes(), "<i4").astype(np.float64)
+    else:
+        fail("%d-bit samples are not supported" % bits)
+    return x, rate, time_ref / rate
+
+
+def gate_edges(x, rate):
+    """[(sample, +1 rising / -1 falling)]: the middle of each step, from the peak of its
+    slope refined by a parabola. A step through an input that blocks DC keeps a sharp
+    start and then decays; its slope peaks at the same place either way."""
+    d = np.diff(x)
+    peak = np.abs(d).max()
+    if peak == 0:
+        fail("the gate channel is silent")
+    hot = np.flatnonzero(np.abs(d) > 0.3 * peak)
+    edges, gap = [], int(0.005 * rate)
+    i = 0
+    while i < len(hot):
+        j = i
+        while j + 1 < len(hot) and hot[j + 1] - hot[j] < gap:
+            j += 1
+        burst = np.arange(hot[i], hot[j] + 1)
+        k = burst[np.argmax(np.abs(d[burst]))]
+        y0, y1, y2 = (abs(d[k - 1]) if k > 0 else 0), abs(d[k]), (abs(d[k + 1]) if k + 1 < len(d) else 0)
+        den = y0 - 2 * y1 + y2
+        frac = 0.5 * (y0 - y2) / den if den else 0.0
+        edges.append((k + 0.5 + frac, 1 if d[k] > 0 else -1))   # diff k sits between samples k and k+1
+        i = j + 1
+    return edges
+
+
+def gate_intervals(edges, rising):
+    """(starts, ends) of the gate's high spells, high starting at edges of sign `rising`."""
+    starts, ends = [], []
+    for (s, sign), (e, sign2) in zip(edges, edges[1:]):
+        if sign == rising and sign2 == -rising:
+            starts.append(s)
+            ends.append(e)
+    return np.array(starts), np.array(ends)
+
+
+# ---------------------------------------------------------------------------------
+# The phone
+
+def phone_frames(clip, sensor_aspect):
+    """Per MP4 frame that matched the frame log: the LED's brightness (0 dark .. 1 lit),
+    and the start and end of its row's exposure in the phone's timecode seconds."""
+    base = os.path.splitext(os.path.basename(clip))[0]
+    folder = os.path.dirname(os.path.abspath(clip))
+    side = json.load(open(os.path.join(folder, base + ".kanaha_start.json")))
+    if "timecode_audio" not in side or side.get("frame_clock") != "boottime":
+        fail("%s needs a separate timecode track on the boot clock" % os.path.basename(clip))
+    first_ns = int(side["timecode_audio_first_sample_boot_ns"])
+    rate_hz = side.get("timecode_audio_rate_hz") or tco.AUDIO_RATE
+    log = np.loadtxt(os.path.join(folder, side["frame_log"]), delimiter=",", skiprows=1, dtype=np.int64, ndmin=2)
+    log = log[np.argsort(log[:, 1])]
+    log = log[np.concatenate(([True], np.diff(log[:, 1]) > 0))]
+    log_ts, exposure, skew = log[:, 1], log[:, 2], log[:, 3]
+
+    pts, _, _ = tco.mp4_frames(clip)
+    (misses, residual, k), (r_misses, r_up, _) = tco.match(pts, log_ts)
+    clear = (misses == 0 and r_misses >= 1) or r_misses >= misses + 2 or r_up >= 3 * residual + 5_000
+    if misses > 1 or residual > 1e6 or (not clear and tco.startup_pause(log_ts) != k):
+        fail("the MP4's frames do not match the frame log unambiguously")
+    j, ok = tco.follow(pts, log_ts, k)
+
+    wav_t0, wav_rate, _ = tco.ltc_fit(os.path.join(folder, side["timecode_audio"]), "separate WAV")
+
+    def tc(ns):
+        return wav_t0 + wav_rate * (ns - first_ns) / 1e9 * rate_hz
+
+    gray, h = decode_gray(clip, len(pts))
+    var = gray.std(axis=0)
+    y, x = np.unravel_index(np.argmax(var), var.shape)
+    near = np.zeros_like(var, bool)
+    near[max(0, y - 6):y + 7, max(0, x - 6):x + 7] = True
+    spot = near & (var > 0.5 * var.max())
+    level = gray[:, spot].mean(axis=1)
+    lo, hi = np.percentile(level, 5), np.percentile(level, 95)
+    if hi - lo < 10:
+        fail("no flashing light found in the picture (brightest change %.0f of 255)" % (hi - lo))
+    bright = np.clip((level - lo) / (hi - lo), 0, 1)
+
+    # The LED's row on the sensor: its height in the video, mapped through a centred crop
+    # where the video is wider than the sensor.
+    video_frac = (np.nonzero(spot)[0].mean() + 0.5) / h
+    w_over_h = DECODE_WIDTH / h
+    shown = min(1.0, sensor_aspect / w_over_h)
+    row = 0.5 + (video_frac - 0.5) * shown
+    start_ns = log_ts[j] + skew[j] * row
+    end_ns = start_ns + exposure[j]
+    info = {"spot": (int(x), int(y)), "video_row": video_frac, "sensor_row": row,
+            "exposure_ms": float(np.median(exposure[j[ok]])) / 1e6, "rate_hz": rate_hz,
+            "matched": int(ok.sum())}
+    return bright[ok], tc(start_ns[ok]), tc(end_ns[ok]), info
+
+
+def decode_gray(clip, count):
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "g.raw")
+        # passthrough: one picture per frame in the file; otherwise ffmpeg repeats a frame
+        # across a gap in the frame times (a skipped frame) and every later one moves along
+        subprocess.run(["ffmpeg", "-v", "error", "-i", clip, "-map", "0:v:0", "-vf",
+                        "scale=%d:-2,format=gray" % DECODE_WIDTH, "-fps_mode", "passthrough",
+                        "-f", "rawvideo", out, "-y"], check=True)
+        raw = np.fromfile(out, np.uint8)
+    if len(raw) % (count * DECODE_WIDTH):
+        fail("decoded %d bytes, not a whole number of %d frames" % (len(raw), count))
+    h = len(raw) // count // DECODE_WIDTH
+    return raw[:count * DECODE_WIDTH * h].reshape(count, h, DECODE_WIDTH).astype(np.float32), h
+
+
+# ---------------------------------------------------------------------------------
+# The fit
+
+def scan(lit, s, e, starts, ends, edge):
+    """Mismatches for each candidate d, counting only frames whose exposure is nearest an
+    edge of kind `edge` (+1 the gate going high, -1 going low)."""
+    ds = np.arange(-SCAN_MS, SCAN_MS + STEP_MS / 2, STEP_MS) / 1000
+    times = np.concatenate((starts, ends))
+    kinds = np.concatenate((np.ones(len(starts)), -np.ones(len(ends))))
+    order = np.argsort(times)
+    times, kinds = times[order], kinds[order]
+    bad = np.empty(len(ds), int)
+    for n, d in enumerate(ds):
+        a, b = s - d, e - d                                   # exposure in the recorder's timecode
+        i = np.clip(np.searchsorted(starts, b) - 1, 0, len(starts) - 1)
+        cover = np.clip(np.minimum(b, ends[i]) - np.maximum(a, starts[i]), 0, None) / (b - a)
+        mid = (a + b) / 2
+        q = np.clip(np.searchsorted(times, mid), 1, len(times) - 1)
+        nearest = np.where(np.abs(times[q] - mid) < np.abs(times[q - 1] - mid), q, q - 1)
+        mine = kinds[nearest] == edge
+        bad[n] = int(((cover > 0.5) != lit)[mine].sum())
+    return ds, bad
+
+
+def plateau(ds, bad):
+    """Centre and width (s) of the longest run of candidates at the fewest mismatches."""
+    best = bad.min()
+    at = np.flatnonzero(bad == best)
+    runs = np.split(at, np.flatnonzero(np.diff(at) > 1) + 1)
+    run = max(runs, key=len)
+    return (ds[run[0]] + ds[run[-1]]) / 2, ds[run[-1]] - ds[run[0]] + STEP_MS / 1000, int(best)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("clip", help="the phone's recording (.mp4), with its separate timecode track beside it")
+    ap.add_argument("f8", help="the recorder's Broadcast WAV covering the same flashes")
+    ap.add_argument("--gate-channel", type=int, required=True, help="the F8 channel the gate is on (1-based)")
+    ap.add_argument("--f8-ltc-channel", type=int, help="an F8 channel recording the Tentacle's LTC (1-based)")
+    ap.add_argument("--sensor-aspect", type=float, default=4 / 3,
+                    help="the sensor's width over height (default 4:3), for a video cropped from it")
+    a = ap.parse_args()
+
+    x, rate, f8_start = read_bwf(a.f8, a.gate_channel)
+    edges = gate_edges(x, rate)
+    bright, s, e, info = phone_frames(a.clip, a.sensor_aspect)
+    lit = bright > 0.5
+    # Only frames the recorder's file covers, with a margin for d.
+    inside = (s > f8_start + SCAN_MS / 1000) & (e < f8_start + len(x) / rate - SCAN_MS / 1000)
+    if inside.sum() < 30:
+        fail("the clip and the recorder's file overlap by fewer than 30 frames: check both cover the flashes")
+    lit, s, e = lit[inside], s[inside], e[inside]
+    print("%s: %d frames matched; light at (%d, %d) of a %d-wide copy, %.0f%% down the video, %.0f%% down the sensor"
+          % (os.path.basename(a.clip), info["matched"], info["spot"][0], info["spot"][1], DECODE_WIDTH,
+             info["video_row"] * 100, info["sensor_row"] * 100))
+    print("  exposure %.2f ms; WAV rate %.3f Hz; lit in %d frames" % (info["exposure_ms"], info["rate_hz"], int(lit.sum())))
+    if abs(info["video_row"] - 0.5) > 0.2:
+        print("  warning: the light is far from the middle of the frame's height; a crop other than "
+              "centred would move the result by up to a few ms")
+
+    # The gate's polarity at the F8 input is not known: try both and keep the one the
+    # picture agrees with.
+    best = None
+    for rising in (1, -1):
+        st, en = gate_intervals(edges, rising)
+        if len(st) < 3:
+            continue
+        starts, ends = f8_start + st / rate, f8_start + en / rate
+        fits = [plateau(*scan(lit, s, e, starts, ends, edge)) for edge in (1, -1)]
+        score = fits[0][2] + fits[1][2]
+        if best is None or score < best[0]:
+            best = (score, rising, starts, ends, fits)
+    if best is None:
+        fail("fewer than three gate pulses in the recorder's file")
+    score, rising, starts, ends, ((d_up, w_up, bad_up), (d_dn, w_dn, bad_dn)) = best
+    covered = (starts > s.min()) & (ends < e.max())
+    print("%s: %d gate pulses, %d within the clip, %.1f ms long; F8 input %s"
+          % (os.path.basename(a.f8), len(starts), int(covered.sum()), np.median(ends - starts) * 1000,
+             "as wired" if rising > 0 else "inverted"))
+    print("  going high: d %+.2f ms (consistent over %.2f ms, %d frames disagree)" % (d_up * 1000, w_up * 1000, bad_up))
+    print("  going low:  d %+.2f ms (consistent over %.2f ms, %d frames disagree)" % (d_dn * 1000, w_dn * 1000, bad_dn))
+    d = (d_up + d_dn) / 2
+    print("\nphone timecode minus F8 timecode: %+.2f ms (+-%.2f)" % (d * 1000, max(w_up, w_dn) * 500))
+    print("  the phone labels an instant %.2f ms %s than the F8 does, so cut by timecode its picture lands %.2f ms %s;"
+          % (abs(d) * 1000, "later" if d > 0 else "earlier", abs(d) * 1000, "late" if d > 0 else "early"))
+    print("  add %+.2f ms to the offset kanaha-timecode-offset gives this phone's clips" % (-d * 1000))
+
+    if a.f8_ltc_channel:
+        y, _, _ = read_bwf(a.f8, a.f8_ltc_channel)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ltc.wav")
+            pcm = np.clip(y / max(1.0, np.abs(y).max()) * 32000, -32768, 32767).astype("<i2")
+            with open(path, "wb") as f:
+                f.write(b"RIFF" + struct.pack("<I", 36 + pcm.nbytes) + b"WAVEfmt " +
+                        struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16) +
+                        b"data" + struct.pack("<I", pcm.nbytes) + pcm.tobytes())
+            t0, slope, _ = tco.ltc_fit(path, "F8 LTC channel")
+        mid = len(y) / 2
+        tentacle = (t0 + slope * mid) - (f8_start + mid / rate)
+        print("  Tentacle's LTC minus the F8's own timecode: %+.2f ms (its drift since the jam)" % (tentacle * 1000))
+        print("  the phone's own share: %+.2f ms" % ((d - tentacle) * 1000))
+
+
+if __name__ == "__main__":
+    main()

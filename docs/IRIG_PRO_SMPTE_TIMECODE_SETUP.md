@@ -330,10 +330,34 @@ clocks. Two things it cannot see:
 
 - **Delay the phone's audio timestamp does not include**, such as inside the iRig. The
   end-to-end check is a gate (a Korg SQ-1 GATE OUT) lighting an LED in shot and feeding
-  an F8 input at the same instant, then comparing the two in the edit.
+  an F8 input at the same instant: `tools/kanaha-gate-check` (below).
 - **Which frame the Pixel's MP4 starts on.** Its even frame times cannot show it, so the
   tool takes the first frame after the camera's start-up pause, which is the frame the
   timing picks on every Moto clip. The gate test confirms it.
+
+### The gate test: measuring against the F8
+
+`tools/kanaha-gate-check` measures a phone's timecode against the F8's, end to end. A
+sequencer's gate output drives both an LED in shot and an F8 input:
+
+- **Wiring.** GATE OUT (3.5 mm) split two ways: tip → 1 kΩ → LED → sleeve; and tip →
+  10 kΩ → the tip of a 1/4" TS plug, with 1 kΩ from there to ground (5 V becomes about
+  0.45 V). Into an F8 input at line level, phantom power off. Optionally the Tentacle's
+  LTC on another F8 input, to tell its drift from the phone's delay.
+- **Shooting.** The LED near the middle of the frame's height (the rolling shutter
+  times each row differently), at the exposure used for real takes. Record a minute or
+  more of steps with the phone (Separate timecode track on) and the F8 together.
+- **Running it.** `kanaha-gate-check VID_….mp4 ZOOM0001.WAV --gate-channel 4
+  [--f8-ltc-channel 3]` prints the phone's timecode minus the F8's, and the amount to add
+  to that phone's offset.
+
+It reads the gate's edges in the F8 file against the file's own timecode (its BWF
+start), and each frame's exposure of the LED's row against the phone's timecode, and
+finds the delay that lights the frames exactly while the gate is high. Rising and
+falling edges are fitted apart and averaged, which cancels the LED reading lit before
+it covers half an exposure. On synthetic takes with a known delay (Pixel and Moto
+timing, a saturating LED, an input that blocks DC, either polarity) it came within
+0.05 ms. Normal video only; 12-bit takes are not read yet.
 
 ### Five clocks
 
