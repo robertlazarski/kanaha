@@ -447,7 +447,7 @@ def ffmpeg_command(out, codec, prores_encoder, wav, offset_ms, timecode, take_na
     return cmd
 
 
-def frame_schedule(take, numbers):
+def frame_schedule(take, numbers, audio_rate_hz=None):
     """The frame number shown at each 1/30 s of the movie, and how it was worked out.
 
     A sensor's 30 fps is not exactly 30: the Pixel 10 Pro XL's runs at 29.9974, so a
@@ -456,7 +456,12 @@ def frame_schedule(take, numbers):
     1/30 s after the first frame shows the frame exposed nearest to it; the Pixel's then
     shows one frame twice about every 6 minutes, and a dropped frame (no DNG) is filled
     with its nearest neighbour. Without the log, one frame per number, as recorded, with
-    a dropped frame filled by the one before it."""
+    a dropped frame filled by the one before it.
+
+    The movie's 1/30 s is take.wav's, which plays at 48 kHz: with the WAV's measured
+    rate on the frames' clock (audio_rate_hz, a few ppm off 48 kHz) each movie second is
+    48000 / audio_rate_hz of the camera's, so the picture follows its own audio and
+    timecode through the take."""
     import numpy as np
     present = np.array(numbers)
     path = os.path.join(take, "take.frames.csv")
@@ -471,8 +476,9 @@ def frame_schedule(take, numbers):
         return [numbers[0]], "frame log covers fewer than two frames"
     times = np.array([stamp[n] for n in present.tolist()])
     t0 = times[0]
-    count = int(round((times[-1] - t0) * FPS / 1e9)) + 1
-    want = t0 + np.arange(count) * 1e9 / FPS
+    frame_ns = 1e9 / FPS * (AUDIO_RATE / audio_rate_hz if audio_rate_hz else 1.0)
+    count = int(round((times[-1] - t0) / frame_ns)) + 1
+    want = t0 + np.arange(count) * frame_ns
     j = np.clip(np.searchsorted(times, want), 1, len(times) - 1)
     j = np.where(want - times[j - 1] < times[j] - want, j - 1, j)
     period = np.median(np.diff(times)) if len(times) > 2 else 1e9 / FPS
@@ -622,7 +628,7 @@ def main():
         print("stamped %s, first frame %s" % (os.path.basename(take), frames_to_tc(timecode)), file=sys.stderr)
         return
 
-    schedule, how = frame_schedule(take, numbers)
+    schedule, how = frame_schedule(take, numbers, sidecar.get("audio_rate_hz"))
     print("movie: %d frames, %s" % (len(schedule), how), file=sys.stderr)
     cmd = ffmpeg_command(out, a.codec, a.prores_encoder, wav, offset_ms, timecode,
                          os.path.basename(take), len(schedule))

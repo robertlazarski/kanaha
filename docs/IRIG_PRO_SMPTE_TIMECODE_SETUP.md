@@ -295,7 +295,7 @@ amount from the frames, and on the Pixel the gap also grows during the take:
 | Phone | Offset at the start | Drift | Why |
 |---|---|---|---|
 | Moto G Play 2024 | about +60 ms (1.8 frames) | none | MP4 frame times follow the sensor |
-| Pixel 10 Pro XL | about −11 ms | +1.7 ms a minute | MP4 spaces frames exactly 1/30 s; the sensor runs 88 ppm slow |
+| Pixel 10 Pro XL | about −11 ms | about +1.5 ms a minute | MP4 spaces frames exactly 1/30 s; the sensor runs 88 ppm slow |
 
 The Pixel's drift cannot be removed at the camera. Its 4K30 sensor mode has a minimum
 frame duration of 33,339,673 ns by the sensor's own clock, the whole number of 6.34 µs
@@ -315,6 +315,9 @@ frame out on one take. So measure every clip:
 1. Record with the Separate timecode track setting, or `startRecording` with
    `"timecode_audio": true`. Beside the start sidecar the phone writes the LTC as its own
    WAV, timed on the boot clock, and every frame's sensor timestamp on the same clock.
+   A take of 80 s or more also measures the WAV's real sample rate on that clock: the
+   iRig's converter has its own crystal (4.6 ppm slow against the Pixel, 2026-11-13),
+   which unmeasured would misplace frames by about 1 ms by the end of a song.
 2. Run `tools/kanaha-timecode-offset VID_….mp4 --retime fixed/VID_….mp4`. It prints the
    offset and drift and writes a stream copy (no re-encode) with each frame moved onto
    its own audio's timecode. ffmpeg places frames by their timestamps, so the copy needs

@@ -522,6 +522,10 @@ final class RawTake {
                 j.put("first_frame_after_first_sample_ms", Math.round((firstFrameNs - audio.firstSampleBootNs()) / 1e5) / 10.0);
             }
             if (finished && audio != null) j.put("audio_seconds", Math.round(audio.seconds() * 10) / 10.0);
+            if (finished && audio != null && audio.rateHz() > 0) {
+                // take.wav's real rate on the frames' clock: kanaha-develop places frames by it
+                j.put("audio_rate_hz", Math.round(audio.rateHz() * 1000) / 1000.0);
+            }
             j.put("motion", motion != null ? motion.fileName() : JSONObject.NULL);
             j.put("frame_log", FRAME_LOG);
             if (finished && motionSamples >= 0) j.put("motion_samples", motionSamples);

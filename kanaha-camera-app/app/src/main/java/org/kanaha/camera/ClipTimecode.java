@@ -162,6 +162,7 @@ public final class ClipTimecode {
             j.put("timecode_audio", wav.getName());
             j.put("timecode_audio_first_sample_boot_ns", audio.firstSampleBootNs());
             j.put("timecode_audio_stamp_iqr_ns", audio.stampIqrNs());
+            if (audio.rateHz() > 0) j.put("timecode_audio_rate_hz", Math.round(audio.rateHz() * 1000) / 1000.0);
             j.put("timecode_audio_seconds", Math.round(audio.seconds() * 10) / 10.0);
             j.put("timecode_audio_read_errors", audio.readErrors());
             j.put("frame_log", frames.getName());

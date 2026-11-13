@@ -8,7 +8,7 @@ edit lines cameras up by reading it. But the MP4 places its audio against its pi
 by when each audio buffer reached the app, which misses the delay inside the iRig and
 USB. On the Moto G Play the picture usually sits about 61 ms (1.8 frames) early against
 its timecode, but some recordings start up to 50 ms further out, so measure every clip;
-the Pixel 10 Pro XL starts near -12 ms and drifts about 1.7 ms a minute. A recording made with the Separate timecode track setting (or startRecording
+the Pixel 10 Pro XL starts near -12 ms and drifts about 1.5 ms a minute. A recording made with the Separate timecode track setting (or startRecording
 "timecode_audio": true) has the evidence to measure that for itself, in files beside
 its start sidecar:
 
@@ -252,12 +252,20 @@ def main():
         print("  WAV start: audio timestamps agree within %.2f ms (interquartile range)" % (iqr_ns / 1e6))
         if iqr_ns > 2_000_000:
             print("  warning: the audio timestamps disagree by more than 2 ms; the offset may be off by as much")
+    # The WAV's real rate on the frames' clock, from timestamps at both ends of a take of
+    # 80 s or more. Assuming 48 kHz instead misplaces a frame by the converter's error,
+    # a few ppm: about 1 ms by the end of a 4-minute song.
+    wav_rate_hz = side.get("timecode_audio_rate_hz") or AUDIO_RATE
+    if "timecode_audio_rate_hz" in side:
+        print("  WAV rate on the camera's clock: %.3f Hz (%+.1f ppm)" % (wav_rate_hz, (wav_rate_hz / AUDIO_RATE - 1) * 1e6))
+    else:
+        print("  WAV rate taken as %d Hz (no measured rate: the take was short or recorded before it)" % AUDIO_RATE)
 
     # Each MP4 frame's logged frame, and both readings of its timecode, wherever the
     # separate WAV covers it (it starts a moment after the recording).
     j, ok = follow(pts, log_ts, k)
     picture_ns = log_ts[j] + exposure[j] // 2 + skew[j] // 2           # mid-exposure, mid-frame
-    wav_sample = (picture_ns - first_sample_ns) / 1e9 * AUDIO_RATE
+    wav_sample = (picture_ns - first_sample_ns) / 1e9 * wav_rate_hz
     ok &= wav_sample > 0
     true_tc = wav_t0 + wav_rate * wav_sample
     mp4_tc = mp4_t0 + mp4_rate * (pts - audio_start) * AUDIO_RATE
@@ -288,7 +296,7 @@ def retime(clip, out, t0, start_ms, slope_ms):
 
     The offset is a straight line over the clip (the drift), which a stream copy can
     apply: the Pixel 10 Pro XL writes its frames exactly 1/30 s apart while its sensor
-    runs 88 ppm slower, so its picture slides about 1.7 ms a minute against its timecode.
+    runs 88 ppm slower, so its picture slides about 1.5 ms a minute against its timecode.
     Anything that places frames by their timestamps (ffmpeg's fps filter, for one) then
     needs no offset; anything that counts frames at 30 fps does."""
     # A negative offset would move the first frame before the audio's start, and the
