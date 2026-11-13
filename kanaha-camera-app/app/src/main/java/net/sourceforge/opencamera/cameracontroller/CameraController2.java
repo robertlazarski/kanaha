@@ -245,8 +245,8 @@ public class CameraController2 extends CameraController {
 
     /** Kanaha: told of every completed frame while set; see org.kanaha.camera.ClipTimecode. */
     public interface FrameListener {
-        /** Sensor timestamp, exposure and rolling-shutter skew of one frame, in ns (0 if not reported). */
-        void onFrame(long frameNumber, long timestampNs, long exposureNs, long skewNs);
+        /** Sensor timestamp, exposure, rolling-shutter skew and frame duration of one frame, in ns (0 if not reported). */
+        void onFrame(long frameNumber, long timestampNs, long exposureNs, long skewNs, long frameDurationNs);
     }
     public static volatile FrameListener kanahaFrameListener;
 
@@ -8089,7 +8089,9 @@ public class CameraController2 extends CameraController {
                 if( ts != null ) {
                     Long exposure = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
                     Long skew = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW);
-                    frameListener.onFrame(result.getFrameNumber(), ts, exposure != null ? exposure : 0, skew != null ? skew : 0);
+                    Long duration = result.get(CaptureResult.SENSOR_FRAME_DURATION);
+                    frameListener.onFrame(result.getFrameNumber(), ts, exposure != null ? exposure : 0, skew != null ? skew : 0,
+                            duration != null ? duration : 0);
                 }
             }
             process(request, result);

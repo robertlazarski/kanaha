@@ -30,8 +30,8 @@ import java.util.Locale;
  * <ul>
  * <li>{@code <basename>.timecode.wav}: the input, with the boot-time instant of its first
  *     sample (Android's AudioTimestamp) in the start sidecar;
- * <li>{@code <basename>.frames.csv}: frame number, sensor timestamp, exposure and
- *     rolling-shutter skew of every frame the camera produced while it ran, a little
+ * <li>{@code <basename>.frames.csv}: frame number, sensor timestamp, exposure,
+ *     rolling-shutter skew and the frame duration the camera reports, of every frame the camera produced while it ran, a little
  *     longer than the recording on both ends.
  * </ul>
  * The MP4 keeps its own audio. tools/kanaha-timecode-offset matches the MP4's frames to
@@ -74,7 +74,7 @@ public final class ClipTimecode {
         wav = new File(dir, base + WAV_SUFFIX);
         frames = new File(dir, base + FRAMES_SUFFIX);
         frameOut = new BufferedWriter(new FileWriter(frames));
-        frameOut.write("frame_number,timestamp_ns,exposure_ns,rolling_shutter_skew_ns\n");
+        frameOut.write("frame_number,timestamp_ns,exposure_ns,rolling_shutter_skew_ns,frame_duration_ns\n");
         audio = new TimecodeAudio(wav, audioSource);
     }
 
@@ -140,10 +140,11 @@ public final class ClipTimecode {
         deleteFiles(c.context, c.videoName);
     }
 
-    private void onFrame(long frameNumber, long timestampNs, long exposureNs, long skewNs) {
+    private void onFrame(long frameNumber, long timestampNs, long exposureNs, long skewNs, long frameDurationNs) {
         synchronized (frameOut) {
             try {
-                frameOut.write(String.format(Locale.US, "%d,%d,%d,%d\n", frameNumber, timestampNs, exposureNs, skewNs));
+                frameOut.write(String.format(Locale.US, "%d,%d,%d,%d,%d\n", frameNumber, timestampNs, exposureNs, skewNs,
+                        frameDurationNs));
                 frameCount++;
             } catch (IOException ignored) {
                 // a full disk ends the recording too; the frame count in the sidecar shows it
