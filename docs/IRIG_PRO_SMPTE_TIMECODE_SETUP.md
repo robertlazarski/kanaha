@@ -335,6 +335,27 @@ clocks. Two things it cannot see:
   tool takes the first frame after the camera's start-up pause, which is the frame the
   timing picks on every Moto clip. The gate test confirms it.
 
+### Five clocks
+
+Every device in the chain keeps time on its own crystal. That is normal for any
+multi-camera rig and is why timecode exists; what costs milliseconds is a step that
+assumes two of these clocks agree. Each relationship is measured per take instead:
+
+| Clock | Times | Against the phone's clock | How it is handled |
+|---|---|---|---|
+| Zoom F8 | the master timecode and its own audio | — | the reference |
+| Tentacle Sync E | its LTC | 1.6 ppm (Pixel, 2026-11-13) | jammed from the F8, then free-running; re-jam each session |
+| iRig Pro I/O | when each audio sample is taken | 4.6 ppm slow | measured from audio timestamps at both ends of a take of 80 s or more |
+| Phone boot clock | frame and audio timestamps | — | the bridge every other clock is measured through |
+| Camera sensor | when frames are exposed | about 103 ppm (Pixel) | Android converts frame times to the boot clock; the frame log carries them |
+
+The assumptions this replaced, each worth a millisecond or more over a song: the
+Pixel's MP4 treats its sensor as exactly 30 fps (1.5 ms a minute; `--retime`), a
+12-bit movie did the same (5.3 ms a minute; `kanaha-develop` now places frames by
+time), and the tools treated the iRig as exactly 48 kHz (about 1 ms a song). What no
+clock comparison shows is a fixed delay inside the iRig and USB that the phone's audio
+timestamps leave out; the gate test above measures that.
+
 ---
 
 ## The "Drawer Phone" Opportunity
